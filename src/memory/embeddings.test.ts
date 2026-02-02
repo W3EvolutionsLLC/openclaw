@@ -327,9 +327,10 @@ describe("embedding provider local fallback", () => {
   });
 });
 
-describe("local embedding L2 normalization", () => {
+describe("local embedding normalization", () => {
   afterEach(() => {
     vi.resetAllMocks();
+    vi.resetModules();
     vi.unstubAllGlobals();
     vi.doUnmock("./node-llama.js");
   });
@@ -353,7 +354,6 @@ describe("local embedding L2 normalization", () => {
       }),
     }));
 
-    vi.resetModules();
     const { createEmbeddingProvider } = await import("./embeddings.js");
 
     const result = await createEmbeddingProvider({
@@ -389,7 +389,6 @@ describe("local embedding L2 normalization", () => {
       }),
     }));
 
-    vi.resetModules();
     const { createEmbeddingProvider } = await import("./embeddings.js");
 
     const result = await createEmbeddingProvider({
@@ -402,7 +401,41 @@ describe("local embedding L2 normalization", () => {
     const embedding = await result.provider.embedQuery("test");
 
     expect(embedding).toEqual([0, 0, 0, 0]);
-    expect(embedding.every((x) => !Number.isNaN(x))).toBe(true);
+    expect(embedding.every((value) => Number.isFinite(value))).toBe(true);
+  });
+
+  it("sanitizes non-finite values before normalization", async () => {
+    const nonFiniteVector = [1, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY];
+
+    vi.doMock("./node-llama.js", () => ({
+      importNodeLlamaCpp: async () => ({
+        getLlama: async () => ({
+          loadModel: vi.fn().mockResolvedValue({
+            createEmbeddingContext: vi.fn().mockResolvedValue({
+              getEmbeddingFor: vi.fn().mockResolvedValue({
+                vector: new Float32Array(nonFiniteVector),
+              }),
+            }),
+          }),
+        }),
+        resolveModelFile: async () => "/fake/model.gguf",
+        LlamaLogLevel: { error: 0 },
+      }),
+    }));
+
+    const { createEmbeddingProvider } = await import("./embeddings.js");
+
+    const result = await createEmbeddingProvider({
+      config: {} as never,
+      provider: "local",
+      model: "",
+      fallback: "none",
+    });
+
+    const embedding = await result.provider.embedQuery("test");
+
+    expect(embedding).toEqual([1, 0, 0, 0]);
+    expect(embedding.every((value) => Number.isFinite(value))).toBe(true);
   });
 
   it("normalizes batch embeddings to magnitude ~1.0", async () => {
@@ -430,7 +463,6 @@ describe("local embedding L2 normalization", () => {
       }),
     }));
 
-    vi.resetModules();
     const { createEmbeddingProvider } = await import("./embeddings.js");
 
     const result = await createEmbeddingProvider({
