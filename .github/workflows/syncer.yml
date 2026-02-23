@@ -18,6 +18,10 @@ jobs:
           ref: oci-syncer-c2fd2fca-1a0a-4d31-aefb-5650a99f6c3f
           fetch-depth: 0
 
+      - name: Verify script exists
+        run: |
+          ls -la scripts/github-workflows
+          
       - name: Run sync script
         env:
           UPSTREAM_OWNER: ${{ vars.OC_UPSTREAM_OWNER }}
@@ -29,5 +33,5 @@ jobs:
           SKIP_WORKFLOW_CHANGES: "true"
           EXCLUDE_BRANCH: oci-syncer-c2fd2fca-1a0a-4d31-aefb-5650a99f6c3f
         run: |
-          chmod +x scripts/sync-from-owner.sh
-          ./scripts/sync-from-owner.sh
+          chmod +x scripts/github-workflows/sync-from-owner.sh
+          ./scripts/github-workflows/sync-from-owner.sh
