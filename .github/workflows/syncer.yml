@@ -18,18 +18,18 @@ jobs:
     steps:
       - name: Sync upstream -> fork (git only; skip workflow changes; print commit/compare links)
         env:
-          UPSTREAM_OWNER: ${{ secrets.OC_UPSTREAM_OWNER }}
-          UPSTREAM_REPO: ${{ secrets.OC_UPSTREAM_REPO }}
+          # Use VARIABLES so URLs don't get masked
+          UPSTREAM_OWNER: ${{ vars.OC_UPSTREAM_OWNER }}
+          UPSTREAM_REPO: ${{ vars.OC_UPSTREAM_REPO }}
+
           DEST_REPO: ${{ github.repository }}
 
-          # Use GitHub-provided token (no repo secret needed)
+          # Auth token (secret) - never print this
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-          # If "true", deletes branches/tags in DEST that are missing in upstream (except excluded branch logic isn't used here)
           PRUNE_DELETIONS: "true"
-
-          # Set to "true" to SKIP branches where upstream introduces changes under .github/workflows/
           SKIP_WORKFLOW_CHANGES: "true"
+          EXCLUDE_BRANCH: oci-syncer-c2fd2fca-1a0a-4d31-aefb-5650a99f6c3f
         run: |
           set -euo pipefail
 
@@ -42,7 +42,6 @@ jobs:
           git remote add upstream "https://github.com/${UPSTREAM_OWNER}/${UPSTREAM_REPO}.git"
           git remote add dest "https://x-access-token:${GH_TOKEN}@github.com/${DEST_REPO}.git"
 
-          # Fetch both sides so we can diff + compute commit lists
           git fetch upstream --prune --tags '+refs/heads/*:refs/remotes/upstream/*'
           git fetch dest --prune '+refs/heads/*:refs/remotes/dest/*'
 
@@ -50,11 +49,8 @@ jobs:
           DEST_URL="https://github.com/${DEST_REPO}"
 
           failed=0
-
-          # Upstream branch list
           mapfile -t UP_BRANCHES < <(git for-each-ref --format='%(refname:strip=3)' refs/remotes/upstream)
 
-          # Map dest branch tips: name -> sha
           declare -A DEST_BRANCH_SHA
           while read -r sha ref; do
             b="${ref#refs/heads/}"
@@ -62,6 +58,12 @@ jobs:
           done < <(git ls-remote --heads dest)
 
           for b in "${UP_BRANCHES[@]}"; do
+
+            if [[ "$b" == "${EXCLUDE_BRANCH}" ]]; then
+              echo "Skipping excluded branch: $b"
+              continue
+            fi
+            
             up_ref="refs/remotes/upstream/$b"
             dst_ref="refs/remotes/dest/$b"
 
@@ -75,16 +77,13 @@ jobs:
 
             compare_url="${DEST_URL}/compare/${b}...${UPSTREAM_OWNER}:${b}"
 
-            # Commits that would be introduced into dest
             commit_list=""
             if [[ -n "$dst_sha" ]]; then
               commit_list="$(git rev-list --reverse "${dst_ref}..${up_ref}" 2>/dev/null || true)"
             else
-              # New branch: show last 20 commits to keep logs sane
               commit_list="$(git rev-list --reverse -n 20 "${up_ref}" 2>/dev/null || true)"
             fi
 
-            # Optional safety: skip if changes touch workflow files (avoids GitHub rejecting GITHUB_TOKEN pushes)
             if [[ "${SKIP_WORKFLOW_CHANGES}" == "true" ]] && [[ -n "$dst_sha" ]]; then
               if git diff --name-only "${dst_ref}..${up_ref}" | grep -q '^.github/workflows/'; then
                 echo "::warning title=Skipped branch (workflow changes detected)::Branch '${b}' includes changes under .github/workflows. Compare: ${compare_url}"
@@ -97,7 +96,6 @@ jobs:
               fi
             fi
 
-            # New branch creation safety: if upstream branch contains workflows at all, skip creating it (optional)
             if [[ "${SKIP_WORKFLOW_CHANGES}" == "true" ]] && [[ -z "$dst_sha" ]]; then
               if git ls-tree -r --name-only "$up_ref" | grep -q '^.github/workflows/'; then
                 echo "::warning title=Skipped new branch (contains workflows)::Branch '${b}' contains .github/workflows. Compare: ${compare_url}"
@@ -126,7 +124,6 @@ jobs:
             rm -f "$push_err"
           done
 
-          # Optionally prune deleted branches in dest
           if [[ "${PRUNE_DELETIONS}" == "true" ]]; then
             UP_SET=" ${UP_BRANCHES[*]} "
             while read -r _ ref; do
@@ -141,7 +138,6 @@ jobs:
             done < <(git ls-remote --heads dest)
           fi
 
-          # Tags: push tags (this does not modify workflow files by itself)
           if ! git push dest +refs/tags/*:refs/tags/* --prune; then
             echo "::error title=Tag push failed::Failed syncing tags"
             failed=1
