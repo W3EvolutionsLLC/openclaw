@@ -15,6 +15,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          ref: oci-syncer-c2fd2fca-1a0a-4d31-aefb-5650a99f6c3f
           fetch-depth: 0
 
       - name: Run sync script
