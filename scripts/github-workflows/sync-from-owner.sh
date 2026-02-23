@@ -101,8 +101,19 @@ if [[ "${PRUNE_DELETIONS}" == "true" ]]; then
   UP_SET=" ${UP_BRANCHES[*]} "
   while read -r _ ref; do
     b="${ref#refs/heads/}"
+
+    # ✅ Don't delete the syncer/default branch
+    if [[ "$b" == "${EXCLUDE_BRANCH}" ]]; then
+      echo "Skipping prune for excluded branch: $b"
+      continue
+    fi
+
     if [[ "$UP_SET" != *" $b "* ]]; then
-      git push dest ":refs/heads/$b" || failed=1
+      echo "Upstream deleted branch, deleting in dest: $b"
+      if ! git push dest ":refs/heads/$b"; then
+        echo "::error title=Branch delete failed::Failed deleting dest branch '${b}'"
+        failed=1
+      fi
     fi
   done < <(git ls-remote --heads dest)
 fi
