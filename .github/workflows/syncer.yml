@@ -1,4 +1,4 @@
-name: Sync from Owner (only changes)
+name: Sync from Owner (only changed branches; report skipped/rejected)
 
 on:
   schedule:
@@ -16,16 +16,23 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
-      - name: Sync only changed refs (git only)
+      - name: Sync upstream -> fork (git only; skip workflow changes; print commit/compare links)
         env:
           UPSTREAM_OWNER: ${{ secrets.OC_UPSTREAM_OWNER }}
           UPSTREAM_REPO: ${{ secrets.OC_UPSTREAM_REPO }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DEST_REPO: ${{ github.repository }}
-          # Set to "true" if you want to delete branches/tags in Fork that upstream deleted:
+
+          # Use GitHub-provided token (no repo secret needed)
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+          # If "true", deletes branches/tags in DEST that are missing in upstream (except excluded branch logic isn't used here)
           PRUNE_DELETIONS: "true"
+
+          # Set to "true" to SKIP branches where upstream introduces changes under .github/workflows/
+          SKIP_WORKFLOW_CHANGES: "true"
         run: |
           set -euo pipefail
+
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
           mkdir -p repo
@@ -35,20 +42,30 @@ jobs:
           git remote add upstream "https://github.com/${UPSTREAM_OWNER}/${UPSTREAM_REPO}.git"
           git remote add dest "https://x-access-token:${GH_TOKEN}@github.com/${DEST_REPO}.git"
 
-          # Fetch upstream branches + tags
+          # Fetch both sides so we can diff + compute commit lists
           git fetch upstream --prune --tags '+refs/heads/*:refs/remotes/upstream/*'
+          git fetch dest --prune '+refs/heads/*:refs/remotes/dest/*'
 
-          # Build a map of dest branch tips: name -> sha
+          UPSTREAM_URL="https://github.com/${UPSTREAM_OWNER}/${UPSTREAM_REPO}"
+          DEST_URL="https://github.com/${DEST_REPO}"
+
+          failed=0
+
+          # Upstream branch list
+          mapfile -t UP_BRANCHES < <(git for-each-ref --format='%(refname:strip=3)' refs/remotes/upstream)
+
+          # Map dest branch tips: name -> sha
           declare -A DEST_BRANCH_SHA
           while read -r sha ref; do
             b="${ref#refs/heads/}"
             DEST_BRANCH_SHA["$b"]="$sha"
           done < <(git ls-remote --heads dest)
 
-          # Push only branches whose SHA differs
-          mapfile -t UP_BRANCHES < <(git for-each-ref --format='%(refname:strip=3)' refs/remotes/upstream)
           for b in "${UP_BRANCHES[@]}"; do
-            up_sha="$(git rev-parse "refs/remotes/upstream/$b")"
+            up_ref="refs/remotes/upstream/$b"
+            dst_ref="refs/remotes/dest/$b"
+
+            up_sha="$(git rev-parse "$up_ref")"
             dst_sha="${DEST_BRANCH_SHA[$b]:-}"
 
             if [[ "$up_sha" == "$dst_sha" ]]; then
@@ -56,63 +73,78 @@ jobs:
               continue
             fi
 
-            echo "Branch changed, pushing: $b ($dst_sha -> $up_sha)"
-            git push dest "+refs/remotes/upstream/$b:refs/heads/$b"
+            compare_url="${DEST_URL}/compare/${b}...${UPSTREAM_OWNER}:${b}"
+
+            # Commits that would be introduced into dest
+            commit_list=""
+            if [[ -n "$dst_sha" ]]; then
+              commit_list="$(git rev-list --reverse "${dst_ref}..${up_ref}" 2>/dev/null || true)"
+            else
+              # New branch: show last 20 commits to keep logs sane
+              commit_list="$(git rev-list --reverse -n 20 "${up_ref}" 2>/dev/null || true)"
+            fi
+
+            # Optional safety: skip if changes touch workflow files (avoids GitHub rejecting GITHUB_TOKEN pushes)
+            if [[ "${SKIP_WORKFLOW_CHANGES}" == "true" ]] && [[ -n "$dst_sha" ]]; then
+              if git diff --name-only "${dst_ref}..${up_ref}" | grep -q '^.github/workflows/'; then
+                echo "::warning title=Skipped branch (workflow changes detected)::Branch '${b}' includes changes under .github/workflows. Compare: ${compare_url}"
+                echo "Commits that would be applied to ${DEST_REPO}:${b}:"
+                while read -r sha; do
+                  [[ -z "$sha" ]] && continue
+                  echo " - ${UPSTREAM_URL}/commit/${sha}"
+                done <<< "${commit_list}"
+                continue
+              fi
+            fi
+
+            # New branch creation safety: if upstream branch contains workflows at all, skip creating it (optional)
+            if [[ "${SKIP_WORKFLOW_CHANGES}" == "true" ]] && [[ -z "$dst_sha" ]]; then
+              if git ls-tree -r --name-only "$up_ref" | grep -q '^.github/workflows/'; then
+                echo "::warning title=Skipped new branch (contains workflows)::Branch '${b}' contains .github/workflows. Compare: ${compare_url}"
+                echo "Recent commits on upstream ${UPSTREAM_OWNER}/${b}:"
+                while read -r sha; do
+                  [[ -z "$sha" ]] && continue
+                  echo " - ${UPSTREAM_URL}/commit/${sha}"
+                done <<< "${commit_list}"
+                continue
+              fi
+            fi
+
+            echo "Branch changed, pushing: $b (${dst_sha:-<none>} -> $up_sha)"
+            push_err="$(mktemp)"
+            if ! git push dest "+${up_ref}:refs/heads/${b}" 2>"$push_err"; then
+              echo "::error title=Push rejected::Failed pushing branch '${b}'. Compare: ${compare_url}"
+              echo "Push error:"
+              sed 's/^/  /' "$push_err" || true
+              echo "Commits involved:"
+              while read -r sha; do
+                [[ -z "$sha" ]] && continue
+                echo " - ${UPSTREAM_URL}/commit/${sha}"
+              done <<< "${commit_list}"
+              failed=1
+            fi
+            rm -f "$push_err"
           done
 
-          # Optionally prune deleted branches in dest (only if they truly don't exist upstream)
+          # Optionally prune deleted branches in dest
           if [[ "${PRUNE_DELETIONS}" == "true" ]]; then
-            # Build an upstream set for fast membership checks
             UP_SET=" ${UP_BRANCHES[*]} "
             while read -r _ ref; do
               b="${ref#refs/heads/}"
               if [[ "$UP_SET" != *" $b "* ]]; then
                 echo "Upstream deleted branch, deleting in dest: $b"
-                git push dest ":refs/heads/$b"
+                if ! git push dest ":refs/heads/$b"; then
+                  echo "::error title=Branch delete failed::Failed deleting dest branch '${b}'"
+                  failed=1
+                fi
               fi
             done < <(git ls-remote --heads dest)
           fi
 
-          # ---- Tags: push only changed/new tags; optionally delete removed tags ----
-          declare -A DEST_TAG_SHA
-          while read -r sha ref; do
-            t="${ref#refs/tags/}"
-            DEST_TAG_SHA["$t"]="$sha"
-          done < <(git ls-remote --tags dest | awk '$2 ~ /^refs\/tags\// {print}')
-
-          mapfile -t UP_TAGS < <(git for-each-ref --format='%(refname:strip=2)' refs/tags)
-
-          for t in "${UP_TAGS[@]}"; do
-            up_sha="$(git rev-parse "refs/tags/$t^{commit}" 2>/dev/null || true)"
-            dst_sha="${DEST_TAG_SHA[$t]:-}"
-
-            # If we can't resolve, just attempt push (rare edge cases)
-            if [[ -z "${up_sha}" ]]; then
-              echo "Tag unresolved locally, pushing anyway: $t"
-              git push dest "+refs/tags/$t:refs/tags/$t"
-              continue
-            fi
-
-            if [[ "$up_sha" == "$dst_sha" ]]; then
-              echo "Tag unchanged, skipping: $t"
-              continue
-            fi
-
-            echo "Tag changed/new, pushing: $t ($dst_sha -> $up_sha)"
-            git push dest "+refs/tags/$t:refs/tags/$t"
-          done
-
-          if [[ "${PRUNE_DELETIONS}" == "true" ]]; then
-            UP_TAG_SET=" ${UP_TAGS[*]} "
-            while read -r _ ref; do
-              t="${ref#refs/tags/}"
-              # Skip deref lines like refs/tags/v1.0^{}
-              if [[ "$t" == *"^{}" ]]; then
-                continue
-              fi
-              if [[ "$UP_TAG_SET" != *" $t "* ]]; then
-                echo "Upstream deleted tag, deleting in dest: $t"
-                git push dest ":refs/tags/$t"
-              fi
-            done < <(git ls-remote --tags dest | awk '$2 ~ /^refs\/tags\// {print}')
+          # Tags: push tags (this does not modify workflow files by itself)
+          if ! git push dest +refs/tags/*:refs/tags/* --prune; then
+            echo "::error title=Tag push failed::Failed syncing tags"
+            failed=1
           fi
+
+          exit $failed
