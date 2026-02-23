@@ -1,4 +1,4 @@
-name: Sync from Owner (only changed branches; report skipped/rejected)
+name: Sync from Owner
 
 on:
   schedule:
@@ -8,139 +8,20 @@ on:
 permissions:
   contents: write
 
-concurrency:
-  group: sync-from-owner
-  cancel-in-progress: false
-
 jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
-      - name: Sync upstream -> fork (git only; skip workflow changes; print commit/compare links)
+      - name: Run sync script
         env:
-          # Use VARIABLES so URLs don't get masked
           UPSTREAM_OWNER: ${{ vars.OC_UPSTREAM_OWNER }}
           UPSTREAM_REPO: ${{ vars.OC_UPSTREAM_REPO }}
-
           DEST_REPO: ${{ github.repository }}
-
-          # Auth token (secret) - never print this
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.OCI_PUB_SYNC_PAT }}
 
           PRUNE_DELETIONS: "true"
           SKIP_WORKFLOW_CHANGES: "true"
           EXCLUDE_BRANCH: oci-syncer-c2fd2fca-1a0a-4d31-aefb-5650a99f6c3f
         run: |
-          set -euo pipefail
-
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-
-          mkdir -p repo
-          cd repo
-          git init --bare
-
-          git remote add upstream "https://github.com/${UPSTREAM_OWNER}/${UPSTREAM_REPO}.git"
-          git remote add dest "https://x-access-token:${GH_TOKEN}@github.com/${DEST_REPO}.git"
-
-          git fetch upstream --prune --tags '+refs/heads/*:refs/remotes/upstream/*'
-          git fetch dest --prune '+refs/heads/*:refs/remotes/dest/*'
-
-          UPSTREAM_URL="https://github.com/${UPSTREAM_OWNER}/${UPSTREAM_REPO}"
-          DEST_URL="https://github.com/${DEST_REPO}"
-
-          failed=0
-          mapfile -t UP_BRANCHES < <(git for-each-ref --format='%(refname:strip=3)' refs/remotes/upstream)
-
-          declare -A DEST_BRANCH_SHA
-          while read -r sha ref; do
-            b="${ref#refs/heads/}"
-            DEST_BRANCH_SHA["$b"]="$sha"
-          done < <(git ls-remote --heads dest)
-
-          for b in "${UP_BRANCHES[@]}"; do
-
-            if [[ "$b" == "${EXCLUDE_BRANCH}" ]]; then
-              echo "Skipping excluded branch: $b"
-              continue
-            fi
-            
-            up_ref="refs/remotes/upstream/$b"
-            dst_ref="refs/remotes/dest/$b"
-
-            up_sha="$(git rev-parse "$up_ref")"
-            dst_sha="${DEST_BRANCH_SHA[$b]:-}"
-
-            if [[ "$up_sha" == "$dst_sha" ]]; then
-              echo "Branch unchanged, skipping: $b"
-              continue
-            fi
-
-            compare_url="${DEST_URL}/compare/${b}...${UPSTREAM_OWNER}:${b}"
-
-            commit_list=""
-            if [[ -n "$dst_sha" ]]; then
-              commit_list="$(git rev-list --reverse "${dst_ref}..${up_ref}" 2>/dev/null || true)"
-            else
-              commit_list="$(git rev-list --reverse -n 20 "${up_ref}" 2>/dev/null || true)"
-            fi
-
-            if [[ "${SKIP_WORKFLOW_CHANGES}" == "true" ]] && [[ -n "$dst_sha" ]]; then
-              if git diff --name-only "${dst_ref}..${up_ref}" | grep -q '^.github/workflows/'; then
-                echo "::warning title=Skipped branch (workflow changes detected)::Branch '${b}' includes changes under .github/workflows. Compare: ${compare_url}"
-                echo "Commits that would be applied to ${DEST_REPO}:${b}:"
-                while read -r sha; do
-                  [[ -z "$sha" ]] && continue
-                  echo " - ${UPSTREAM_URL}/commit/${sha}"
-                done <<< "${commit_list}"
-                continue
-              fi
-            fi
-
-            if [[ "${SKIP_WORKFLOW_CHANGES}" == "true" ]] && [[ -z "$dst_sha" ]]; then
-              if git ls-tree -r --name-only "$up_ref" | grep -q '^.github/workflows/'; then
-                echo "::warning title=Skipped new branch (contains workflows)::Branch '${b}' contains .github/workflows. Compare: ${compare_url}"
-                echo "Recent commits on upstream ${UPSTREAM_OWNER}/${b}:"
-                while read -r sha; do
-                  [[ -z "$sha" ]] && continue
-                  echo " - ${UPSTREAM_URL}/commit/${sha}"
-                done <<< "${commit_list}"
-                continue
-              fi
-            fi
-
-            echo "Branch changed, pushing: $b (${dst_sha:-<none>} -> $up_sha)"
-            push_err="$(mktemp)"
-            if ! git push dest "+${up_ref}:refs/heads/${b}" 2>"$push_err"; then
-              echo "::error title=Push rejected::Failed pushing branch '${b}'. Compare: ${compare_url}"
-              echo "Push error:"
-              sed 's/^/  /' "$push_err" || true
-              echo "Commits involved:"
-              while read -r sha; do
-                [[ -z "$sha" ]] && continue
-                echo " - ${UPSTREAM_URL}/commit/${sha}"
-              done <<< "${commit_list}"
-              failed=1
-            fi
-            rm -f "$push_err"
-          done
-
-          if [[ "${PRUNE_DELETIONS}" == "true" ]]; then
-            UP_SET=" ${UP_BRANCHES[*]} "
-            while read -r _ ref; do
-              b="${ref#refs/heads/}"
-              if [[ "$UP_SET" != *" $b "* ]]; then
-                echo "Upstream deleted branch, deleting in dest: $b"
-                if ! git push dest ":refs/heads/$b"; then
-                  echo "::error title=Branch delete failed::Failed deleting dest branch '${b}'"
-                  failed=1
-                fi
-              fi
-            done < <(git ls-remote --heads dest)
-          fi
-
-          if ! git push dest +refs/tags/*:refs/tags/* --prune; then
-            echo "::error title=Tag push failed::Failed syncing tags"
-            failed=1
-          fi
-
-          exit $failed
+          chmod +x scripts/sync-from-owner.sh
+          ./scripts/sync-from-owner.sh
