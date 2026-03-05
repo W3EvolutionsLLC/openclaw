@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { CHANNEL_IDS } from "../channels/registry.js";
 import { VERSION } from "../version.js";
 import type { ConfigUiHint, ConfigUiHints } from "./schema.hints.js";
@@ -322,7 +323,10 @@ function buildMergedSchemaCacheKey(params: {
       configUiHints: channel.configUiHints ?? null,
     }))
     .toSorted((a, b) => a.id.localeCompare(b.id));
-  return JSON.stringify({ plugins, channels });
+  // Hash the serialized key to avoid RangeError with many plugins/channels
+  // (JSON.stringify can exceed V8 string limits with 16+ channel schemas).
+  const raw = JSON.stringify({ plugins, channels });
+  return crypto.createHash("sha256").update(raw).digest("hex");
 }
 
 function setMergedSchemaCache(key: string, value: ConfigSchemaResponse): void {
