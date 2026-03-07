@@ -197,6 +197,7 @@ export async function statusAllCommand(
     progress.setLabel("Querying gateway…");
     const health = gatewayReachable
       ? await callGateway({
+          config: cfg,
           method: "health",
           timeoutMs: Math.min(8000, opts?.timeoutMs ?? 10_000),
           ...callOverrides,
@@ -205,6 +206,7 @@ export async function statusAllCommand(
 
     const channelsStatus = gatewayReachable
       ? await callGateway({
+          config: cfg,
           method: "channels.status",
           params: { probe: false, timeoutMs: opts?.timeoutMs ?? 10_000 },
           timeoutMs: Math.min(8000, opts?.timeoutMs ?? 10_000),
