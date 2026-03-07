@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { RuntimeEnv } from "../runtime.js";
 import { withEnvAsync } from "../test-utils/env.js";
 
-const loadConfig = vi.fn(() => ({
+const readBestEffortConfig = vi.fn(async () => ({
   gateway: {
     mode: "remote",
     remote: { url: "wss://remote.example:18789", token: "rtok" },
@@ -94,7 +94,7 @@ const probeGateway = vi.fn(async (opts: { url: string }) => {
 });
 
 vi.mock("../config/config.js", () => ({
-  loadConfig,
+  readBestEffortConfig,
   resolveGatewayPort,
 }));
 
@@ -187,7 +187,7 @@ describe("gateway-status command", () => {
   it("surfaces unresolved SecretRef auth diagnostics in warnings", async () => {
     const { runtime, runtimeLogs, runtimeErrors } = createRuntimeCapture();
     await withEnvAsync({ MISSING_GATEWAY_TOKEN: undefined }, async () => {
-      loadConfig.mockReturnValueOnce({
+      readBestEffortConfig.mockResolvedValueOnce({
         secrets: {
           providers: {
             default: { source: "env" },
@@ -200,7 +200,7 @@ describe("gateway-status command", () => {
             token: { source: "env", provider: "default", id: "MISSING_GATEWAY_TOKEN" },
           },
         },
-      } as unknown as ReturnType<typeof loadConfig>);
+      } as never);
 
       await runGatewayStatus(runtime, { timeout: "1000", json: true });
     });
@@ -228,7 +228,7 @@ describe("gateway-status command", () => {
         MISSING_GATEWAY_TOKEN: undefined,
       },
       async () => {
-        loadConfig.mockReturnValueOnce({
+        readBestEffortConfig.mockResolvedValueOnce({
           secrets: {
             providers: {
               default: { source: "env" },
@@ -241,7 +241,7 @@ describe("gateway-status command", () => {
               token: { source: "env", provider: "default", id: "MISSING_GATEWAY_TOKEN" },
             },
           },
-        } as unknown as ReturnType<typeof loadConfig>);
+        } as never);
 
         await runGatewayStatus(runtime, { timeout: "1000", json: true });
       },
@@ -274,7 +274,7 @@ describe("gateway-status command", () => {
         MISSING_GATEWAY_PASSWORD: undefined,
       },
       async () => {
-        loadConfig.mockReturnValueOnce({
+        readBestEffortConfig.mockResolvedValueOnce({
           secrets: {
             providers: {
               default: { source: "env" },
@@ -288,7 +288,7 @@ describe("gateway-status command", () => {
               password: { source: "env", provider: "default", id: "MISSING_GATEWAY_PASSWORD" },
             },
           },
-        } as unknown as ReturnType<typeof loadConfig>);
+        } as never);
 
         await runGatewayStatus(runtime, { timeout: "1000", json: true });
       },
@@ -315,7 +315,7 @@ describe("gateway-status command", () => {
         CLAWDBOT_GATEWAY_TOKEN: undefined,
       },
       async () => {
-        loadConfig.mockReturnValueOnce({
+        readBestEffortConfig.mockResolvedValueOnce({
           secrets: {
             providers: {
               default: { source: "env" },
@@ -328,7 +328,7 @@ describe("gateway-status command", () => {
               token: "${CUSTOM_GATEWAY_TOKEN}",
             },
           },
-        } as unknown as ReturnType<typeof loadConfig>);
+        } as never);
 
         await runGatewayStatus(runtime, { timeout: "1000", json: true });
       },
@@ -471,7 +471,7 @@ describe("gateway-status command", () => {
   it("skips invalid ssh-auto discovery targets", async () => {
     const { runtime } = createRuntimeCapture();
     await withEnvAsync({ USER: "steipete" }, async () => {
-      loadConfig.mockReturnValueOnce(makeRemoteGatewayConfig("", "", "ltok"));
+      readBestEffortConfig.mockResolvedValueOnce(makeRemoteGatewayConfig("", "", "ltok"));
       discoverGatewayBeacons.mockResolvedValueOnce([
         { tailnetDns: "-V" },
         { tailnetDns: "goodhost" },
@@ -489,7 +489,7 @@ describe("gateway-status command", () => {
   it("infers SSH target from gateway.remote.url and ssh config", async () => {
     const { runtime } = createRuntimeCapture();
     await withEnvAsync({ USER: "steipete" }, async () => {
-      loadConfig.mockReturnValueOnce(
+      readBestEffortConfig.mockResolvedValueOnce(
         makeRemoteGatewayConfig("ws://peters-mac-studio-1.sheep-coho.ts.net:18789"),
       );
       resolveSshConfig.mockResolvedValueOnce({
@@ -515,7 +515,9 @@ describe("gateway-status command", () => {
   it("falls back to host-only when USER is missing and ssh config is unavailable", async () => {
     const { runtime } = createRuntimeCapture();
     await withEnvAsync({ USER: "" }, async () => {
-      loadConfig.mockReturnValueOnce(makeRemoteGatewayConfig("wss://studio.example:18789"));
+      readBestEffortConfig.mockResolvedValueOnce(
+        makeRemoteGatewayConfig("wss://studio.example:18789"),
+      );
       resolveSshConfig.mockResolvedValueOnce(null);
 
       startSshPortForward.mockClear();
@@ -531,7 +533,9 @@ describe("gateway-status command", () => {
   it("keeps explicit SSH identity even when ssh config provides one", async () => {
     const { runtime } = createRuntimeCapture();
 
-    loadConfig.mockReturnValueOnce(makeRemoteGatewayConfig("wss://studio.example:18789"));
+    readBestEffortConfig.mockResolvedValueOnce(
+      makeRemoteGatewayConfig("wss://studio.example:18789"),
+    );
     resolveSshConfig.mockResolvedValueOnce({
       user: "me",
       host: "studio.example",
