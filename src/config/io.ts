@@ -810,7 +810,7 @@ export function createConfigIO(overrides: ConfigIoDeps = {}) {
       }
       const error = err as { code?: string };
       if (error?.code === "INVALID_CONFIG") {
-        return {};
+        throw err;
       }
       deps.logger.error(`Failed to read config at ${configPath}`, err);
       return {};
@@ -1370,6 +1370,11 @@ export function loadConfig(): OpenClawConfig {
     }
   }
   return config;
+}
+
+export async function readBestEffortConfig(): Promise<OpenClawConfig> {
+  const snapshot = await readConfigFileSnapshot();
+  return snapshot.valid ? loadConfig() : snapshot.config;
 }
 
 export async function readConfigFileSnapshot(): Promise<ConfigFileSnapshot> {
