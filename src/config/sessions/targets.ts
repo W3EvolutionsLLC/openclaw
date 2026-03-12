@@ -1,11 +1,10 @@
-import os from "node:os";
 import path from "node:path";
 import { listAgentIds, resolveDefaultAgentId } from "../../agents/agent-scope.js";
-import { resolveAgentSessionDirs } from "../../agents/session-dirs.js";
+import { resolveAgentSessionDirsFromAgentsDir } from "../../agents/session-dirs.js";
 import { normalizeAgentId } from "../../routing/session-key.js";
 import { resolveStateDir } from "../paths.js";
 import type { OpenClawConfig } from "../types.openclaw.js";
-import { resolveStorePath } from "./paths.js";
+import { resolveAgentsDirFromSessionStorePath, resolveStorePath } from "./paths.js";
 
 export type SessionStoreSelectionOptions = {
   store?: string;
@@ -32,19 +31,36 @@ export async function resolveAllAgentSessionStoreTargets(
   cfg: OpenClawConfig,
   params: { env?: NodeJS.ProcessEnv } = {},
 ): Promise<SessionStoreTarget[]> {
-  const configuredTargets = resolveSessionStoreTargets(cfg, { allAgents: true });
-  const stateDir = resolveStateDir(params.env ?? process.env, os.homedir);
-  const discoveredTargets = (await resolveAgentSessionDirs(stateDir)).map((sessionsDir) => ({
-    agentId: normalizeAgentId(path.basename(path.dirname(sessionsDir))),
-    storePath: path.join(sessionsDir, "sessions.json"),
-  }));
+  const env = params.env ?? process.env;
+  const configuredTargets = resolveSessionStoreTargets(cfg, { allAgents: true }, { env });
+  const agentsRoots = new Set<string>();
+  for (const target of configuredTargets) {
+    const agentsDir = resolveAgentsDirFromSessionStorePath(target.storePath);
+    if (agentsDir) {
+      agentsRoots.add(agentsDir);
+    }
+  }
+  agentsRoots.add(path.join(resolveStateDir(env), "agents"));
+
+  const discoveredDirs = await Promise.all(
+    [...agentsRoots].map((agentsDir) => resolveAgentSessionDirsFromAgentsDir(agentsDir)),
+  );
+  const discoveredTargets = discoveredDirs.flat().map((sessionsDir) => {
+    const agentId = normalizeAgentId(path.basename(path.dirname(sessionsDir)));
+    return {
+      agentId,
+      storePath: resolveStorePath(cfg.session?.store, { agentId, env }),
+    };
+  });
   return dedupeTargetsByStorePath([...configuredTargets, ...discoveredTargets]);
 }
 
 export function resolveSessionStoreTargets(
   cfg: OpenClawConfig,
   opts: SessionStoreSelectionOptions,
+  params: { env?: NodeJS.ProcessEnv } = {},
 ): SessionStoreTarget[] {
+  const env = params.env ?? process.env;
   const defaultAgentId = resolveDefaultAgentId(cfg);
   const hasAgent = Boolean(opts.agent?.trim());
   const allAgents = opts.allAgents === true;
@@ -59,7 +75,7 @@ export function resolveSessionStoreTargets(
     return [
       {
         agentId: defaultAgentId,
-        storePath: resolveStorePath(opts.store, { agentId: defaultAgentId }),
+        storePath: resolveStorePath(opts.store, { agentId: defaultAgentId, env }),
       },
     ];
   }
@@ -67,7 +83,7 @@ export function resolveSessionStoreTargets(
   if (allAgents) {
     const targets = listAgentIds(cfg).map((agentId) => ({
       agentId,
-      storePath: resolveStorePath(cfg.session?.store, { agentId }),
+      storePath: resolveStorePath(cfg.session?.store, { agentId, env }),
     }));
     return dedupeTargetsByStorePath(targets);
   }
@@ -83,7 +99,7 @@ export function resolveSessionStoreTargets(
     return [
       {
         agentId: requested,
-        storePath: resolveStorePath(cfg.session?.store, { agentId: requested }),
+        storePath: resolveStorePath(cfg.session?.store, { agentId: requested, env }),
       },
     ];
   }
@@ -91,7 +107,7 @@ export function resolveSessionStoreTargets(
   return [
     {
       agentId: defaultAgentId,
-      storePath: resolveStorePath(cfg.session?.store, { agentId: defaultAgentId }),
+      storePath: resolveStorePath(cfg.session?.store, { agentId: defaultAgentId, env }),
     },
   ];
 }

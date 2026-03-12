@@ -41,4 +41,76 @@ describe("resolveAllAgentSessionStoreTargets", () => {
       ).toHaveLength(1);
     });
   });
+
+  it("discovers retired agent stores under a configured custom session root", async () => {
+    await withTempHome(async (home) => {
+      const customRoot = path.join(home, "custom-state");
+      const opsSessionsDir = path.join(customRoot, "agents", "ops", "sessions");
+      const retiredSessionsDir = path.join(customRoot, "agents", "retired", "sessions");
+      await fs.mkdir(opsSessionsDir, { recursive: true });
+      await fs.mkdir(retiredSessionsDir, { recursive: true });
+      await fs.writeFile(path.join(opsSessionsDir, "sessions.json"), "{}", "utf8");
+      await fs.writeFile(path.join(retiredSessionsDir, "sessions.json"), "{}", "utf8");
+
+      const cfg: OpenClawConfig = {
+        session: {
+          store: path.join(customRoot, "agents", "{agentId}", "sessions", "sessions.json"),
+        },
+        agents: {
+          list: [{ id: "ops", default: true }],
+        },
+      };
+
+      const targets = await resolveAllAgentSessionStoreTargets(cfg, { env: process.env });
+
+      expect(targets).toEqual(
+        expect.arrayContaining([
+          {
+            agentId: "ops",
+            storePath: path.join(opsSessionsDir, "sessions.json"),
+          },
+          {
+            agentId: "retired",
+            storePath: path.join(retiredSessionsDir, "sessions.json"),
+          },
+        ]),
+      );
+      expect(
+        targets.filter((target) => target.storePath === path.join(opsSessionsDir, "sessions.json")),
+      ).toHaveLength(1);
+    });
+  });
+
+  it("respects the caller env when resolving configured and discovered store roots", async () => {
+    await withTempHome(async (home) => {
+      const envStateDir = path.join(home, "env-state");
+      const mainSessionsDir = path.join(envStateDir, "agents", "main", "sessions");
+      const retiredSessionsDir = path.join(envStateDir, "agents", "retired", "sessions");
+      await fs.mkdir(mainSessionsDir, { recursive: true });
+      await fs.mkdir(retiredSessionsDir, { recursive: true });
+      await fs.writeFile(path.join(mainSessionsDir, "sessions.json"), "{}", "utf8");
+      await fs.writeFile(path.join(retiredSessionsDir, "sessions.json"), "{}", "utf8");
+
+      const env = {
+        ...process.env,
+        OPENCLAW_STATE_DIR: envStateDir,
+      };
+      const cfg: OpenClawConfig = {};
+
+      const targets = await resolveAllAgentSessionStoreTargets(cfg, { env });
+
+      expect(targets).toEqual(
+        expect.arrayContaining([
+          {
+            agentId: "main",
+            storePath: path.join(mainSessionsDir, "sessions.json"),
+          },
+          {
+            agentId: "retired",
+            storePath: path.join(retiredSessionsDir, "sessions.json"),
+          },
+        ]),
+      );
+    });
+  });
 });
