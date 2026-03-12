@@ -97,13 +97,16 @@ async function resolveDirectRoomId(client: MatrixClient, userId: string): Promis
   if (!isMatrixQualifiedUserId(trimmed)) {
     throw new Error(`Matrix user IDs must be fully qualified (got "${trimmed}")`);
   }
+  const selfUserId = (await client.getUserId().catch(() => null))?.trim() || null;
 
   const directRoomCache = resolveDirectRoomCache(client);
   const cached = directRoomCache.get(trimmed);
-  if (cached) {
+  if (cached && (await isStrictDirectRoom(client, cached, trimmed, selfUserId))) {
     return cached;
   }
-  const selfUserId = (await client.getUserId().catch(() => null))?.trim() || null;
+  if (cached) {
+    directRoomCache.delete(trimmed);
+  }
 
   // 1) Fast path: use account data (m.direct) for *this* logged-in user (the bot).
   try {

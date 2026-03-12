@@ -166,6 +166,40 @@ describe("resolveMatrixRoomId", () => {
 
     await expect(resolveMatrixRoomId(client, userId)).resolves.toBe("!dm-room:example.org");
   });
+
+  it("revalidates cached direct rooms before reuse when membership changes", async () => {
+    const userId = "@shared:example.org";
+    const directRooms = ["!dm-room-1:example.org"];
+    const membersByRoom = new Map<string, string[]>([
+      ["!dm-room-1:example.org", ["@bot:example.org", userId]],
+      ["!dm-room-2:example.org", ["@bot:example.org", userId]],
+    ]);
+    const client = {
+      getAccountData: vi.fn().mockImplementation(async () => ({
+        [userId]: [...directRooms],
+      })),
+      getUserId: vi.fn().mockResolvedValue("@bot:example.org"),
+      getJoinedRooms: vi
+        .fn()
+        .mockResolvedValue(["!dm-room-1:example.org", "!dm-room-2:example.org"]),
+      getJoinedRoomMembers: vi
+        .fn()
+        .mockImplementation(async (roomId: string) => membersByRoom.get(roomId) ?? []),
+      setAccountData: vi.fn(),
+      resolveRoom: vi.fn(),
+    } as unknown as MatrixClient;
+
+    await expect(resolveMatrixRoomId(client, userId)).resolves.toBe("!dm-room-1:example.org");
+
+    directRooms.splice(0, directRooms.length, "!dm-room-1:example.org", "!dm-room-2:example.org");
+    membersByRoom.set("!dm-room-1:example.org", [
+      "@bot:example.org",
+      userId,
+      "@mallory:example.org",
+    ]);
+
+    await expect(resolveMatrixRoomId(client, userId)).resolves.toBe("!dm-room-2:example.org");
+  });
 });
 
 describe("normalizeThreadId", () => {
