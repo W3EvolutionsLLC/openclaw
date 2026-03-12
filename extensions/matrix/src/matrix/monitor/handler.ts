@@ -294,7 +294,11 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
         }
       }
 
-      const senderName = await getMemberDisplayName(roomId, senderId);
+      let senderNamePromise: Promise<string> | null = null;
+      const getSenderName = async (): Promise<string> => {
+        senderNamePromise ??= getMemberDisplayName(roomId, senderId).catch(() => senderId);
+        return await senderNamePromise;
+      };
       const storeAllowFrom = await readStoreAllowFrom();
       const roomUsers = roomConfig?.users ?? [];
       const accessState = resolveMatrixMonitorAccessState({
@@ -324,6 +328,7 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
           const allowMatchMeta = formatAllowlistMatchMeta(directAllowMatch);
           if (!directAllowMatch.allowed) {
             if (!isReactionEvent && dmPolicy === "pairing") {
+              const senderName = await getSenderName();
               const { code, created } = await core.channel.pairing.upsertPairingRequest({
                 channel: "matrix",
                 id: senderId,
@@ -400,6 +405,7 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
       }
 
       if (isReactionEvent) {
+        const senderName = await getSenderName();
         await handleInboundMatrixReaction({
           client,
           core,
@@ -541,6 +547,7 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
       if (!bodyText) {
         return;
       }
+      const senderName = await getSenderName();
 
       const messageId = event.event_id ?? "";
       const replyToEventId = content["m.relates_to"]?.["m.in_reply_to"]?.event_id;
