@@ -109,7 +109,7 @@ export type MatrixConfig = {
   startupVerificationCooldownHours?: number;
   /** Max outbound media size in MB. */
   mediaMaxMb?: number;
-  /** Auto-join invites (always|allowlist|off). Default: always. */
+  /** Auto-join invites (always|allowlist|off). Default: off. */
   autoJoin?: "always" | "allowlist" | "off";
   /** Allowlist for auto-join invites (room IDs, aliases). */
   autoJoinAllowlist?: Array<string | number>;

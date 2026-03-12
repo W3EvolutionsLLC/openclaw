@@ -165,7 +165,7 @@ export const matrixPlugin: ChannelPlugin<ResolvedMatrixAccount> = {
           `- Matrix rooms: groupPolicy="open" allows any room to trigger (mention-gated). Set ${configPath}.groupPolicy="allowlist" + ${configPath}.groups (and optionally ${configPath}.groupAllowFrom) to restrict rooms.`,
         );
       }
-      if ((account.config.autoJoin ?? "always") === "always") {
+      if ((account.config.autoJoin ?? "off") === "always") {
         warnings.push(
           `- Matrix invites: autoJoin="always" joins any invited room before message policy applies. Set ${configPath}.autoJoin="allowlist" + ${configPath}.autoJoinAllowlist (or ${configPath}.autoJoin="off") to restrict joins.`,
         );

@@ -58,6 +58,22 @@ describe("registerMatrixAutoJoin", () => {
     expect(joinRoom).toHaveBeenCalledWith("!room:example.org");
   });
 
+  it("does not auto-join invites by default", async () => {
+    const { client, getInviteHandler, joinRoom } = createClientStub();
+
+    registerMatrixAutoJoin({
+      client,
+      accountConfig: {},
+      runtime: {
+        log: vi.fn(),
+        error: vi.fn(),
+      } as unknown as import("openclaw/plugin-sdk/matrix").RuntimeEnv,
+    });
+
+    expect(getInviteHandler()).toBeNull();
+    expect(joinRoom).not.toHaveBeenCalled();
+  });
+
   it("ignores invites outside allowlist when autoJoin=allowlist", async () => {
     const { client, getInviteHandler, joinRoom, resolveRoom } = createClientStub();
     resolveRoom.mockResolvedValue(null);

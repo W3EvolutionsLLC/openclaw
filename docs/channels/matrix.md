@@ -574,7 +574,7 @@ Live directory lookup uses the logged-in Matrix account:
 - `ackReactionScope`: optional ack reaction scope override (`group-mentions`, `group-all`, `direct`, `all`, `none`, `off`).
 - `reactionNotifications`: inbound reaction notification mode (`own`, `off`).
 - `mediaMaxMb`: outbound media size cap in MB.
-- `autoJoin`: invite auto-join policy (`always`, `allowlist`, `off`).
+- `autoJoin`: invite auto-join policy (`always`, `allowlist`, `off`). Default: `off`.
 - `autoJoinAllowlist`: rooms/aliases allowed when `autoJoin` is `allowlist`.
 - `dm`: DM policy block (`enabled`, `policy`, `allowFrom`).
 - `dm.allowFrom` entries should be full Matrix user IDs unless you already resolved them through live directory lookup.

@@ -16,7 +16,7 @@ export function registerMatrixAutoJoin(params: {
     }
     runtime.log?.(message);
   };
-  const autoJoin = accountConfig.autoJoin ?? "always";
+  const autoJoin = accountConfig.autoJoin ?? "off";
   const rawAllowlist = (accountConfig.autoJoinAllowlist ?? [])
     .map((entry) => String(entry).trim())
     .filter(Boolean);
