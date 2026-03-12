@@ -161,9 +161,30 @@ function resolveSummaryRecency(summary: MatrixVerificationSummaryLike): number {
   return Number.isFinite(ts) ? ts : 0;
 }
 
+async function isStrictDirectVerificationRoom(params: {
+  client: MatrixClient;
+  roomId: string;
+  senderId: string;
+}): Promise<boolean> {
+  const selfUserId = trimMaybeString(await params.client.getUserId().catch(() => null));
+  if (!selfUserId) {
+    return false;
+  }
+  const joinedMembers = await params.client.getJoinedRoomMembers(params.roomId).catch(() => null);
+  if (!Array.isArray(joinedMembers) || joinedMembers.length !== 2) {
+    return false;
+  }
+  const normalizedMembers = joinedMembers
+    .filter((entry): entry is string => typeof entry === "string")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  return normalizedMembers.includes(selfUserId) && normalizedMembers.includes(params.senderId);
+}
+
 async function resolveVerificationSummaryForSignal(
   client: MatrixClient,
   params: {
+    roomId: string;
     event: MatrixRawEvent;
     senderId: string;
     flowId: string | null;
@@ -187,7 +208,20 @@ async function resolveVerificationSummaryForSignal(
     return byTransactionId;
   }
 
-  // Fallback for flows where transaction IDs do not match room event IDs consistently.
+  // Only fall back by user inside the active DM with that user. Otherwise a
+  // spoofed verification event in an unrelated room can leak the current SAS
+  // prompt into that room.
+  if (
+    !(await isStrictDirectVerificationRoom({
+      client,
+      roomId: params.roomId,
+      senderId: params.senderId,
+    }))
+  ) {
+    return null;
+  }
+
+  // Fallback for DM flows where transaction IDs do not match room event IDs consistently.
   const byUser = list
     .filter((entry) => entry.otherUserId === params.senderId && entry.completed !== true)
     .sort((a, b) => resolveSummaryRecency(b) - resolveSummaryRecency(a))[0];
@@ -257,6 +291,7 @@ export function createMatrixVerificationEventRouter(params: {
 
       const stageNotice = formatVerificationStageNotice({ stage: signal.stage, senderId, event });
       const summary = await resolveVerificationSummaryForSignal(params.client, {
+        roomId,
         event,
         senderId,
         flowId,

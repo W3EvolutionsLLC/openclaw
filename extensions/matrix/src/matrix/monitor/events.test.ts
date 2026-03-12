@@ -19,6 +19,8 @@ function createHarness(params?: {
   accountId?: string;
   authEncryption?: boolean;
   cryptoAvailable?: boolean;
+  selfUserId?: string;
+  joinedMembersByRoom?: Record<string, string[]>;
   verifications?: Array<{
     id: string;
     transactionId?: string;
@@ -43,6 +45,10 @@ function createHarness(params?: {
       return client;
     }),
     sendMessage,
+    getUserId: vi.fn(async () => params?.selfUserId ?? "@bot:example.org"),
+    getJoinedRoomMembers: vi.fn(
+      async (roomId: string) => params?.joinedMembersByRoom?.[roomId] ?? [],
+    ),
     ...(params?.cryptoAvailable === false
       ? {}
       : {
@@ -157,6 +163,9 @@ describe("registerMatrixMonitorEvents verification routing", () => {
 
   it("posts SAS emoji/decimal details when verification summaries expose them", async () => {
     const { sendMessage, roomEventListener, listVerifications } = createHarness({
+      joinedMembersByRoom: {
+        "!dm:example.org": ["@alice:example.org", "@bot:example.org"],
+      },
       verifications: [
         {
           id: "verification-1",
@@ -175,7 +184,7 @@ describe("registerMatrixMonitorEvents verification routing", () => {
       ],
     });
 
-    roomEventListener("!room:example.org", {
+    roomEventListener("!dm:example.org", {
       event_id: "$start2",
       sender: "@alice:example.org",
       type: "m.key.verification.start",
@@ -192,6 +201,52 @@ describe("registerMatrixMonitorEvents verification routing", () => {
       expect(bodies.some((body) => body.includes("SAS emoji:"))).toBe(true);
       expect(bodies.some((body) => body.includes("SAS decimal: 6158 1986 3513"))).toBe(true);
     });
+  });
+
+  it("does not leak SAS details into unrelated non-DM rooms when flow ids do not match", async () => {
+    const { sendMessage, roomEventListener } = createHarness({
+      joinedMembersByRoom: {
+        "!group:example.org": ["@alice:example.org", "@bot:example.org", "@ops:example.org"],
+      },
+      verifications: [
+        {
+          id: "verification-2",
+          transactionId: "$different-flow-id",
+          otherUserId: "@alice:example.org",
+          updatedAt: new Date("2026-02-25T21:42:54.000Z").toISOString(),
+          sas: {
+            decimal: [6158, 1986, 3513],
+            emoji: [
+              ["🎁", "Gift"],
+              ["🌍", "Globe"],
+              ["🐴", "Horse"],
+            ],
+          },
+        },
+      ],
+    });
+
+    roomEventListener("!group:example.org", {
+      event_id: "$start-group",
+      sender: "@alice:example.org",
+      type: "m.key.verification.start",
+      origin_server_ts: Date.now(),
+      content: {
+        "m.relates_to": { event_id: "$req-group" },
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledTimes(1);
+    });
+    expect(getSentNoticeBody(sendMessage, 0)).toContain(
+      "Matrix verification started with @alice:example.org.",
+    );
+    expect(
+      (sendMessage.mock.calls as unknown[][]).some((call) =>
+        String((call[1] as { body?: string } | undefined)?.body ?? "").includes("SAS emoji:"),
+      ),
+    ).toBe(false);
   });
 
   it("does not emit duplicate SAS notices for the same verification payload", async () => {

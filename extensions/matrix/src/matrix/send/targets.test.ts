@@ -17,8 +17,9 @@ describe("resolveMatrixRoomId", () => {
       getAccountData: vi.fn().mockResolvedValue({
         [userId]: ["!room:example.org"],
       }),
+      getUserId: vi.fn().mockResolvedValue("@bot:example.org"),
       getJoinedRooms: vi.fn(),
-      getJoinedRoomMembers: vi.fn(),
+      getJoinedRoomMembers: vi.fn().mockResolvedValue(["@bot:example.org", userId]),
       setAccountData: vi.fn(),
     } as unknown as MatrixClient;
 
@@ -37,6 +38,7 @@ describe("resolveMatrixRoomId", () => {
     const setAccountData = vi.fn().mockResolvedValue(undefined);
     const client = {
       getAccountData: vi.fn().mockRejectedValue(new Error("nope")),
+      getUserId: vi.fn().mockResolvedValue("@bot:example.org"),
       getJoinedRooms: vi.fn().mockResolvedValue([roomId]),
       getJoinedRoomMembers: vi.fn().mockResolvedValue(["@bot:example.org", userId]),
       setAccountData,
@@ -61,6 +63,7 @@ describe("resolveMatrixRoomId", () => {
       .mockResolvedValueOnce(["@bot:example.org", userId]);
     const client = {
       getAccountData: vi.fn().mockRejectedValue(new Error("nope")),
+      getUserId: vi.fn().mockResolvedValue("@bot:example.org"),
       getJoinedRooms: vi.fn().mockResolvedValue(["!bad:example.org", roomId]),
       getJoinedRoomMembers,
       setAccountData,
@@ -77,6 +80,7 @@ describe("resolveMatrixRoomId", () => {
     const roomId = "!group:example.org";
     const client = {
       getAccountData: vi.fn().mockRejectedValue(new Error("nope")),
+      getUserId: vi.fn().mockResolvedValue("@bot:example.org"),
       getJoinedRooms: vi.fn().mockResolvedValue([roomId]),
       getJoinedRoomMembers: vi
         .fn()
@@ -98,8 +102,9 @@ describe("resolveMatrixRoomId", () => {
       getAccountData: vi.fn().mockResolvedValue({
         [userId]: [roomId],
       }),
+      getUserId: vi.fn().mockResolvedValue("@bot:example.org"),
       getJoinedRooms: vi.fn(),
-      getJoinedRoomMembers: vi.fn(),
+      getJoinedRoomMembers: vi.fn().mockResolvedValue(["@bot:example.org", userId]),
       setAccountData: vi.fn(),
       resolveRoom: vi.fn(),
     } as unknown as MatrixClient;
@@ -117,8 +122,9 @@ describe("resolveMatrixRoomId", () => {
       getAccountData: vi.fn().mockResolvedValue({
         [userId]: ["!room-a:example.org"],
       }),
+      getUserId: vi.fn().mockResolvedValue("@bot-a:example.org"),
       getJoinedRooms: vi.fn(),
-      getJoinedRoomMembers: vi.fn(),
+      getJoinedRoomMembers: vi.fn().mockResolvedValue(["@bot-a:example.org", userId]),
       setAccountData: vi.fn(),
       resolveRoom: vi.fn(),
     } as unknown as MatrixClient;
@@ -126,8 +132,9 @@ describe("resolveMatrixRoomId", () => {
       getAccountData: vi.fn().mockResolvedValue({
         [userId]: ["!room-b:example.org"],
       }),
+      getUserId: vi.fn().mockResolvedValue("@bot-b:example.org"),
       getJoinedRooms: vi.fn(),
-      getJoinedRoomMembers: vi.fn(),
+      getJoinedRoomMembers: vi.fn().mockResolvedValue(["@bot-b:example.org", userId]),
       setAccountData: vi.fn(),
       resolveRoom: vi.fn(),
     } as unknown as MatrixClient;
@@ -139,6 +146,25 @@ describe("resolveMatrixRoomId", () => {
     expect(clientA.getAccountData).toHaveBeenCalledTimes(1);
     // oxlint-disable-next-line typescript/unbound-method
     expect(clientB.getAccountData).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores m.direct entries that point at shared rooms", async () => {
+    const userId = "@shared:example.org";
+    const client = {
+      getAccountData: vi.fn().mockResolvedValue({
+        [userId]: ["!shared-room:example.org", "!dm-room:example.org"],
+      }),
+      getUserId: vi.fn().mockResolvedValue("@bot:example.org"),
+      getJoinedRooms: vi.fn(),
+      getJoinedRoomMembers: vi
+        .fn()
+        .mockResolvedValueOnce(["@bot:example.org", userId, "@extra:example.org"])
+        .mockResolvedValueOnce(["@bot:example.org", userId]),
+      setAccountData: vi.fn(),
+      resolveRoom: vi.fn(),
+    } as unknown as MatrixClient;
+
+    await expect(resolveMatrixRoomId(client, userId)).resolves.toBe("!dm-room:example.org");
   });
 });
 

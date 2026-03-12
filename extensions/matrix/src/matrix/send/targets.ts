@@ -43,6 +43,26 @@ function setDirectRoomCached(client: MatrixClient, key: string, value: string): 
   }
 }
 
+async function isStrictDirectRoom(
+  client: MatrixClient,
+  roomId: string,
+  remoteUserId: string,
+  selfUserId: string | null,
+): Promise<boolean> {
+  if (!selfUserId) {
+    return false;
+  }
+  let members: string[];
+  try {
+    members = await client.getJoinedRoomMembers(roomId);
+  } catch {
+    return false;
+  }
+  return (
+    members.length === 2 && members.includes(remoteUserId.trim()) && members.includes(selfUserId)
+  );
+}
+
 async function persistDirectRoom(
   client: MatrixClient,
   userId: string,
@@ -83,6 +103,7 @@ async function resolveDirectRoomId(client: MatrixClient, userId: string): Promis
   if (cached) {
     return cached;
   }
+  const selfUserId = (await client.getUserId().catch(() => null))?.trim() || null;
 
   // 1) Fast path: use account data (m.direct) for *this* logged-in user (the bot).
   try {
@@ -91,9 +112,11 @@ async function resolveDirectRoomId(client: MatrixClient, userId: string): Promis
       string[] | undefined
     >;
     const list = Array.isArray(directContent?.[trimmed]) ? directContent[trimmed] : [];
-    if (list && list.length > 0) {
-      setDirectRoomCached(client, trimmed, list[0]);
-      return list[0];
+    for (const roomId of list) {
+      if (await isStrictDirectRoom(client, roomId, trimmed, selfUserId)) {
+        setDirectRoomCached(client, trimmed, roomId);
+        return roomId;
+      }
     }
   } catch {
     // Ignore and fall back.
@@ -104,16 +127,7 @@ async function resolveDirectRoomId(client: MatrixClient, userId: string): Promis
   try {
     const rooms = await client.getJoinedRooms();
     for (const roomId of rooms) {
-      let members: string[];
-      try {
-        members = await client.getJoinedRoomMembers(roomId);
-      } catch {
-        continue;
-      }
-      if (!members.includes(trimmed)) {
-        continue;
-      }
-      if (members.length === 2) {
+      if (await isStrictDirectRoom(client, roomId, trimmed, selfUserId)) {
         setDirectRoomCached(client, trimmed, roomId);
         await persistDirectRoom(client, trimmed, roomId);
         return roomId;

@@ -12,19 +12,11 @@ type DirectRoomTrackerOptions = {
 
 const DM_CACHE_TTL_MS = 30_000;
 
-function isMatrixNotFoundError(err: unknown): boolean {
-  if (typeof err !== "object" || err === null) {
-    return false;
-  }
-  const value = err as { errcode?: string; statusCode?: number };
-  return value.errcode === "M_NOT_FOUND" || value.statusCode === 404;
-}
-
 export function createDirectRoomTracker(client: MatrixClient, opts: DirectRoomTrackerOptions = {}) {
   const log = opts.log ?? (() => {});
   let lastDmUpdateMs = 0;
   let cachedSelfUserId: string | null = null;
-  const memberCountCache = new Map<string, { count: number; ts: number }>();
+  const joinedMembersCache = new Map<string, { members: string[]; ts: number }>();
 
   const ensureSelfUserId = async (): Promise<string | null> => {
     if (cachedSelfUserId) {
@@ -51,33 +43,23 @@ export function createDirectRoomTracker(client: MatrixClient, opts: DirectRoomTr
     }
   };
 
-  const resolveMemberCount = async (roomId: string): Promise<number | null> => {
-    const cached = memberCountCache.get(roomId);
+  const resolveJoinedMembers = async (roomId: string): Promise<string[] | null> => {
+    const cached = joinedMembersCache.get(roomId);
     const now = Date.now();
     if (cached && now - cached.ts < DM_CACHE_TTL_MS) {
-      return cached.count;
+      return cached.members;
     }
     try {
       const members = await client.getJoinedRoomMembers(roomId);
-      const count = members.length;
-      memberCountCache.set(roomId, { count, ts: now });
-      return count;
+      const normalized = members
+        .filter((entry): entry is string => typeof entry === "string")
+        .map((entry) => entry.trim())
+        .filter(Boolean);
+      joinedMembersCache.set(roomId, { members: normalized, ts: now });
+      return normalized;
     } catch (err) {
-      log(`matrix: dm member count failed room=${roomId} (${String(err)})`);
+      log(`matrix: dm member lookup failed room=${roomId} (${String(err)})`);
       return null;
-    }
-  };
-
-  const hasDirectFlag = async (roomId: string, userId?: string): Promise<boolean> => {
-    const target = userId?.trim();
-    if (!target) {
-      return false;
-    }
-    try {
-      const state = await client.getRoomStateEvent(roomId, "m.room.member", target);
-      return state?.is_direct === true;
-    } catch {
-      return false;
     }
   };
 
@@ -92,35 +74,22 @@ export function createDirectRoomTracker(client: MatrixClient, opts: DirectRoomTr
       }
 
       const selfUserId = params.selfUserId ?? (await ensureSelfUserId());
-      const directViaState =
-        (await hasDirectFlag(roomId, senderId)) || (await hasDirectFlag(roomId, selfUserId ?? ""));
-      if (directViaState) {
-        log(`matrix: dm detected via member state room=${roomId}`);
+      const joinedMembers = await resolveJoinedMembers(roomId);
+      const normalizedSenderId = senderId?.trim();
+      if (
+        selfUserId &&
+        normalizedSenderId &&
+        joinedMembers?.length === 2 &&
+        joinedMembers.includes(selfUserId) &&
+        joinedMembers.includes(normalizedSenderId)
+      ) {
+        log(`matrix: dm detected via exact 2-member room room=${roomId}`);
         return true;
       }
 
-      const memberCount = await resolveMemberCount(roomId);
-      if (memberCount === 2) {
-        try {
-          const nameState = (await client.getRoomStateEvent(roomId, "m.room.name", "")) as {
-            name?: string | null;
-          } | null;
-          if (!nameState?.name?.trim()) {
-            log(`matrix: dm detected via fallback (2 members, no room name) room=${roomId}`);
-            return true;
-          }
-        } catch (err: unknown) {
-          if (isMatrixNotFoundError(err)) {
-            log(`matrix: dm detected via fallback (2 members, no room name) room=${roomId}`);
-            return true;
-          }
-          log(
-            `matrix: dm fallback skipped (room name check failed: ${String(err)}) room=${roomId}`,
-          );
-        }
-      }
-
-      log(`matrix: dm check room=${roomId} result=group members=${memberCount ?? "unknown"}`);
+      log(
+        `matrix: dm check room=${roomId} result=group members=${joinedMembers?.length ?? "unknown"}`,
+      );
       return false;
     },
   };

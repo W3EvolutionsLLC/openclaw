@@ -7,8 +7,6 @@ function createMockClient(params: {
   senderDirect?: boolean;
   selfDirect?: boolean;
   members?: string[];
-  roomName?: string | null;
-  roomNameError?: unknown;
 }) {
   const members = params.members ?? ["@alice:example.org", "@bot:example.org"];
   return {
@@ -21,12 +19,6 @@ function createMockClient(params: {
     getRoomStateEvent: vi
       .fn()
       .mockImplementation(async (_roomId: string, eventType: string, stateKey: string) => {
-        if (eventType === "m.room.name") {
-          if (params.roomNameError) {
-            throw params.roomNameError;
-          }
-          return params.roomName == null ? {} : { name: params.roomName };
-        }
         if (stateKey === "@alice:example.org") {
           return { is_direct: params.senderDirect === true };
         }
@@ -61,8 +53,13 @@ describe("createDirectRoomTracker", () => {
     expect(client.getJoinedRoomMembers).toHaveBeenCalledWith("!room:example.org");
   });
 
-  it("does not classify named 2-member rooms as DMs from member count alone", async () => {
-    const tracker = createDirectRoomTracker(createMockClient({ isDm: false, roomName: "Project" }));
+  it("does not classify rooms with extra members as DMs", async () => {
+    const tracker = createDirectRoomTracker(
+      createMockClient({
+        isDm: false,
+        members: ["@alice:example.org", "@bot:example.org", "@observer:example.org"],
+      }),
+    );
     await expect(
       tracker.isDirectMessage({
         roomId: "!room:example.org",
@@ -71,13 +68,23 @@ describe("createDirectRoomTracker", () => {
     ).resolves.toBe(false);
   });
 
-  it("treats missing room names as DM fallback for 2-member rooms", async () => {
+  it("does not classify 2-member rooms whose sender is not a joined member as DMs", async () => {
     const tracker = createDirectRoomTracker(
       createMockClient({
         isDm: false,
-        roomNameError: { errcode: "M_NOT_FOUND" },
+        members: ["@mallory:example.org", "@bot:example.org"],
       }),
     );
+    await expect(
+      tracker.isDirectMessage({
+        roomId: "!room:example.org",
+        senderId: "@alice:example.org",
+      }),
+    ).resolves.toBe(false);
+  });
+
+  it("still recognizes exact 2-member rooms when member state also claims is_direct", async () => {
+    const tracker = createDirectRoomTracker(createMockClient({ senderDirect: true }));
     await expect(
       tracker.isDirectMessage({
         roomId: "!room:example.org",
@@ -86,13 +93,18 @@ describe("createDirectRoomTracker", () => {
     ).resolves.toBe(true);
   });
 
-  it("uses is_direct member flags when present", async () => {
-    const tracker = createDirectRoomTracker(createMockClient({ senderDirect: true }));
+  it("ignores member-state is_direct when the room is not a strict DM", async () => {
+    const tracker = createDirectRoomTracker(
+      createMockClient({
+        senderDirect: true,
+        members: ["@alice:example.org", "@bot:example.org", "@observer:example.org"],
+      }),
+    );
     await expect(
       tracker.isDirectMessage({
         roomId: "!room:example.org",
         senderId: "@alice:example.org",
       }),
-    ).resolves.toBe(true);
+    ).resolves.toBe(false);
   });
 });
