@@ -107,10 +107,30 @@ function getJiti() {
   return jitiLoader;
 }
 
-type LoadedMatrixLegacyCryptoInspectorModule = {
-  inspectLegacyMatrixCryptoStore?: unknown;
-  default?: unknown;
-};
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function resolveInspectorExport(loaded: unknown): MatrixLegacyCryptoInspector | null {
+  if (!isObjectRecord(loaded)) {
+    return null;
+  }
+  const directInspector = loaded.inspectLegacyMatrixCryptoStore;
+  if (typeof directInspector === "function") {
+    return directInspector as MatrixLegacyCryptoInspector;
+  }
+  const directDefault = loaded.default;
+  if (typeof directDefault === "function") {
+    return directDefault as MatrixLegacyCryptoInspector;
+  }
+  if (!isObjectRecord(directDefault)) {
+    return null;
+  }
+  const nestedInspector = directDefault.inspectLegacyMatrixCryptoStore;
+  return typeof nestedInspector === "function"
+    ? (nestedInspector as MatrixLegacyCryptoInspector)
+    : null;
+}
 
 export async function loadMatrixLegacyCryptoInspector(params: {
   cfg: OpenClawConfig;
@@ -134,25 +154,14 @@ export async function loadMatrixLegacyCryptoInspector(params: {
   }
 
   const pending = (async () => {
-    const loaded = await getJiti().import(helperPath);
-    const defaultExport =
-      loaded.default && typeof loaded.default === "object"
-        ? (loaded.default as LoadedMatrixLegacyCryptoInspectorModule)
-        : null;
-    const inspectLegacyMatrixCryptoStore =
-      typeof loaded?.inspectLegacyMatrixCryptoStore === "function"
-        ? loaded.inspectLegacyMatrixCryptoStore
-        : typeof loaded?.default === "function"
-          ? loaded.default
-          : typeof defaultExport?.inspectLegacyMatrixCryptoStore === "function"
-            ? defaultExport.inspectLegacyMatrixCryptoStore
-            : null;
+    const loaded: unknown = await getJiti().import(helperPath);
+    const inspectLegacyMatrixCryptoStore = resolveInspectorExport(loaded);
     if (!inspectLegacyMatrixCryptoStore) {
       throw new Error(
         `Matrix plugin helper at ${helperPath} does not export inspectLegacyMatrixCryptoStore(). Reinstall @openclaw/matrix and try again.`,
       );
     }
-    return inspectLegacyMatrixCryptoStore as MatrixLegacyCryptoInspector;
+    return inspectLegacyMatrixCryptoStore;
   })();
   inspectorCache.set(helperPath, pending);
   try {
