@@ -43,6 +43,7 @@ export async function deliverMatrixReplies(params: {
   replyToMode: "off" | "first" | "all";
   threadId?: string;
   accountId?: string;
+  mediaLocalRoots?: readonly string[];
   tableMode?: MarkdownTableMode;
 }): Promise<void> {
   const core = getMatrixRuntime();
@@ -122,6 +123,7 @@ export async function deliverMatrixReplies(params: {
         client: params.client,
         cfg: params.cfg,
         mediaUrl,
+        mediaLocalRoots: params.mediaLocalRoots,
         replyToId: replyToIdForReply,
         threadId: params.threadId,
         audioAsVoice: reply.audioAsVoice,

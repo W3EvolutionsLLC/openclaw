@@ -96,18 +96,27 @@ describe("deliverMatrixReplies", () => {
       runtime: runtimeEnv,
       textLimit: 4000,
       replyToMode: "all",
+      mediaLocalRoots: ["/tmp/openclaw-matrix-test"],
     });
 
     expect(sendMessageMatrixMock).toHaveBeenCalledTimes(3);
     expect(sendMessageMatrixMock.mock.calls[0]).toEqual([
       "room:2",
       "caption",
-      expect.objectContaining({ mediaUrl: "https://example.com/a.jpg", replyToId: "reply-media" }),
+      expect.objectContaining({
+        mediaUrl: "https://example.com/a.jpg",
+        mediaLocalRoots: ["/tmp/openclaw-matrix-test"],
+        replyToId: "reply-media",
+      }),
     ]);
     expect(sendMessageMatrixMock.mock.calls[1]).toEqual([
       "room:2",
       "",
-      expect.objectContaining({ mediaUrl: "https://example.com/b.jpg", replyToId: "reply-media" }),
+      expect.objectContaining({
+        mediaUrl: "https://example.com/b.jpg",
+        mediaLocalRoots: ["/tmp/openclaw-matrix-test"],
+        replyToId: "reply-media",
+      }),
     ]);
     expect(sendMessageMatrixMock.mock.calls[2]?.[2]).toEqual(
       expect.objectContaining({ replyToId: "reply-text" }),

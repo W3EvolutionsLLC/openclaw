@@ -3,6 +3,7 @@ import {
   createTypingCallbacks,
   ensureConfiguredAcpRouteReady,
   formatAllowlistMatchMeta,
+  getAgentScopedMediaLocalRoots,
   logInboundDrop,
   logTypingFailure,
   resolveControlCommandGate,
@@ -662,6 +663,7 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
         channel: "matrix",
         accountId: route.accountId,
       });
+      const mediaLocalRoots = getAgentScopedMediaLocalRoots(cfg, route.agentId);
       const { onModelSelected, ...prefixOptions } = createReplyPrefixOptions({
         cfg,
         agentId: route.agentId,
@@ -705,6 +707,7 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
               replyToMode,
               threadId: threadTarget,
               accountId: route.accountId,
+              mediaLocalRoots,
               tableMode,
             });
             didSendReply = true;
