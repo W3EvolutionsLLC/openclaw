@@ -30,6 +30,20 @@ function readTrimmedString(record: Record<string, unknown>, key: string): string
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
+function stripUrlUserInfo(value: string): string {
+  try {
+    const parsed = new URL(value);
+    if (!parsed.username && !parsed.password) {
+      return value;
+    }
+    parsed.username = "";
+    parsed.password = "";
+    return parsed.toString();
+  } catch {
+    return value;
+  }
+}
+
 function readBoolean(record: Record<string, unknown>, key: string): boolean | undefined {
   return typeof record[key] === "boolean" ? record[key] : undefined;
 }
@@ -203,7 +217,7 @@ export function projectSafeChannelAccountSnapshotFields(
       : {}),
     ...projectCredentialSnapshotFields(account),
     ...(readTrimmedString(record, "baseUrl")
-      ? { baseUrl: readTrimmedString(record, "baseUrl") }
+      ? { baseUrl: stripUrlUserInfo(readTrimmedString(record, "baseUrl")!) }
       : {}),
     ...(readBoolean(record, "allowUnmentionedGroups") !== undefined
       ? { allowUnmentionedGroups: readBoolean(record, "allowUnmentionedGroups") }

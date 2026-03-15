@@ -163,6 +163,22 @@ describe("redactConfigSnapshot", () => {
     expect(result.config).toEqual(snapshot.config);
   });
 
+  it("removes embedded credentials from URL-valued endpoint fields", () => {
+    const snapshot = makeSnapshot({
+      models: {
+        providers: {
+          openai: {
+            baseUrl: "https://alice:secret@example.test/v1",
+          },
+        },
+      },
+    });
+
+    const result = redactConfigSnapshot(snapshot);
+    const cfg = result.config as typeof snapshot.config;
+    expect(cfg.models.providers.openai.baseUrl).toBe("https://example.test/v1");
+  });
+
   it("does not redact maxTokens-style fields", () => {
     const snapshot = makeSnapshot({
       maxTokens: 16384,
