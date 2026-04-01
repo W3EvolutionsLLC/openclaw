@@ -20,7 +20,15 @@ export {
 } from "../agents/pi-embedded-runner/moonshot-thinking-stream-wrappers.js";
 export {
   createOpenAIAttributionHeadersWrapper,
+  createCodexNativeWebSearchWrapper,
   createOpenAIDefaultTransportWrapper,
+  createOpenAIFastModeWrapper,
+  createOpenAIReasoningCompatibilityWrapper,
+  createOpenAIServiceTierWrapper,
+  createOpenAITextVerbosityWrapper,
+  resolveOpenAIFastMode,
+  resolveOpenAIServiceTier,
+  resolveOpenAITextVerbosity,
 } from "../agents/pi-embedded-runner/openai-stream-wrappers.js";
 export { streamWithPayloadPatch } from "../agents/pi-embedded-runner/stream-payload-utils.js";
 export {

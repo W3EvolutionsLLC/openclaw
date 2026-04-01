@@ -23,17 +23,8 @@ import {
   shouldApplySiliconFlowThinkingOffCompat,
 } from "./moonshot-stream-wrappers.js";
 import {
-  createOpenAIAttributionHeadersWrapper,
-  createCodexNativeWebSearchWrapper,
-  createOpenAIDefaultTransportWrapper,
-  createOpenAIFastModeWrapper,
   createOpenAIReasoningCompatibilityWrapper,
   createOpenAIResponsesContextManagementWrapper,
-  createOpenAIServiceTierWrapper,
-  createOpenAITextVerbosityWrapper,
-  resolveOpenAIFastMode,
-  resolveOpenAIServiceTier,
-  resolveOpenAITextVerbosity,
 } from "./openai-stream-wrappers.js";
 import { streamWithPayloadPatch } from "./stream-payload-utils.js";
 
@@ -304,14 +295,6 @@ type ApplyExtraParamsContext = {
 };
 
 function applyPrePluginStreamWrappers(ctx: ApplyExtraParamsContext): void {
-  if (ctx.provider === "openai" || ctx.provider === "openai-codex") {
-    if (ctx.provider === "openai") {
-      // Default OpenAI Responses to WebSocket-first with transparent SSE fallback.
-      ctx.agent.streamFn = createOpenAIDefaultTransportWrapper(ctx.agent.streamFn);
-    }
-    ctx.agent.streamFn = createOpenAIAttributionHeadersWrapper(ctx.agent.streamFn);
-  }
-
   const wrappedStreamFn = createStreamFnWithExtraParams(
     ctx.agent.streamFn,
     ctx.effectiveExtraParams,
@@ -380,49 +363,6 @@ function applyPostPluginStreamWrappers(
     );
   }
 
-  const openAIFastMode = resolveOpenAIFastMode(ctx.effectiveExtraParams);
-  if (openAIFastMode) {
-    log.debug(`applying OpenAI fast mode for ${ctx.provider}/${ctx.modelId}`);
-    ctx.agent.streamFn = createOpenAIFastModeWrapper(ctx.agent.streamFn);
-  }
-
-  if (ctx.provider === "openai" || ctx.provider === "openai-codex") {
-    const openAIServiceTier = resolveOpenAIServiceTier(ctx.effectiveExtraParams);
-    if (openAIServiceTier) {
-      log.debug(
-        `applying OpenAI service_tier=${openAIServiceTier} for ${ctx.provider}/${ctx.modelId}`,
-      );
-      ctx.agent.streamFn = createOpenAIServiceTierWrapper(ctx.agent.streamFn, openAIServiceTier);
-    }
-
-    const rawTextVerbosity = resolveAliasedParamValue(
-      [ctx.resolvedExtraParams, ctx.override],
-      "text_verbosity",
-      "textVerbosity",
-    );
-    if (rawTextVerbosity === null) {
-      log.debug("text verbosity suppressed by null override, skipping injection");
-    } else if (rawTextVerbosity !== undefined) {
-      const openAITextVerbosity = resolveOpenAITextVerbosity({
-        text_verbosity: rawTextVerbosity,
-      });
-      if (openAITextVerbosity) {
-        log.debug(
-          `applying OpenAI text verbosity=${openAITextVerbosity} for ${ctx.provider}/${ctx.modelId}`,
-        );
-        ctx.agent.streamFn = createOpenAITextVerbosityWrapper(
-          ctx.agent.streamFn,
-          openAITextVerbosity,
-        );
-      }
-    }
-
-    ctx.agent.streamFn = createCodexNativeWebSearchWrapper(ctx.agent.streamFn, {
-      config: ctx.cfg,
-      agentDir: ctx.agentDir,
-    });
-  }
-
   // Work around upstream pi-ai hardcoding `store: false` for Responses API.
   // Force `store=true` for direct OpenAI Responses models and auto-enable
   // server-side compaction for compatible OpenAI Responses payloads.
@@ -431,12 +371,9 @@ function applyPostPluginStreamWrappers(
     ctx.effectiveExtraParams,
   );
 
-  if (
-    ctx.provider === "openai" ||
-    ctx.provider === "openai-codex" ||
-    ctx.provider === "azure-openai" ||
-    ctx.provider === "azure-openai-responses"
-  ) {
+  // Azure OpenAI does not yet have an owning provider plugin, so keep its
+  // Responses payload compatibility in core until that provider surface exists.
+  if (ctx.provider === "azure-openai" || ctx.provider === "azure-openai-responses") {
     ctx.agent.streamFn = createOpenAIReasoningCompatibilityWrapper(ctx.agent.streamFn);
   }
 

@@ -77,6 +77,55 @@ import {
   resolvePreparedExtraParams,
 } from "./pi-embedded-runner.js";
 import { log } from "./pi-embedded-runner/logger.js";
+import {
+  createCodexNativeWebSearchWrapper,
+  createOpenAIAttributionHeadersWrapper,
+  createOpenAIDefaultTransportWrapper,
+  createOpenAIFastModeWrapper,
+  createOpenAIReasoningCompatibilityWrapper,
+  createOpenAIServiceTierWrapper,
+  createOpenAITextVerbosityWrapper,
+  resolveOpenAIFastMode,
+  resolveOpenAIServiceTier,
+  resolveOpenAITextVerbosity,
+} from "./pi-embedded-runner/openai-stream-wrappers.js";
+
+function createTestOpenAIProviderWrapper(
+  params: Parameters<
+    NonNullable<typeof extraParamsTesting.setProviderRuntimeDepsForTest>
+  >[0] extends { wrapProviderStreamFn: infer T } | undefined
+    ? T extends (params: infer P) => unknown
+      ? P
+      : never
+    : never,
+  withDefaultTransport: boolean,
+): StreamFn {
+  let streamFn = params.context.streamFn;
+  if (withDefaultTransport) {
+    streamFn = createOpenAIDefaultTransportWrapper(streamFn);
+  }
+  streamFn = createOpenAIAttributionHeadersWrapper(streamFn);
+
+  if (resolveOpenAIFastMode(params.context.extraParams)) {
+    streamFn = createOpenAIFastModeWrapper(streamFn);
+  }
+
+  const serviceTier = resolveOpenAIServiceTier(params.context.extraParams);
+  if (serviceTier) {
+    streamFn = createOpenAIServiceTierWrapper(streamFn, serviceTier);
+  }
+
+  const textVerbosity = resolveOpenAITextVerbosity(params.context.extraParams);
+  if (textVerbosity) {
+    streamFn = createOpenAITextVerbosityWrapper(streamFn, textVerbosity);
+  }
+
+  streamFn = createCodexNativeWebSearchWrapper(streamFn, {
+    config: params.context.config,
+    agentDir: params.context.agentDir,
+  });
+  return createOpenAIReasoningCompatibilityWrapper(streamFn);
+}
 
 beforeEach(() => {
   extraParamsTesting.setProviderRuntimeDepsForTest({
@@ -94,6 +143,12 @@ beforeEach(() => {
       };
     },
     wrapProviderStreamFn: (params) => {
+      if (params.provider === "openai") {
+        return createTestOpenAIProviderWrapper(params, true);
+      }
+      if (params.provider === "openai-codex") {
+        return createTestOpenAIProviderWrapper(params, false);
+      }
       if (params.provider === "ollama") {
         return createConfiguredOllamaCompatNumCtxWrapper(params.context);
       }
