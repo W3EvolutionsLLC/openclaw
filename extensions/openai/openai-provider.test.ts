@@ -172,6 +172,53 @@ describe("buildOpenAIProvider", () => {
     ).toBe(true);
   });
 
+  it("owns replay policy for OpenAI and Codex transports", () => {
+    const provider = buildOpenAIProvider();
+    const codexProvider = buildOpenAICodexProviderPlugin();
+
+    expect(
+      provider.buildReplayPolicy?.({
+        provider: "openai",
+        modelApi: "openai",
+        modelId: "gpt-5.4",
+      } as never),
+    ).toEqual({
+      sanitizeMode: "images-only",
+      applyAssistantFirstOrderingFix: false,
+      sanitizeToolCallIds: false,
+      validateGeminiTurns: false,
+      validateAnthropicTurns: false,
+    });
+
+    expect(
+      provider.buildReplayPolicy?.({
+        provider: "openai",
+        modelApi: "openai-completions",
+        modelId: "gpt-5.4",
+      } as never),
+    ).toEqual({
+      sanitizeMode: "images-only",
+      applyAssistantFirstOrderingFix: false,
+      sanitizeToolCallIds: true,
+      toolCallIdMode: "strict",
+      validateGeminiTurns: false,
+      validateAnthropicTurns: false,
+    });
+
+    expect(
+      codexProvider.buildReplayPolicy?.({
+        provider: "openai-codex",
+        modelApi: "openai-codex-responses",
+        modelId: "gpt-5.4",
+      } as never),
+    ).toEqual({
+      sanitizeMode: "images-only",
+      applyAssistantFirstOrderingFix: false,
+      sanitizeToolCallIds: false,
+      validateGeminiTurns: false,
+      validateAnthropicTurns: false,
+    });
+  });
   it("falls back to cached codex oauth credentials on accountId extraction failures", async () => {
     const provider = buildOpenAICodexProviderPlugin();
     const credential = {

@@ -9,7 +9,11 @@ import {
   sanitizeProviderReplayHistoryWithPlugin,
   validateProviderReplayTurnsWithPlugin,
 } from "../../plugins/provider-runtime.js";
-import type { ProviderReplaySessionState, ProviderRuntimeModel } from "../../plugins/types.js";
+import type {
+  ProviderReplaySessionEntry,
+  ProviderReplaySessionState,
+  ProviderRuntimeModel,
+} from "../../plugins/types.js";
 import {
   hasInterSessionUserProvenance,
   normalizeInputProvenance,
@@ -541,20 +545,22 @@ function createProviderReplaySessionState(
   return {
     getCustomEntries() {
       try {
-        return sessionManager
-          .getEntries()
-          .flatMap((entry) =>
-            (entry as CustomEntryLike)?.type === "custom" &&
-            typeof (entry as CustomEntryLike).customType === "string"
-              ? [
-                  {
-                    customType: (entry as CustomEntryLike).customType,
-                    data: (entry as CustomEntryLike).data,
-                  },
-                ]
-              : [],
-          )
-          .filter((entry) => entry.customType.trim().length > 0);
+        const customEntries: ProviderReplaySessionEntry[] = [];
+        for (const entry of sessionManager.getEntries()) {
+          const candidate = entry as CustomEntryLike;
+          if (candidate?.type !== "custom" || typeof candidate.customType !== "string") {
+            continue;
+          }
+          const customType = candidate.customType.trim();
+          if (!customType) {
+            continue;
+          }
+          customEntries.push({
+            customType,
+            data: candidate.data,
+          });
+        }
+        return customEntries;
       } catch {
         return [];
       }
