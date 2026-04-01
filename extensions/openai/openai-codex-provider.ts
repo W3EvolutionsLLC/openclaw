@@ -21,6 +21,7 @@ import { fetchCodexUsage } from "openclaw/plugin-sdk/provider-usage";
 import { OPENAI_CODEX_DEFAULT_MODEL } from "./default-models.js";
 import { resolveCodexAuthIdentity } from "./openai-codex-auth-identity.js";
 import { buildOpenAICodexProvider } from "./openai-codex-catalog.js";
+import { buildOpenAIReplayPolicy } from "./replay-policy.js";
 import {
   cloneFirstTemplateModel,
   findCatalogTemplate,
@@ -276,6 +277,7 @@ export function buildOpenAICodexProviderPlugin(): ProviderPlugin {
     supportsXHighThinking: ({ modelId }) =>
       matchesExactOrPrefix(modelId, OPENAI_CODEX_XHIGH_MODEL_IDS),
     isModernModelRef: ({ modelId }) => matchesExactOrPrefix(modelId, OPENAI_CODEX_MODERN_MODEL_IDS),
+    buildReplayPolicy: (ctx) => buildOpenAIReplayPolicy(ctx),
     prepareExtraParams: (ctx) => {
       const transport = ctx.extraParams?.transport;
       if (transport === "auto" || transport === "sse" || transport === "websocket") {
