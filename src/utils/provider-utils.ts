@@ -39,26 +39,6 @@ export function resolveReasoningOutputMode(params: {
     return pluginMode;
   }
 
-  const normalized = provider.toLowerCase();
-
-  // Check for exact matches or known prefixes/substrings for reasoning providers.
-  // Note: Ollama is intentionally excluded - its OpenAI-compatible endpoint
-  // handles reasoning natively via the `reasoning` field in streaming chunks,
-  // so tag-based enforcement is unnecessary and causes all output to be
-  // discarded as "(no output)" (#2279).
-  if (
-    normalized === "google" ||
-    normalized === "google-gemini-cli" ||
-    normalized === "google-generative-ai"
-  ) {
-    return "tagged";
-  }
-
-  // Handle Minimax (M2.5 is chatty/reasoning-like)
-  if (normalized.includes("minimax")) {
-    return "tagged";
-  }
-
   return "native";
 }
 
