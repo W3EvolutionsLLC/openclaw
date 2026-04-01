@@ -20,6 +20,8 @@ export function buildGoogleReplayPolicy(): ProviderReplayPolicy {
     },
     repairToolUseResultPairing: true,
     applyAssistantFirstOrderingFix: true,
+    validateGeminiTurns: true,
+    validateAnthropicTurns: false,
     allowSyntheticToolResults: true,
   };
 }

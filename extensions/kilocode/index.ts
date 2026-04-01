@@ -8,6 +8,19 @@ import { buildKilocodeProviderWithDiscovery } from "./provider-catalog.js";
 
 const PROVIDER_ID = "kilocode";
 
+function buildKilocodeReplayPolicy(modelId?: string) {
+  const normalizedModelId = modelId?.toLowerCase() ?? "";
+  if (!normalizedModelId.includes("gemini")) {
+    return {};
+  }
+  return {
+    sanitizeThoughtSignatures: {
+      allowBase64Only: true,
+      includeCamelCase: true,
+    },
+  };
+}
+
 export default defineSingleProviderPluginEntry({
   id: PROVIDER_ID,
   name: "Kilo Gateway Provider",
@@ -35,6 +48,7 @@ export default defineSingleProviderPluginEntry({
       geminiThoughtSignatureSanitization: true,
       geminiThoughtSignatureModelHints: ["gemini"],
     },
+    buildReplayPolicy: ({ modelId }) => buildKilocodeReplayPolicy(modelId),
     wrapStreamFn: (ctx) => {
       const thinkingLevel =
         ctx.modelId === "kilo/auto" || isProxyReasoningUnsupported(ctx.modelId)

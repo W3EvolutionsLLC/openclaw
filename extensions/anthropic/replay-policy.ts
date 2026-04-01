@@ -15,6 +15,7 @@ export function buildAnthropicReplayPolicy(ctx: ProviderReplayPolicyContext): Pr
     toolCallIdMode: "strict",
     preserveSignatures: true,
     repairToolUseResultPairing: true,
+    validateAnthropicTurns: true,
     allowSyntheticToolResults: true,
     ...(modelId.includes("claude") ? { dropThinkingBlocks: true } : {}),
   };

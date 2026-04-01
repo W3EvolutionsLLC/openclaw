@@ -3,15 +3,6 @@ import { resolveProviderReplayPolicyWithPlugin } from "../plugins/provider-runti
 import type { ProviderRuntimeModel } from "../plugins/types.js";
 import { normalizeProviderId } from "./model-selection.js";
 import { isGoogleModelApi } from "./pi-embedded-helpers/google.js";
-import {
-  isAnthropicProviderFamily,
-  isOpenAiProviderFamily,
-  preservesAnthropicThinkingSignatures,
-  resolveTranscriptToolCallIdMode,
-  shouldDropThinkingBlocksForModel,
-  shouldSanitizeGeminiThoughtSignaturesForModel,
-  supportsOpenAiCompatTurnValidation,
-} from "./provider-capabilities.js";
 import type { ToolCallIdMode } from "./tool-call-id.js";
 
 export type TranscriptSanitizeMode = "full" | "images-only";
@@ -34,30 +25,12 @@ export type TranscriptPolicy = {
   allowSyntheticToolResults: boolean;
 };
 
-const OPENAI_MODEL_APIS = new Set([
-  "openai",
-  "openai-completions",
-  "openai-responses",
-  "openai-codex-responses",
-]);
-
-function isOpenAiApi(modelApi?: string | null): boolean {
-  if (!modelApi) {
-    return false;
-  }
-  return OPENAI_MODEL_APIS.has(modelApi);
+function isAnthropicApi(modelApi?: string | null): boolean {
+  return modelApi === "anthropic-messages" || modelApi === "bedrock-converse-stream";
 }
 
-function isOpenAiProvider(provider?: string | null): boolean {
-  return isOpenAiProviderFamily(provider);
-}
-
-function isAnthropicApi(modelApi?: string | null, provider?: string | null): boolean {
-  if (modelApi === "anthropic-messages" || modelApi === "bedrock-converse-stream") {
-    return true;
-  }
-  // MiniMax now uses openai-completions API, not anthropic-messages
-  return isAnthropicProviderFamily(provider);
+function shouldDropAnthropicThinkingBlocks(modelId?: string | null): boolean {
+  return (modelId ?? "").toLowerCase().includes("claude");
 }
 
 export function resolveTranscriptPolicy(params: {
@@ -72,66 +45,35 @@ export function resolveTranscriptPolicy(params: {
   const provider = normalizeProviderId(params.provider ?? "");
   const modelId = params.modelId ?? "";
   const isGoogle = isGoogleModelApi(params.modelApi);
-  const isAnthropic = isAnthropicApi(params.modelApi, provider);
-  const isOpenAi = isOpenAiProvider(provider) || (!provider && isOpenAiApi(params.modelApi));
-  const isStrictOpenAiCompatible =
-    params.modelApi === "openai-completions" &&
-    !isOpenAi &&
-    supportsOpenAiCompatTurnValidation(provider);
-  const providerToolCallIdMode = resolveTranscriptToolCallIdMode(provider, modelId);
-  const isMistral = providerToolCallIdMode === "strict9";
-  const shouldSanitizeGeminiThoughtSignaturesForProvider =
-    shouldSanitizeGeminiThoughtSignaturesForModel({
-      provider,
-      modelId,
-    });
+  const isAnthropic = isAnthropicApi(params.modelApi);
+  const isStrictOpenAiCompatible = params.modelApi === "openai-completions";
   const requiresOpenAiCompatibleToolIdSanitization =
     params.modelApi === "openai-completions" ||
-    (!isOpenAi &&
-      (params.modelApi === "openai-responses" ||
-        params.modelApi === "openai-codex-responses" ||
-        params.modelApi === "azure-openai-responses"));
-
-  // Anthropic Claude endpoints can reject replayed `thinking` blocks unless the
-  // original signatures are preserved byte-for-byte. Drop them at send-time to
-  // keep persisted sessions usable across follow-up turns.
-  const dropThinkingBlocks = shouldDropThinkingBlocksForModel({ provider, modelId });
-
-  const needsNonImageSanitize =
-    isGoogle || isAnthropic || isMistral || shouldSanitizeGeminiThoughtSignaturesForProvider;
-
-  const sanitizeToolCallIds =
-    isGoogle || isMistral || isAnthropic || requiresOpenAiCompatibleToolIdSanitization;
-  const toolCallIdMode: ToolCallIdMode | undefined = providerToolCallIdMode
-    ? providerToolCallIdMode
-    : isMistral
-      ? "strict9"
-      : sanitizeToolCallIds
-        ? "strict"
-        : undefined;
+    params.modelApi === "openai-responses" ||
+    params.modelApi === "openai-codex-responses" ||
+    params.modelApi === "azure-openai-responses";
   // All providers need orphaned tool_result repair after history truncation.
   // OpenAI rejects function_call_output items whose call_id has no matching
   // function_call in the conversation, so the repair must run universally.
   const repairToolUseResultPairing = true;
-  const sanitizeThoughtSignatures =
-    shouldSanitizeGeminiThoughtSignaturesForProvider || isGoogle
-      ? { allowBase64Only: true, includeCamelCase: true }
-      : undefined;
 
   const basePolicy: TranscriptPolicy = {
-    sanitizeMode: isOpenAi ? "images-only" : needsNonImageSanitize ? "full" : "images-only",
-    sanitizeToolCallIds:
-      (!isOpenAi && sanitizeToolCallIds) || requiresOpenAiCompatibleToolIdSanitization,
-    toolCallIdMode,
+    sanitizeMode: isGoogle || isAnthropic ? "full" : "images-only",
+    sanitizeToolCallIds: isGoogle || isAnthropic || requiresOpenAiCompatibleToolIdSanitization,
+    toolCallIdMode: (isGoogle || isAnthropic || requiresOpenAiCompatibleToolIdSanitization
+      ? "strict"
+      : undefined) as ToolCallIdMode | undefined,
     repairToolUseResultPairing,
-    preserveSignatures: isAnthropic && preservesAnthropicThinkingSignatures(provider),
-    sanitizeThoughtSignatures: isOpenAi ? undefined : sanitizeThoughtSignatures,
+    preserveSignatures: isAnthropic,
+    sanitizeThoughtSignatures: isGoogle
+      ? { allowBase64Only: true, includeCamelCase: true }
+      : undefined,
     sanitizeThinkingSignatures: false,
-    dropThinkingBlocks,
-    applyGoogleTurnOrdering: !isOpenAi && (isGoogle || isStrictOpenAiCompatible),
-    validateGeminiTurns: !isOpenAi && (isGoogle || isStrictOpenAiCompatible),
-    validateAnthropicTurns: !isOpenAi && (isAnthropic || isStrictOpenAiCompatible),
-    allowSyntheticToolResults: !isOpenAi && (isGoogle || isAnthropic),
+    dropThinkingBlocks: isAnthropic && shouldDropAnthropicThinkingBlocks(modelId),
+    applyGoogleTurnOrdering: isGoogle || isStrictOpenAiCompatible,
+    validateGeminiTurns: isGoogle || isStrictOpenAiCompatible,
+    validateAnthropicTurns: isAnthropic || isStrictOpenAiCompatible,
+    allowSyntheticToolResults: isGoogle || isAnthropic,
   };
 
   const pluginPolicy = provider
@@ -176,6 +118,12 @@ export function resolveTranscriptPolicy(params: {
       : {}),
     ...(typeof pluginPolicy.applyAssistantFirstOrderingFix === "boolean"
       ? { applyGoogleTurnOrdering: pluginPolicy.applyAssistantFirstOrderingFix }
+      : {}),
+    ...(typeof pluginPolicy.validateGeminiTurns === "boolean"
+      ? { validateGeminiTurns: pluginPolicy.validateGeminiTurns }
+      : {}),
+    ...(typeof pluginPolicy.validateAnthropicTurns === "boolean"
+      ? { validateAnthropicTurns: pluginPolicy.validateAnthropicTurns }
       : {}),
     ...(typeof pluginPolicy.allowSyntheticToolResults === "boolean"
       ? { allowSyntheticToolResults: pluginPolicy.allowSyntheticToolResults }

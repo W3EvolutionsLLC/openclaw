@@ -47,6 +47,13 @@ function shouldContributeMistralCompat(params: {
   return isMistralBaseUrl(params.model.baseUrl) || isMistralModelHint(params.modelId);
 }
 
+function buildMistralReplayPolicy() {
+  return {
+    sanitizeToolCallIds: true,
+    toolCallIdMode: "strict9" as const,
+  };
+}
+
 export default defineSingleProviderPluginEntry({
   id: PROVIDER_ID,
   name: "Mistral Provider",
@@ -89,6 +96,7 @@ export default defineSingleProviderPluginEntry({
         "mistralai",
       ],
     },
+    buildReplayPolicy: () => buildMistralReplayPolicy(),
   },
   register(api) {
     api.registerMediaUnderstandingProvider(mistralMediaUnderstandingProvider);

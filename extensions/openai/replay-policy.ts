@@ -9,11 +9,16 @@ import type {
 export function buildOpenAIReplayPolicy(ctx: ProviderReplayPolicyContext): ProviderReplayPolicy {
   return {
     sanitizeMode: "images-only",
+    applyAssistantFirstOrderingFix: false,
+    validateGeminiTurns: false,
+    validateAnthropicTurns: false,
     ...(ctx.modelApi === "openai-completions"
       ? {
           sanitizeToolCallIds: true,
           toolCallIdMode: "strict" as const,
         }
-      : {}),
+      : {
+          sanitizeToolCallIds: false,
+        }),
   };
 }

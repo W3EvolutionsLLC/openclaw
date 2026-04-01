@@ -14,6 +14,23 @@ function isModernOpencodeModel(modelId: string): boolean {
   return !matchesExactOrPrefix(lower, MINIMAX_MODERN_MODEL_MATCHERS);
 }
 
+function buildOpencodeReplayPolicy(modelId?: string) {
+  const normalizedModelId = modelId?.toLowerCase() ?? "";
+  return {
+    applyAssistantFirstOrderingFix: false,
+    validateGeminiTurns: false,
+    validateAnthropicTurns: false,
+    ...(normalizedModelId.includes("gemini")
+      ? {
+          sanitizeThoughtSignatures: {
+            allowBase64Only: true,
+            includeCamelCase: true,
+          },
+        }
+      : {}),
+  };
+}
+
 export default definePluginEntry({
   id: PROVIDER_ID,
   name: "OpenCode Zen Provider",
@@ -59,6 +76,7 @@ export default definePluginEntry({
         geminiThoughtSignatureSanitization: true,
         geminiThoughtSignatureModelHints: ["gemini"],
       },
+      buildReplayPolicy: ({ modelId }) => buildOpencodeReplayPolicy(modelId),
       isModernModelRef: ({ modelId }) => isModernOpencodeModel(modelId),
     });
   },

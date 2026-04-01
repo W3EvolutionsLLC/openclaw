@@ -4,6 +4,23 @@ import { applyOpencodeGoConfig, OPENCODE_GO_DEFAULT_MODEL_REF } from "./api.js";
 
 const PROVIDER_ID = "opencode-go";
 
+function buildOpencodeGoReplayPolicy(modelId?: string) {
+  const normalizedModelId = modelId?.toLowerCase() ?? "";
+  return {
+    applyAssistantFirstOrderingFix: false,
+    validateGeminiTurns: false,
+    validateAnthropicTurns: false,
+    ...(normalizedModelId.includes("gemini")
+      ? {
+          sanitizeThoughtSignatures: {
+            allowBase64Only: true,
+            includeCamelCase: true,
+          },
+        }
+      : {}),
+  };
+}
+
 export default definePluginEntry({
   id: PROVIDER_ID,
   name: "OpenCode Go Provider",
@@ -48,6 +65,7 @@ export default definePluginEntry({
         geminiThoughtSignatureSanitization: true,
         geminiThoughtSignatureModelHints: ["gemini"],
       },
+      buildReplayPolicy: ({ modelId }) => buildOpencodeGoReplayPolicy(modelId),
       isModernModelRef: () => true,
     });
   },

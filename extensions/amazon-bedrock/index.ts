@@ -46,6 +46,19 @@ function createGuardrailWrapStreamFn(
 const PROVIDER_ID = "amazon-bedrock";
 const CLAUDE_46_MODEL_RE = /claude-(?:opus|sonnet)-4(?:\.|-)6(?:$|[-.])/i;
 
+function buildAmazonBedrockReplayPolicy(modelId?: string) {
+  return {
+    sanitizeMode: "full" as const,
+    sanitizeToolCallIds: true,
+    toolCallIdMode: "strict" as const,
+    preserveSignatures: true,
+    repairToolUseResultPairing: true,
+    validateAnthropicTurns: true,
+    allowSyntheticToolResults: true,
+    ...((modelId?.toLowerCase() ?? "").includes("claude") ? { dropThinkingBlocks: true } : {}),
+  };
+}
+
 export default definePluginEntry({
   id: PROVIDER_ID,
   name: "Amazon Bedrock Provider",
@@ -91,6 +104,7 @@ export default definePluginEntry({
         providerFamily: "anthropic",
         dropThinkingBlockModelHints: ["claude"],
       },
+      buildReplayPolicy: ({ modelId }) => buildAmazonBedrockReplayPolicy(modelId),
       wrapStreamFn,
       resolveDefaultThinkingLevel: ({ modelId }) =>
         CLAUDE_46_MODEL_RE.test(modelId.trim()) ? "adaptive" : undefined,
