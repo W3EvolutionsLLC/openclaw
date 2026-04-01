@@ -68,6 +68,7 @@ export type {
   ProviderResolveDynamicModelContext,
   ProviderResolvedUsageAuth,
   ProviderSanitizeReplayHistoryContext,
+  ProviderToolSchemaDiagnostic,
   ProviderResolveUsageAuthContext,
   ProviderRuntimeModel,
   ProviderThinkingPolicyContext,

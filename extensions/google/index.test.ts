@@ -102,5 +102,11 @@ describe("google provider plugin hooks", () => {
     expect(
       (tool?.parameters as { properties?: { path?: Record<string, unknown> } })?.properties?.path,
     ).not.toHaveProperty("pattern");
+    expect(
+      provider.inspectToolSchemas?.({
+        provider: "google-gemini-cli",
+        tools: [tool],
+      } as never),
+    ).toEqual([]);
   });
 });

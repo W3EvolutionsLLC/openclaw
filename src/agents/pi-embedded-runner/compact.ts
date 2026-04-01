@@ -97,7 +97,6 @@ import {
 } from "./compaction-safety-timeout.js";
 import { runContextEngineMaintenance } from "./context-engine-maintenance.js";
 import { buildEmbeddedExtensionFactories } from "./extensions.js";
-import { logToolSchemasForGoogle, sanitizeToolsForGoogle } from "./google.js";
 import { getDmHistoryLimitFromSessionKey, limitHistoryTurns } from "./history.js";
 import { resolveGlobalLane, resolveSessionLane } from "./lanes.js";
 import { log } from "./logger.js";
@@ -114,6 +113,10 @@ import {
   createSystemPromptOverride,
 } from "./system-prompt.js";
 import { collectAllowedToolNames } from "./tool-name-allowlist.js";
+import {
+  logProviderToolSchemaDiagnostics,
+  normalizeProviderToolSchemas,
+} from "./tool-schema-runtime.js";
 import { splitSdkTools } from "./tool-split.js";
 import type { EmbeddedPiCompactResult } from "./types.js";
 import { describeUnknownError, mapThinkingLevel } from "./utils.js";
@@ -468,7 +471,7 @@ export async function compactEmbeddedPiSessionDirect(
       modelAuthMode: resolveModelAuthMode(model.provider, params.config),
     });
     const toolsEnabled = supportsModelTools(runtimeModel);
-    const tools = sanitizeToolsForGoogle({
+    const tools = normalizeProviderToolSchemas({
       tools: toolsEnabled ? toolsRaw : [],
       provider,
       config: params.config,
@@ -501,7 +504,7 @@ export async function compactEmbeddedPiSessionDirect(
       ...(bundleLspRuntime?.tools ?? []),
     ];
     const allowedToolNames = collectAllowedToolNames({ tools: effectiveTools });
-    logToolSchemasForGoogle({
+    logProviderToolSchemaDiagnostics({
       tools: effectiveTools,
       provider,
       config: params.config,

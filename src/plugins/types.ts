@@ -629,6 +629,12 @@ export type ProviderNormalizeToolSchemasContext = ProviderReplayPolicyContext & 
   tools: AnyAgentTool[];
 };
 
+export type ProviderToolSchemaDiagnostic = {
+  toolName: string;
+  toolIndex?: number;
+  violations: string[];
+};
+
 /**
  * Provider-owned reasoning output mode input.
  *
@@ -1083,6 +1089,15 @@ export type ProviderPlugin = {
   normalizeToolSchemas?: (
     ctx: ProviderNormalizeToolSchemasContext,
   ) => AnyAgentTool[] | null | undefined;
+  /**
+   * Provider-owned tool-schema diagnostics after normalization.
+   *
+   * Use this when a provider wants to surface transport-specific schema
+   * warnings without teaching core about provider-specific keyword rules.
+   */
+  inspectToolSchemas?: (
+    ctx: ProviderNormalizeToolSchemasContext,
+  ) => ProviderToolSchemaDiagnostic[] | null | undefined;
   /**
    * Provider-owned reasoning output mode.
    *

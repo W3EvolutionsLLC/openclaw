@@ -482,6 +482,16 @@ export function normalizeProviderToolSchemasWithPlugin(params: {
   return resolveProviderHookPlugin(params)?.normalizeToolSchemas?.(params.context) ?? undefined;
 }
 
+export function inspectProviderToolSchemasWithPlugin(params: {
+  provider: string;
+  config?: OpenClawConfig;
+  workspaceDir?: string;
+  env?: NodeJS.ProcessEnv;
+  context: ProviderNormalizeToolSchemasContext;
+}) {
+  return resolveProviderHookPlugin(params)?.inspectToolSchemas?.(params.context) ?? undefined;
+}
+
 export function resolveProviderReasoningOutputModeWithPlugin(params: {
   provider: string;
   config?: OpenClawConfig;

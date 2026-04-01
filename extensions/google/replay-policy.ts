@@ -6,8 +6,13 @@ import type {
   ProviderReplayPolicy,
   ProviderReplaySessionState,
   ProviderSanitizeReplayHistoryContext,
+  ProviderToolSchemaDiagnostic,
 } from "openclaw/plugin-sdk/plugin-entry";
-import { cleanSchemaForGemini } from "openclaw/plugin-sdk/provider-tools";
+import {
+  cleanSchemaForGemini,
+  findUnsupportedSchemaKeywords,
+  GEMINI_UNSUPPORTED_SCHEMA_KEYWORDS,
+} from "openclaw/plugin-sdk/provider-tools";
 
 const GOOGLE_TURN_ORDERING_CUSTOM_TYPE = "google-turn-ordering-bootstrap";
 const GOOGLE_TURN_ORDER_BOOTSTRAP_TEXT = "(session bootstrap)";
@@ -107,5 +112,24 @@ export function normalizeGoogleGeminiCliToolSchemas(
       ...tool,
       parameters: cleanSchemaForGemini(tool.parameters as Record<string, unknown>),
     };
+  });
+}
+
+/**
+ * Reports any remaining Gemini CLI schema violations after normalization.
+ */
+export function inspectGoogleGeminiCliToolSchemas(
+  ctx: ProviderNormalizeToolSchemasContext,
+): ProviderToolSchemaDiagnostic[] {
+  return ctx.tools.flatMap((tool, toolIndex) => {
+    const violations = findUnsupportedSchemaKeywords(
+      tool.parameters,
+      `${tool.name}.parameters`,
+      GEMINI_UNSUPPORTED_SCHEMA_KEYWORDS,
+    );
+    if (violations.length === 0) {
+      return [];
+    }
+    return [{ toolName: tool.name, toolIndex, violations }];
   });
 }

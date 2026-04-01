@@ -502,7 +502,7 @@ if (sandboxRoot) {
 
 ### Google/Gemini
 
-- Tool schema sanitization (`sanitizeToolsForGoogle`)
+- Plugin-owned tool schema sanitization
 
 ### OpenAI
 

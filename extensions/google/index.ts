@@ -20,6 +20,7 @@ import { buildGoogleGeminiCliBackend } from "./cli-backend.js";
 import { isModernGoogleModel, resolveGoogle31ForwardCompatModel } from "./provider-models.js";
 import {
   buildGoogleReplayPolicy,
+  inspectGoogleGeminiCliToolSchemas,
   normalizeGoogleGeminiCliToolSchemas,
   resolveGoogleReasoningOutputMode,
   sanitizeGoogleReplayHistory,
@@ -149,6 +150,7 @@ function createLazyGoogleGeminiCliProvider(): ProviderPlugin {
     buildReplayPolicy: () => buildGoogleReplayPolicy(),
     sanitizeReplayHistory: (ctx) => sanitizeGoogleReplayHistory(ctx),
     normalizeToolSchemas: (ctx) => normalizeGoogleGeminiCliToolSchemas(ctx),
+    inspectToolSchemas: (ctx) => inspectGoogleGeminiCliToolSchemas(ctx),
     resolveReasoningOutputMode: () => resolveGoogleReasoningOutputMode(),
     isModernModelRef: ({ modelId }) => isModernGoogleModel(modelId),
     formatApiKey: (cred) => formatGoogleOauthApiKey(cred as GoogleOauthApiKeyCredential),

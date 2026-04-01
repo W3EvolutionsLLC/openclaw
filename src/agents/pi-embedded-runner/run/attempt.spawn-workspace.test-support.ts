@@ -24,8 +24,25 @@ const hoisted = vi.hoisted(() => {
   const createAgentSessionMock = vi.fn();
   const sessionManagerOpenMock = vi.fn();
   const resolveSandboxContextMock = vi.fn();
-  const subscribeEmbeddedPiSessionMock = vi.fn();
-  const acquireSessionWriteLockMock = vi.fn();
+  const subscribeEmbeddedPiSessionMock = vi.fn(() => ({
+    assistantTexts: [] as string[],
+    toolMetas: [] as Array<{ toolName: string; meta?: string }>,
+    unsubscribe: () => {},
+    waitForCompactionRetry: async () => {},
+    getMessagingToolSentTexts: () => [] as string[],
+    getMessagingToolSentMediaUrls: () => [] as string[],
+    getMessagingToolSentTargets: () => [] as unknown[],
+    getSuccessfulCronAdds: () => 0,
+    didSendViaMessagingTool: () => false,
+    didSendDeterministicApprovalPrompt: () => false,
+    getLastToolError: () => undefined,
+    getUsageTotals: () => undefined,
+    getCompactionCount: () => 0,
+    isCompacting: () => false,
+  }));
+  const acquireSessionWriteLockMock = vi.fn(async () => ({
+    release: async () => {},
+  }));
   const resolveBootstrapContextForRunMock = vi.fn<() => Promise<BootstrapContext>>(async () => ({
     bootstrapFiles: [],
     contextFiles: [],
@@ -147,14 +164,14 @@ vi.mock("../extensions.js", () => ({
   buildEmbeddedExtensionFactories: () => [],
 }));
 
-vi.mock("../google.js", () => ({
-  logToolSchemasForGoogle: () => {},
-  sanitizeToolsForGoogle: ({ tools }: { tools: unknown[] }) => tools,
-}));
-
 vi.mock("../replay-history.js", () => ({
   sanitizeSessionHistory: async ({ messages }: { messages: unknown[] }) => messages,
   validateReplayTurns: async ({ messages }: { messages: unknown[] }) => messages,
+}));
+
+vi.mock("../tool-schema-runtime.js", () => ({
+  logProviderToolSchemaDiagnostics: () => {},
+  normalizeProviderToolSchemas: ({ tools }: { tools: unknown[] }) => tools,
 }));
 
 vi.mock("../../session-file-repair.js", () => ({
@@ -212,9 +229,14 @@ vi.mock("../system-prompt.js", () => ({
   createSystemPromptOverride: (prompt: string) => () => prompt,
 }));
 
-vi.mock("../extra-params.js", () => ({
-  applyExtraParamsToAgent: () => {},
-}));
+vi.mock("../extra-params.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../extra-params.js")>();
+  return {
+    ...actual,
+    applyExtraParamsToAgent: () => ({ effectiveExtraParams: {} }),
+    resolveAgentTransportOverride: () => undefined,
+  };
+});
 
 vi.mock("../../openai-ws-stream.js", () => ({
   createOpenAIWebSocketStreamFn: vi.fn(),
@@ -255,6 +277,8 @@ vi.mock("../../pi-tools.js", () => ({
 
 vi.mock("../../pi-bundle-mcp-tools.js", () => ({
   createBundleMcpToolRuntime: async () => undefined,
+  getOrCreateSessionMcpRuntime: async () => undefined,
+  materializeBundleMcpToolsForRun: async () => undefined,
 }));
 
 vi.mock("../../pi-bundle-lsp-runtime.js", () => ({

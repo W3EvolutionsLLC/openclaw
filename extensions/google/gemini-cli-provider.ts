@@ -8,6 +8,7 @@ import { fetchGeminiUsage } from "openclaw/plugin-sdk/provider-usage";
 import { isModernGoogleModel, resolveGoogle31ForwardCompatModel } from "./provider-models.js";
 import {
   buildGoogleReplayPolicy,
+  inspectGoogleGeminiCliToolSchemas,
   normalizeGoogleGeminiCliToolSchemas,
   resolveGoogleReasoningOutputMode,
   sanitizeGoogleReplayHistory,
@@ -132,6 +133,7 @@ export function registerGoogleGeminiCliProvider(api: OpenClawPluginApi) {
     buildReplayPolicy: () => buildGoogleReplayPolicy(),
     sanitizeReplayHistory: (ctx) => sanitizeGoogleReplayHistory(ctx),
     normalizeToolSchemas: (ctx) => normalizeGoogleGeminiCliToolSchemas(ctx),
+    inspectToolSchemas: (ctx) => inspectGoogleGeminiCliToolSchemas(ctx),
     resolveReasoningOutputMode: () => resolveGoogleReasoningOutputMode(),
     isModernModelRef: ({ modelId }) => isModernGoogleModel(modelId),
     formatApiKey: (cred) => formatGoogleOauthApiKey(cred),
