@@ -37,40 +37,11 @@ const DEFAULT_PROVIDER_CAPABILITIES: ProviderCapabilities = {
 };
 
 const PLUGIN_CAPABILITIES_FALLBACKS: Record<string, Partial<ProviderCapabilities>> = {
-  anthropic: {
-    providerFamily: "anthropic",
-    dropThinkingBlockModelHints: ["claude"],
-  },
-  mistral: {
-    transcriptToolCallIdMode: "strict9",
-    transcriptToolCallIdModelHints: [
-      "mistral",
-      "mixtral",
-      "codestral",
-      "pixtral",
-      "devstral",
-      "ministral",
-      "mistralai",
-    ],
-  },
   moonshot: {
     openAiPayloadNormalizationMode: "moonshot-thinking",
   },
   kimi: {
     openAiPayloadNormalizationMode: "moonshot-thinking",
-  },
-  opencode: {
-    openAiCompatTurnValidation: false,
-    geminiThoughtSignatureSanitization: true,
-    geminiThoughtSignatureModelHints: ["gemini"],
-  },
-  "opencode-go": {
-    openAiCompatTurnValidation: false,
-    geminiThoughtSignatureSanitization: true,
-    geminiThoughtSignatureModelHints: ["gemini"],
-  },
-  openai: {
-    providerFamily: "openai",
   },
 };
 

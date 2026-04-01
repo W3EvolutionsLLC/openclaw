@@ -27,6 +27,18 @@ const resolveProviderCapabilitiesWithPluginMock = vi.fn((params: { provider: str
         geminiThoughtSignatureSanitization: true,
         geminiThoughtSignatureModelHints: ["gemini"],
       };
+    case "opencode":
+      return {
+        openAiCompatTurnValidation: false,
+        geminiThoughtSignatureSanitization: true,
+        geminiThoughtSignatureModelHints: ["gemini"],
+      };
+    case "opencode-go":
+      return {
+        openAiCompatTurnValidation: false,
+        geminiThoughtSignatureSanitization: true,
+        geminiThoughtSignatureModelHints: ["gemini"],
+      };
     case "openai-codex":
       return {
         providerFamily: "openai",
@@ -39,6 +51,11 @@ const resolveProviderCapabilitiesWithPluginMock = vi.fn((params: { provider: str
       return {
         geminiThoughtSignatureSanitization: true,
         geminiThoughtSignatureModelHints: ["gemini"],
+      };
+    case "mistral":
+      return {
+        transcriptToolCallIdMode: "strict9",
+        transcriptToolCallIdModelHints: ["mistral"],
       };
     case "kimi":
       return {
@@ -142,7 +159,7 @@ describe("resolveProviderCapabilities", () => {
       transcriptToolCallIdMode: "default",
       transcriptToolCallIdModelHints: [],
       geminiThoughtSignatureModelHints: [],
-      dropThinkingBlockModelHints: ["claude"],
+      dropThinkingBlockModelHints: [],
     });
   });
 
@@ -201,6 +218,23 @@ describe("resolveProviderCapabilities", () => {
       }),
     ).toBe(true);
     expect(resolveTranscriptToolCallIdMode("mistral", "mistral-large-latest")).toBe("strict9");
+  });
+
+  it("drops replay-related fallback hints when plugin capabilities are unavailable", () => {
+    resolveProviderCapabilitiesWithPluginMock.mockImplementationOnce(() => undefined);
+    resolveProviderCapabilitiesWithPluginMock.mockImplementationOnce(() => undefined);
+    resolveProviderCapabilitiesWithPluginMock.mockImplementationOnce(() => undefined);
+    resolveProviderCapabilitiesWithPluginMock.mockImplementationOnce(() => undefined);
+
+    expect(isOpenAiProviderFamily("openai")).toBe(false);
+    expect(isAnthropicProviderFamily("anthropic")).toBe(false);
+    expect(supportsOpenAiCompatTurnValidation("openrouter")).toBe(true);
+    expect(
+      shouldSanitizeGeminiThoughtSignaturesForModel({
+        provider: "openrouter",
+        modelId: "google/gemini-2.5-pro-preview",
+      }),
+    ).toBe(false);
   });
 
   it("treats kimi aliases as native anthropic tool payload providers", () => {
