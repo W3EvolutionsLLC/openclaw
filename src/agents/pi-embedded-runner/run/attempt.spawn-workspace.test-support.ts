@@ -149,8 +149,12 @@ vi.mock("../extensions.js", () => ({
 
 vi.mock("../google.js", () => ({
   logToolSchemasForGoogle: () => {},
-  sanitizeSessionHistory: async ({ messages }: { messages: unknown[] }) => messages,
   sanitizeToolsForGoogle: ({ tools }: { tools: unknown[] }) => tools,
+}));
+
+vi.mock("../replay-history.js", () => ({
+  sanitizeSessionHistory: async ({ messages }: { messages: unknown[] }) => messages,
+  validateReplayTurns: async ({ messages }: { messages: unknown[] }) => messages,
 }));
 
 vi.mock("../../session-file-repair.js", () => ({

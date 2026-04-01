@@ -331,8 +331,12 @@ export async function loadCompactHooksHarness(): Promise<{
 
   vi.doMock("./google.js", () => ({
     logToolSchemasForGoogle: vi.fn(),
-    sanitizeSessionHistory: sanitizeSessionHistoryMock,
     sanitizeToolsForGoogle: vi.fn(({ tools }: { tools: unknown[] }) => tools),
+  }));
+
+  vi.doMock("./replay-history.js", () => ({
+    sanitizeSessionHistory: sanitizeSessionHistoryMock,
+    validateReplayTurns: vi.fn(async ({ messages }: { messages: unknown[] }) => messages),
   }));
 
   vi.doMock("./tool-split.js", () => ({
