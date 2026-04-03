@@ -269,6 +269,55 @@ export async function updateNpmInstalledPlugins(params: {
   let next = params.config;
   let changed = false;
 
+  const buildSharedInstallFields = (pluginId: string) => ({
+    mode: "update" as const,
+    dangerouslyForceUnsafeInstall: params.dangerouslyForceUnsafeInstall,
+    expectedPluginId: pluginId,
+    logger,
+  });
+
+  const buildNpmInstallParams = (input: {
+    pluginId: string;
+    spec: string;
+    expectedIntegrity?: string;
+    dryRun: boolean;
+  }) => ({
+    ...buildSharedInstallFields(input.pluginId),
+    spec: input.spec,
+    ...(input.dryRun ? { dryRun: true } : {}),
+    expectedIntegrity: input.expectedIntegrity,
+    onIntegrityDrift: createPluginUpdateIntegrityDriftHandler({
+      pluginId: input.pluginId,
+      dryRun: input.dryRun,
+      logger,
+      onIntegrityDrift: params.onIntegrityDrift,
+    }),
+  });
+
+  const buildClawHubInstallParams = (input: {
+    pluginId: string;
+    spec: string;
+    baseUrl?: string;
+    dryRun: boolean;
+  }) => ({
+    ...buildSharedInstallFields(input.pluginId),
+    spec: input.spec,
+    baseUrl: input.baseUrl,
+    ...(input.dryRun ? { dryRun: true } : {}),
+  });
+
+  const buildMarketplaceInstallParams = (input: {
+    pluginId: string;
+    marketplace: string;
+    plugin: string;
+    dryRun: boolean;
+  }) => ({
+    ...buildSharedInstallFields(input.pluginId),
+    marketplace: input.marketplace,
+    plugin: input.plugin,
+    ...(input.dryRun ? { dryRun: true } : {}),
+  });
+
   for (const pluginId of targets) {
     if (params.skipIds?.has(pluginId)) {
       outcomes.push({
@@ -300,6 +349,7 @@ export async function updateNpmInstalledPlugins(params: {
 
     const effectiveSpec =
       record.source === "npm" ? (params.specOverrides?.[pluginId] ?? record.spec) : record.spec;
+    const clawhubSpec = effectiveSpec ?? `clawhub:${record.clawhubPackage ?? ""}`;
     const expectedIntegrity =
       record.source === "npm" && effectiveSpec === record.spec
         ? expectedIntegrityForUpdate(record.spec, record.integrity)
@@ -356,40 +406,31 @@ export async function updateNpmInstalledPlugins(params: {
       try {
         probe =
           record.source === "npm"
-            ? await installPluginFromNpmSpec({
-                spec: effectiveSpec!,
-                mode: "update",
-                dryRun: true,
-                dangerouslyForceUnsafeInstall: params.dangerouslyForceUnsafeInstall,
-                expectedPluginId: pluginId,
-                expectedIntegrity,
-                onIntegrityDrift: createPluginUpdateIntegrityDriftHandler({
+            ? await installPluginFromNpmSpec(
+                buildNpmInstallParams({
                   pluginId,
+                  spec: effectiveSpec!,
+                  expectedIntegrity,
                   dryRun: true,
-                  logger,
-                  onIntegrityDrift: params.onIntegrityDrift,
                 }),
-                logger,
-              })
+              )
             : record.source === "clawhub"
-              ? await installPluginFromClawHub({
-                  spec: effectiveSpec ?? `clawhub:${record.clawhubPackage!}`,
-                  baseUrl: record.clawhubUrl,
-                  mode: "update",
-                  dryRun: true,
-                  dangerouslyForceUnsafeInstall: params.dangerouslyForceUnsafeInstall,
-                  expectedPluginId: pluginId,
-                  logger,
-                })
-              : await installPluginFromMarketplace({
-                  marketplace: record.marketplaceSource!,
-                  plugin: record.marketplacePlugin!,
-                  mode: "update",
-                  dryRun: true,
-                  dangerouslyForceUnsafeInstall: params.dangerouslyForceUnsafeInstall,
-                  expectedPluginId: pluginId,
-                  logger,
-                });
+              ? await installPluginFromClawHub(
+                  buildClawHubInstallParams({
+                    pluginId,
+                    spec: clawhubSpec,
+                    baseUrl: record.clawhubUrl,
+                    dryRun: true,
+                  }),
+                )
+              : await installPluginFromMarketplace(
+                  buildMarketplaceInstallParams({
+                    pluginId,
+                    marketplace: record.marketplaceSource!,
+                    plugin: record.marketplacePlugin!,
+                    dryRun: true,
+                  }),
+                );
       } catch (err) {
         outcomes.push({
           pluginId,
@@ -413,7 +454,7 @@ export async function updateNpmInstalledPlugins(params: {
               : record.source === "clawhub"
                 ? formatClawHubInstallFailure({
                     pluginId,
-                    spec: effectiveSpec ?? `clawhub:${record.clawhubPackage!}`,
+                    spec: clawhubSpec,
                     phase: "check",
                     error: probe.error,
                   })
@@ -457,37 +498,31 @@ export async function updateNpmInstalledPlugins(params: {
     try {
       result =
         record.source === "npm"
-          ? await installPluginFromNpmSpec({
-              spec: effectiveSpec!,
-              mode: "update",
-              dangerouslyForceUnsafeInstall: params.dangerouslyForceUnsafeInstall,
-              expectedPluginId: pluginId,
-              expectedIntegrity,
-              onIntegrityDrift: createPluginUpdateIntegrityDriftHandler({
+          ? await installPluginFromNpmSpec(
+              buildNpmInstallParams({
                 pluginId,
+                spec: effectiveSpec!,
+                expectedIntegrity,
                 dryRun: false,
-                logger,
-                onIntegrityDrift: params.onIntegrityDrift,
               }),
-              logger,
-            })
+            )
           : record.source === "clawhub"
-            ? await installPluginFromClawHub({
-                spec: effectiveSpec ?? `clawhub:${record.clawhubPackage!}`,
-                baseUrl: record.clawhubUrl,
-                mode: "update",
-                dangerouslyForceUnsafeInstall: params.dangerouslyForceUnsafeInstall,
-                expectedPluginId: pluginId,
-                logger,
-              })
-            : await installPluginFromMarketplace({
-                marketplace: record.marketplaceSource!,
-                plugin: record.marketplacePlugin!,
-                mode: "update",
-                dangerouslyForceUnsafeInstall: params.dangerouslyForceUnsafeInstall,
-                expectedPluginId: pluginId,
-                logger,
-              });
+            ? await installPluginFromClawHub(
+                buildClawHubInstallParams({
+                  pluginId,
+                  spec: clawhubSpec,
+                  baseUrl: record.clawhubUrl,
+                  dryRun: false,
+                }),
+              )
+            : await installPluginFromMarketplace(
+                buildMarketplaceInstallParams({
+                  pluginId,
+                  marketplace: record.marketplaceSource!,
+                  plugin: record.marketplacePlugin!,
+                  dryRun: false,
+                }),
+              );
     } catch (err) {
       outcomes.push({
         pluginId,
@@ -511,7 +546,7 @@ export async function updateNpmInstalledPlugins(params: {
             : record.source === "clawhub"
               ? formatClawHubInstallFailure({
                   pluginId,
-                  spec: effectiveSpec ?? `clawhub:${record.clawhubPackage!}`,
+                  spec: clawhubSpec,
                   phase: "update",
                   error: result.error,
                 })
@@ -549,7 +584,7 @@ export async function updateNpmInstalledPlugins(params: {
       next = recordPluginInstall(next, {
         pluginId: resolvedPluginId,
         source: "clawhub",
-        spec: effectiveSpec ?? record.spec ?? `clawhub:${record.clawhubPackage!}`,
+        spec: effectiveSpec ?? record.spec ?? clawhubSpec,
         installPath: result.targetDir,
         version: nextVersion,
         integrity: clawhubResult.clawhub.integrity,

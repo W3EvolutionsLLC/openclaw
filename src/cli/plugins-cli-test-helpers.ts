@@ -316,12 +316,15 @@ vi.mock("../infra/clawhub.js", () => ({
 
 const { registerPluginsCli } = await import("./plugins-cli.js");
 
-export { registerPluginsCli };
+export function createPluginsProgram() {
+  const program = new Command();
+  registerPluginsCli(program);
+  return program;
+}
 
 export function runPluginsCommand(argv: string[]) {
-  const program = new Command();
+  const program = createPluginsProgram();
   program.exitOverride();
-  registerPluginsCli(program);
   return program.parseAsync(argv, { from: "user" });
 }
 

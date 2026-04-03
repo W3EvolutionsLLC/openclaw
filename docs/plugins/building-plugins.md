@@ -180,6 +180,7 @@ Hook guard semantics to keep in mind:
 - `before_tool_call`: `{ requireApproval: true }` pauses agent execution and prompts the user for approval via the exec approval overlay, Telegram buttons, Discord interactions, or the `/approve` command on any channel.
 - `before_install`: `{ block: true }` is terminal and stops lower-priority handlers.
 - `before_install`: `{ block: false }` is treated as no decision.
+- `tool_result_persist`: must stay synchronous because it runs in the transcript persistence path; return an updated tool result payload or `undefined` to keep the original.
 - `message_sending`: `{ cancel: true }` is terminal and stops lower-priority handlers.
 - `message_sending`: `{ cancel: false }` is treated as no decision.
 

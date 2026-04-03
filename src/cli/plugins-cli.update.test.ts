@@ -1,9 +1,8 @@
-import { Command } from "commander";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
 import {
+  createPluginsProgram,
   loadConfig,
-  registerPluginsCli,
   resetPluginsCliTestState,
   runPluginsCommand,
   runtimeErrors,
@@ -38,8 +37,7 @@ describe("plugins cli update", () => {
   });
 
   it("shows the dangerous unsafe install override in update help", () => {
-    const program = new Command();
-    registerPluginsCli(program);
+    const program = createPluginsProgram();
 
     const pluginsCommand = program.commands.find((command) => command.name() === "plugins");
     const updateCommand = pluginsCommand?.commands.find((command) => command.name() === "update");

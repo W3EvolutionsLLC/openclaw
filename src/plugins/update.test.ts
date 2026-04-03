@@ -631,6 +631,79 @@ describe("updateNpmInstalledPlugins", () => {
       }),
     );
   });
+
+  it("forwards dangerous force unsafe install to ClawHub plugin updates", async () => {
+    installPluginFromClawHubMock.mockResolvedValue({
+      ok: true,
+      pluginId: "demo",
+      targetDir: "/tmp/demo",
+      version: "1.2.4",
+      clawhub: {
+        source: "clawhub",
+        clawhubUrl: "https://clawhub.ai",
+        clawhubPackage: "demo",
+        clawhubFamily: "code-plugin",
+        clawhubChannel: "official",
+        integrity: "sha256-next",
+        resolvedAt: "2026-03-22T00:00:00.000Z",
+      },
+    });
+
+    await updateNpmInstalledPlugins({
+      config: createClawHubInstallConfig({
+        pluginId: "demo",
+        installPath: "/tmp/demo",
+        clawhubUrl: "https://clawhub.ai",
+        clawhubPackage: "demo",
+        clawhubFamily: "code-plugin",
+        clawhubChannel: "official",
+      }),
+      pluginIds: ["demo"],
+      dangerouslyForceUnsafeInstall: true,
+    });
+
+    expect(installPluginFromClawHubMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        spec: "clawhub:demo",
+        dangerouslyForceUnsafeInstall: true,
+        expectedPluginId: "demo",
+      }),
+    );
+  });
+
+  it("forwards dangerous force unsafe install to marketplace plugin updates", async () => {
+    installPluginFromMarketplaceMock.mockResolvedValue({
+      ok: true,
+      pluginId: "claude-bundle",
+      targetDir: "/tmp/claude-bundle",
+      version: "1.3.0",
+      extensions: ["index.ts"],
+      marketplaceName: "Vincent's Claude Plugins",
+      marketplaceSource: "vincentkoc/claude-marketplace",
+      marketplacePlugin: "claude-bundle",
+    });
+
+    await updateNpmInstalledPlugins({
+      config: createMarketplaceInstallConfig({
+        pluginId: "claude-bundle",
+        installPath: "/tmp/claude-bundle",
+        marketplaceName: "Vincent's Claude Plugins",
+        marketplaceSource: "vincentkoc/claude-marketplace",
+        marketplacePlugin: "claude-bundle",
+      }),
+      pluginIds: ["claude-bundle"],
+      dangerouslyForceUnsafeInstall: true,
+    });
+
+    expect(installPluginFromMarketplaceMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        marketplace: "vincentkoc/claude-marketplace",
+        plugin: "claude-bundle",
+        dangerouslyForceUnsafeInstall: true,
+        expectedPluginId: "claude-bundle",
+      }),
+    );
+  });
 });
 
 describe("syncPluginsForUpdateChannel", () => {
