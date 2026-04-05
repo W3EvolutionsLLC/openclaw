@@ -77,6 +77,8 @@ describe("broadcast dispatch", () => {
   const resolveEnvelopeFormatOptionsMock: PluginRuntime["channel"]["reply"]["resolveEnvelopeFormatOptions"] =
     () => ({}) satisfies EnvelopeFormatOptions;
   const mockShouldComputeCommandAuthorized = vi.fn(() => false);
+  const mockReadSessionUpdatedAt = vi.fn(() => undefined);
+  const mockResolveStorePath = vi.fn(() => "/tmp/feishu-sessions.json");
   const mockSaveMediaBuffer = vi.fn().mockResolvedValue({
     path: "/tmp/inbound-clip.mp4",
     contentType: "video/mp4",
@@ -88,6 +90,12 @@ describe("broadcast dispatch", () => {
     channel: {
       routing: {
         resolveAgentRoute: (params: unknown) => mockResolveAgentRoute(params),
+      },
+      session: {
+        readSessionUpdatedAt:
+          mockReadSessionUpdatedAt as unknown as PluginRuntime["channel"]["session"]["readSessionUpdatedAt"],
+        resolveStorePath:
+          mockResolveStorePath as unknown as PluginRuntime["channel"]["session"]["resolveStorePath"],
       },
       reply: {
         resolveEnvelopeFormatOptions: resolveEnvelopeFormatOptionsMock,
@@ -122,6 +130,7 @@ describe("broadcast dispatch", () => {
       agents: { list: [{ id: "main" }, { id: "susan" }] },
       channels: {
         feishu: {
+          groupPolicy: "open",
           groups: {
             "oc-broadcast-group": {
               requireMention: true,
@@ -247,6 +256,7 @@ describe("broadcast dispatch", () => {
     const cfg: ClawdbotConfig = {
       channels: {
         feishu: {
+          groupPolicy: "open",
           groups: {
             "oc-broadcast-group": {
               requireMention: false,
@@ -288,6 +298,7 @@ describe("broadcast dispatch", () => {
       agents: { list: [{ id: "main" }, { id: "susan" }] },
       channels: {
         feishu: {
+          groupPolicy: "open",
           groups: {
             "oc-broadcast-group": {
               requireMention: false,
@@ -334,6 +345,7 @@ describe("broadcast dispatch", () => {
       agents: { list: [{ id: "main" }, { id: "susan" }] },
       channels: {
         feishu: {
+          groupPolicy: "open",
           groups: {
             "oc-broadcast-group": {
               requireMention: false,
