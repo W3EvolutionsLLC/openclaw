@@ -45,12 +45,18 @@ describe("agent defaults schema", () => {
     expect(() => AgentDefaultsSchema.parse({ contextInjection: "never" })).toThrow();
   });
 
-  it("accepts embeddedPi.executionContract", () => {
+  it("accepts embeddedPi.customHarness", () => {
     const result = AgentDefaultsSchema.parse({
       embeddedPi: {
-        executionContract: "strict-agentic",
+        customHarness: "demo-harness",
       },
     })!;
-    expect(result.embeddedPi?.executionContract).toBe("strict-agentic");
+    expect(result.embeddedPi?.customHarness).toBe("demo-harness");
+    const disabled = AgentDefaultsSchema.parse({
+      embeddedPi: {
+        customHarness: false,
+      },
+    })!;
+    expect(disabled.embeddedPi?.customHarness).toBe(false);
   });
 });

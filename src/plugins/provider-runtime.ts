@@ -12,6 +12,8 @@ import { getActivePluginRegistryWorkspaceDirFromState } from "./runtime-state.js
 import type {
   ProviderAuthDoctorHintContext,
   ProviderAugmentModelCatalogContext,
+  ProviderAgentHarnessContract,
+  ProviderAgentHarnessContext,
   ProviderExternalAuthProfile,
   ProviderBuildMissingAuthMessageContext,
   ProviderBuildUnknownModelHintContext,
@@ -239,6 +241,18 @@ export function resolveProviderSystemPromptContribution(params: {
   return (
     resolveProviderRuntimePlugin(params)?.resolveSystemPromptContribution?.(params.context) ??
     undefined
+  );
+}
+
+export function resolveProviderAgentHarnessContract(params: {
+  provider: string;
+  config?: OpenClawConfig;
+  workspaceDir?: string;
+  env?: NodeJS.ProcessEnv;
+  context: ProviderAgentHarnessContext;
+}): ProviderAgentHarnessContract | undefined {
+  return (
+    resolveProviderRuntimePlugin(params)?.resolveAgentHarnessContract?.(params.context) ?? undefined
   );
 }
 

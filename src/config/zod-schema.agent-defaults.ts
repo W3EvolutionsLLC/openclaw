@@ -157,7 +157,7 @@ export const AgentDefaultsSchema = z
         projectSettingsPolicy: z
           .union([z.literal("trusted"), z.literal("sanitize"), z.literal("ignore")])
           .optional(),
-        executionContract: z.union([z.literal("default"), z.literal("strict-agentic")]).optional(),
+        customHarness: z.union([z.string().min(1), z.literal(false)]).optional(),
       })
       .strict()
       .optional(),

@@ -68,6 +68,7 @@ let prepareProviderDynamicModel: typeof import("./provider-runtime.js").prepareP
 let prepareProviderRuntimeAuth: typeof import("./provider-runtime.js").prepareProviderRuntimeAuth;
 let resetProviderRuntimeHookCacheForTest: typeof import("./provider-runtime.js").resetProviderRuntimeHookCacheForTest;
 let refreshProviderOAuthCredentialWithPlugin: typeof import("./provider-runtime.js").refreshProviderOAuthCredentialWithPlugin;
+let resolveProviderAgentHarnessContract: typeof import("./provider-runtime.js").resolveProviderAgentHarnessContract;
 let resolveProviderRuntimePlugin: typeof import("./provider-runtime.js").resolveProviderRuntimePlugin;
 let runProviderDynamicModel: typeof import("./provider-runtime.js").runProviderDynamicModel;
 let validateProviderReplayTurnsWithPlugin: typeof import("./provider-runtime.js").validateProviderReplayTurnsWithPlugin;
@@ -281,6 +282,7 @@ describe("provider-runtime", () => {
       prepareProviderRuntimeAuth,
       resetProviderRuntimeHookCacheForTest,
       refreshProviderOAuthCredentialWithPlugin,
+      resolveProviderAgentHarnessContract,
       resolveProviderRuntimePlugin,
       runProviderDynamicModel,
       validateProviderReplayTurnsWithPlugin,
@@ -468,6 +470,35 @@ describe("provider-runtime", () => {
         },
       },
     });
+  });
+
+  it("resolves custom harness contracts through owner plugins", () => {
+    const harnessContract = {
+      id: "demo-harness",
+      planToolDefault: true,
+      planningOnlyRetryLimit: 2,
+    };
+    resolvePluginProvidersMock.mockReturnValue([
+      {
+        id: "demo",
+        label: "Demo",
+        auth: [],
+        resolveAgentHarnessContract: (ctx) =>
+          ctx.customHarnessId === "demo-harness" ? harnessContract : undefined,
+      },
+    ]);
+
+    expect(
+      resolveProviderAgentHarnessContract({
+        provider: "demo",
+        context: {
+          provider: "demo",
+          modelId: "demo-model",
+          customHarnessId: "demo-harness",
+          agentId: "main",
+        },
+      }),
+    ).toBe(harnessContract);
   });
 
   it("resolves failover classification through hook-only aliases", () => {

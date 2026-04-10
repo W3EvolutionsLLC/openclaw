@@ -5,6 +5,7 @@ import {
   loadRunOverflowCompactionHarness,
   mockedClassifyFailoverReason,
   mockedGlobalHookRunner,
+  mockedResolveProviderAgentHarnessContract,
   mockedRunEmbeddedAttempt,
   overflowBaseRunParams,
   resetRunOverflowCompactionHarnessMocks,
@@ -13,9 +14,10 @@ import {
   extractPlanningOnlyPlanDetails,
   isLikelyExecutionAckPrompt,
   resolveAckExecutionFastPathInstruction,
+  resolvePlanningOnlyBlockedText,
   resolvePlanningOnlyRetryLimit,
   resolvePlanningOnlyRetryInstruction,
-  STRICT_AGENTIC_BLOCKED_TEXT,
+  DEFAULT_CUSTOM_HARNESS_BLOCKED_TEXT,
 } from "./run/incomplete-turn.js";
 import type { EmbeddedRunAttemptResult } from "./run/types.js";
 
@@ -58,8 +60,13 @@ describe("runEmbeddedPiAgent incomplete-turn safety", () => {
     expect(result.payloads?.[0]?.text).toContain("verify before retrying");
   });
 
-  it("uses explicit agentId without a session key before surfacing the strict-agentic blocked state", async () => {
+  it("uses explicit agentId without a session key before surfacing the custom harness blocked state", async () => {
     mockedClassifyFailoverReason.mockReturnValue(null);
+    mockedResolveProviderAgentHarnessContract.mockReturnValue({
+      id: "demo",
+      planningOnlyRetryLimit: 2,
+      planningOnlyBlockedText: DEFAULT_CUSTOM_HARNESS_BLOCKED_TEXT,
+    });
     mockedRunEmbeddedAttempt.mockResolvedValue(
       makeAttemptResult({
         assistantTexts: ["I'll inspect the code, make the change, and run the checks."],
@@ -70,14 +77,14 @@ describe("runEmbeddedPiAgent incomplete-turn safety", () => {
       ...overflowBaseRunParams,
       sessionKey: undefined,
       agentId: "research",
-      provider: "openai",
-      model: "gpt-5.4",
-      runId: "run-strict-agentic-explicit-agent",
+      provider: "demo-provider",
+      model: "demo-model",
+      runId: "run-custom-harness-explicit-agent",
       config: {
         agents: {
           defaults: {
             embeddedPi: {
-              executionContract: "default",
+              customHarness: false,
             },
           },
           list: [
@@ -85,7 +92,7 @@ describe("runEmbeddedPiAgent incomplete-turn safety", () => {
             {
               id: "research",
               embeddedPi: {
-                executionContract: "strict-agentic",
+                customHarness: "demo",
               },
             },
           ],
@@ -96,16 +103,26 @@ describe("runEmbeddedPiAgent incomplete-turn safety", () => {
     expect(mockedRunEmbeddedAttempt).toHaveBeenCalledTimes(3);
     expect(result.payloads).toEqual([
       {
-        text: STRICT_AGENTIC_BLOCKED_TEXT,
+        text: DEFAULT_CUSTOM_HARNESS_BLOCKED_TEXT,
         isError: true,
       },
     ]);
+    expect(mockedResolveProviderAgentHarnessContract).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "demo-provider",
+        context: expect.objectContaining({
+          provider: "demo-provider",
+          modelId: "demo-model",
+          customHarnessId: "demo",
+          agentId: "research",
+        }),
+      }),
+    );
   });
 
-  it("detects replay-safe planning-only GPT turns", () => {
+  it("detects replay-safe planning-only turns when enabled", () => {
     const retryInstruction = resolvePlanningOnlyRetryInstruction({
-      provider: "openai",
-      modelId: "gpt-5.4",
+      enabled: true,
       aborted: false,
       timedOut: false,
       attempt: makeAttemptResult({
@@ -116,10 +133,9 @@ describe("runEmbeddedPiAgent incomplete-turn safety", () => {
     expect(retryInstruction).toContain("Do not restate the plan");
   });
 
-  it("detects structured bullet-only plans with intent cues as planning-only GPT turns", () => {
+  it("detects structured bullet-only plans with intent cues as planning-only turns", () => {
     const retryInstruction = resolvePlanningOnlyRetryInstruction({
-      provider: "openai",
-      modelId: "gpt-5.4",
+      enabled: true,
       aborted: false,
       timedOut: false,
       attempt: makeAttemptResult({
@@ -134,8 +150,7 @@ describe("runEmbeddedPiAgent incomplete-turn safety", () => {
 
   it("does not misclassify ordinary bullet summaries as planning-only", () => {
     const retryInstruction = resolvePlanningOnlyRetryInstruction({
-      provider: "openai",
-      modelId: "gpt-5.4",
+      enabled: true,
       aborted: false,
       timedOut: false,
       attempt: makeAttemptResult({
@@ -148,8 +163,7 @@ describe("runEmbeddedPiAgent incomplete-turn safety", () => {
 
   it("does not treat a bare plan heading as planning-only without an intent cue", () => {
     const retryInstruction = resolvePlanningOnlyRetryInstruction({
-      provider: "openai",
-      modelId: "gpt-5.4",
+      enabled: true,
       aborted: false,
       timedOut: false,
       attempt: makeAttemptResult({
@@ -162,8 +176,7 @@ describe("runEmbeddedPiAgent incomplete-turn safety", () => {
 
   it("does not retry planning-only detection after tool activity", () => {
     const retryInstruction = resolvePlanningOnlyRetryInstruction({
-      provider: "openai",
-      modelId: "gpt-5.4",
+      enabled: true,
       aborted: false,
       timedOut: false,
       attempt: makeAttemptResult({
@@ -177,8 +190,7 @@ describe("runEmbeddedPiAgent incomplete-turn safety", () => {
 
   it("does not retry planning-only detection after an item has started", () => {
     const retryInstruction = resolvePlanningOnlyRetryInstruction({
-      provider: "openai",
-      modelId: "gpt-5.4",
+      enabled: true,
       aborted: false,
       timedOut: false,
       attempt: makeAttemptResult({
@@ -196,8 +208,7 @@ describe("runEmbeddedPiAgent incomplete-turn safety", () => {
 
   it("treats update_plan as non-progress for planning-only retry detection", () => {
     const retryInstruction = resolvePlanningOnlyRetryInstruction({
-      provider: "openai",
-      modelId: "gpt-5.4",
+      enabled: true,
       aborted: false,
       timedOut: false,
       attempt: makeAttemptResult({
@@ -214,11 +225,27 @@ describe("runEmbeddedPiAgent incomplete-turn safety", () => {
     expect(retryInstruction).toContain("Act now");
   });
 
-  it("allows one retry by default and two retries for strict-agentic runs", () => {
-    expect(resolvePlanningOnlyRetryLimit("default")).toBe(1);
-    expect(resolvePlanningOnlyRetryLimit("strict-agentic")).toBe(2);
-    expect(STRICT_AGENTIC_BLOCKED_TEXT).toContain("plan-only turns");
-    expect(STRICT_AGENTIC_BLOCKED_TEXT).toContain("advanced the task");
+  it("keeps planning-only retry disabled until a harness contract opts in", () => {
+    expect(resolvePlanningOnlyRetryLimit()).toBe(0);
+    expect(resolvePlanningOnlyRetryLimit({ id: "demo", planningOnlyRetryLimit: 2 })).toBe(2);
+    expect(resolvePlanningOnlyBlockedText({ id: "demo" })).toBe(
+      DEFAULT_CUSTOM_HARNESS_BLOCKED_TEXT,
+    );
+    expect(DEFAULT_CUSTOM_HARNESS_BLOCKED_TEXT).toContain("plan-only turns");
+    expect(DEFAULT_CUSTOM_HARNESS_BLOCKED_TEXT).toContain("advanced the task");
+  });
+
+  it("does not detect planning-only turns when the harness guard is disabled", () => {
+    const retryInstruction = resolvePlanningOnlyRetryInstruction({
+      enabled: false,
+      aborted: false,
+      timedOut: false,
+      attempt: makeAttemptResult({
+        assistantTexts: ["I'll inspect the code, make the change, and run the checks."],
+      }),
+    });
+
+    expect(retryInstruction).toBeNull();
   });
 
   it("detects short execution approval prompts", () => {
@@ -237,10 +264,9 @@ describe("runEmbeddedPiAgent incomplete-turn safety", () => {
     expect(isLikelyExecutionAckPrompt("진행해")).toBe(true);
   });
 
-  it("adds an ack-turn fast-path instruction for GPT action turns", () => {
+  it("adds an ack-turn fast-path instruction when enabled", () => {
     const instruction = resolveAckExecutionFastPathInstruction({
-      provider: "openai",
-      modelId: "gpt-5.4",
+      enabled: true,
       prompt: "go ahead",
     });
 

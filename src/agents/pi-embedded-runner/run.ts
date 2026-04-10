@@ -9,6 +9,7 @@ import { emitAgentPlanEvent } from "../../infra/agent-events.js";
 import { sleepWithAbort } from "../../infra/backoff.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
+import { resolveProviderAgentHarnessContract } from "../../plugins/provider-runtime.js";
 import { enqueueCommandInLane } from "../../process/command-queue.js";
 import { normalizeOptionalString } from "../../shared/string-coerce.js";
 import { sanitizeForLog } from "../../terminal/ansi.js";
@@ -16,8 +17,7 @@ import { isMarkdownCapableMessageChannel } from "../../utils/message-channel.js"
 import { resolveOpenClawAgentDir } from "../agent-paths.js";
 import {
   hasConfiguredModelFallbacks,
-  isStrictAgenticExecutionContractActive,
-  resolveAgentExecutionContract,
+  resolveAgentCustomHarnessId,
   resolveSessionAgentIds,
 } from "../agent-scope.js";
 import {
@@ -96,11 +96,11 @@ import {
 } from "./run/helpers.js";
 import {
   resolveAckExecutionFastPathInstruction,
+  resolvePlanningOnlyBlockedText,
   resolveIncompleteTurnPayloadText,
   extractPlanningOnlyPlanDetails,
   resolvePlanningOnlyRetryLimit,
   resolvePlanningOnlyRetryInstruction,
-  STRICT_AGENTIC_BLOCKED_TEXT,
 } from "./run/incomplete-turn.js";
 import type { RunEmbeddedPiAgentParams } from "./run/params.js";
 import { buildEmbeddedRunPayloads } from "./run/payloads.js";
@@ -397,17 +397,27 @@ export async function runEmbeddedPiAgent(
         config: params.config,
         agentId: params.agentId,
       });
-      const configuredExecutionContract =
-        resolveAgentExecutionContract(params.config, sessionAgentId) ?? "default";
-      const strictAgenticActive = isStrictAgenticExecutionContractActive({
-        config: params.config,
-        sessionKey: params.sessionKey,
-        agentId: params.agentId,
-        provider,
-        modelId,
-      });
-      const executionContract = strictAgenticActive ? "strict-agentic" : "default";
-      const maxPlanningOnlyRetryAttempts = resolvePlanningOnlyRetryLimit(executionContract);
+      const customHarnessId = resolveAgentCustomHarnessId(params.config, sessionAgentId);
+      const agentHarnessContract = customHarnessId
+        ? resolveProviderAgentHarnessContract({
+            provider,
+            config: params.config,
+            workspaceDir: params.workspaceDir,
+            context: {
+              config: params.config,
+              agentDir: params.agentDir,
+              workspaceDir: params.workspaceDir,
+              provider,
+              modelId,
+              customHarnessId,
+              agentId: sessionAgentId,
+              sessionKey: params.sessionKey,
+            },
+          })
+        : undefined;
+      const activeCustomHarnessId = agentHarnessContract?.id;
+      const planningOnlyBlockedText = resolvePlanningOnlyBlockedText(agentHarnessContract);
+      const maxPlanningOnlyRetryAttempts = resolvePlanningOnlyRetryLimit(agentHarnessContract);
 
       const MAX_TIMEOUT_COMPACTION_ATTEMPTS = 2;
       const MAX_OVERFLOW_COMPACTION_ATTEMPTS = 3;
@@ -427,8 +437,7 @@ export async function runEmbeddedPiAgent(
       let lastRetryFailoverReason: FailoverReason | null = null;
       let planningOnlyRetryInstruction: string | null = null;
       const ackExecutionFastPathInstruction = resolveAckExecutionFastPathInstruction({
-        provider,
-        modelId,
+        enabled: agentHarnessContract?.ackExecutionFastPath === true,
         prompt: params.prompt,
       });
       let rateLimitProfileRotations = 0;
@@ -1509,8 +1518,7 @@ export async function runEmbeddedPiAgent(
             attempt,
           });
           const nextPlanningOnlyRetryInstruction = resolvePlanningOnlyRetryInstruction({
-            provider,
-            modelId,
+            enabled: maxPlanningOnlyRetryAttempts > 0,
             aborted,
             timedOut,
             attempt,
@@ -1549,20 +1557,20 @@ export async function runEmbeddedPiAgent(
             planningOnlyRetryInstruction = nextPlanningOnlyRetryInstruction;
             log.warn(
               `planning-only turn detected: runId=${params.runId} sessionId=${params.sessionId} ` +
-                `provider=${provider}/${modelId} contract=${executionContract} configured=${configuredExecutionContract} — retrying ` +
+                `provider=${provider}/${modelId} customHarness=${activeCustomHarnessId ?? "none"} configured=${customHarnessId ?? "none"} - retrying ` +
                 `${planningOnlyRetryAttempts}/${maxPlanningOnlyRetryAttempts} with act-now steer`,
             );
             continue;
           }
-          if (!incompleteTurnText && nextPlanningOnlyRetryInstruction && strictAgenticActive) {
+          if (!incompleteTurnText && nextPlanningOnlyRetryInstruction && agentHarnessContract) {
             log.warn(
-              `strict-agentic run exhausted planning-only retries: runId=${params.runId} sessionId=${params.sessionId} ` +
-                `provider=${provider}/${modelId} configured=${configuredExecutionContract} — surfacing blocked state`,
+              `custom harness exhausted planning-only retries: runId=${params.runId} sessionId=${params.sessionId} ` +
+                `provider=${provider}/${modelId} customHarness=${activeCustomHarnessId ?? "none"} configured=${customHarnessId ?? "none"} - surfacing blocked state`,
             );
             return {
               payloads: [
                 {
-                  text: STRICT_AGENTIC_BLOCKED_TEXT,
+                  text: planningOnlyBlockedText,
                   isError: true,
                 },
               ],

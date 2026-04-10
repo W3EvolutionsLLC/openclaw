@@ -1,4 +1,5 @@
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
+import { resolveOpenAIAgentHarnessContract } from "./agent-harness.js";
 import { buildOpenAICodexCliBackend } from "./cli-backend.js";
 import { buildOpenAIImageGenerationProvider } from "./image-generation-provider.js";
 import {
@@ -31,6 +32,11 @@ export default definePluginEntry({
           mode: promptOverlayMode,
           modelProviderId: provider.id,
           modelId: ctx.modelId,
+        }),
+      resolveAgentHarnessContract: (ctx) =>
+        resolveOpenAIAgentHarnessContract({
+          ...ctx,
+          provider: provider.id,
         }),
     });
     api.registerCliBackend(buildOpenAICodexCliBackend());

@@ -1,5 +1,5 @@
 import type { ChatType } from "../channels/chat-type.js";
-import type { AgentDefaultsConfig, EmbeddedPiExecutionContract } from "./types.agent-defaults.js";
+import type { AgentDefaultsConfig, EmbeddedPiCustomHarnessConfig } from "./types.agent-defaults.js";
 import type { AgentModelConfig, AgentSandboxConfig } from "./types.agents-shared.js";
 import type { HumanDelayConfig, IdentityConfig } from "./types.base.js";
 import type { GroupChatConfig } from "./types.messages.js";
@@ -94,8 +94,8 @@ export type AgentConfig = {
   };
   /** Optional per-agent embedded Pi overrides. */
   embeddedPi?: {
-    /** Optional per-agent execution contract override. */
-    executionContract?: EmbeddedPiExecutionContract;
+    /** Optional per-agent custom harness override. */
+    customHarness?: EmbeddedPiCustomHarnessConfig;
   };
   /** Optional per-agent sandbox overrides. */
   sandbox?: AgentSandboxConfig;

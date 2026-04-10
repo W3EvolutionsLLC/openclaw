@@ -8,7 +8,7 @@ import type {
 import type { MemorySearchConfig } from "./types.tools.js";
 
 export type AgentContextInjection = "always" | "continuation-skip";
-export type EmbeddedPiExecutionContract = "default" | "strict-agentic";
+export type EmbeddedPiCustomHarnessConfig = string | false;
 
 export type AgentModelEntryConfig = {
   alias?: string;
@@ -218,11 +218,11 @@ export type AgentDefaultsConfig = {
      */
     projectSettingsPolicy?: "trusted" | "sanitize" | "ignore";
     /**
-     * Embedded Pi execution contract:
-     * - default: keep the standard runner behavior
-     * - strict-agentic: on OpenAI/OpenAI Codex GPT-5-family runs, keep acting until hitting a real blocker
+     * Optional provider-owned custom harness contract.
+     * - string: ask the active provider plugin to apply this custom harness
+     * - false: disable an inherited custom harness for this scope
      */
-    executionContract?: EmbeddedPiExecutionContract;
+    customHarness?: EmbeddedPiCustomHarnessConfig;
   };
   /** Vector memory search configuration (per-agent overrides supported). */
   memorySearch?: MemorySearchConfig;

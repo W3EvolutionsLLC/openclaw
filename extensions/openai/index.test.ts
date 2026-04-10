@@ -7,6 +7,10 @@ import {
   registerProviderPlugin,
   requireRegisteredProvider,
 } from "../../test/helpers/plugins/provider-registration.js";
+import {
+  OPENAI_CODEX_AGENT_HARNESS_CONTRACT,
+  OPENAI_CODEX_CUSTOM_HARNESS_ID,
+} from "./agent-harness.js";
 import { buildOpenAIImageGenerationProvider } from "./image-generation-provider.js";
 import plugin from "./index.js";
 import {
@@ -302,6 +306,43 @@ describe("openai plugin", () => {
       openaiProvider.resolveSystemPromptContribution?.({
         ...contributionContext,
         modelId: "gpt-image-1",
+      }),
+    ).toBeUndefined();
+  });
+
+  it("registers the Codex custom harness for GPT-5 OpenAI providers", async () => {
+    const { providers } = await registerOpenAIPluginWithHook();
+    const openaiProvider = requireRegisteredProvider(providers, "openai");
+    const codexProvider = requireRegisteredProvider(providers, "openai-codex");
+    const harnessContext: Parameters<
+      NonNullable<ProviderPlugin["resolveAgentHarnessContract"]>
+    >[0] = {
+      config: undefined,
+      agentDir: undefined,
+      workspaceDir: undefined,
+      provider: "unused",
+      modelId: "gpt-5.4",
+      customHarnessId: OPENAI_CODEX_CUSTOM_HARNESS_ID,
+      agentId: "main",
+      sessionKey: "agent:main:main",
+    };
+
+    expect(openaiProvider.resolveAgentHarnessContract?.(harnessContext)).toBe(
+      OPENAI_CODEX_AGENT_HARNESS_CONTRACT,
+    );
+    expect(codexProvider.resolveAgentHarnessContract?.(harnessContext)).toBe(
+      OPENAI_CODEX_AGENT_HARNESS_CONTRACT,
+    );
+    expect(
+      openaiProvider.resolveAgentHarnessContract?.({
+        ...harnessContext,
+        customHarnessId: "other",
+      }),
+    ).toBeUndefined();
+    expect(
+      openaiProvider.resolveAgentHarnessContract?.({
+        ...harnessContext,
+        modelId: "gpt-4.1",
       }),
     ).toBeUndefined();
   });

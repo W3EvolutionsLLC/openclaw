@@ -2299,7 +2299,7 @@ Notes:
 
 ### `tools.experimental`
 
-Experimental built-in tool flags. Default off unless a strict-agentic GPT-5 auto-enable rule applies.
+Experimental built-in tool flags. Default off unless a provider-owned custom harness enables the tool.
 
 ```json5
 {
@@ -2314,7 +2314,7 @@ Experimental built-in tool flags. Default off unless a strict-agentic GPT-5 auto
 Notes:
 
 - `planTool`: enables the structured `update_plan` tool for non-trivial multi-step work tracking.
-- Default: `false` unless `agents.defaults.embeddedPi.executionContract` (or a per-agent override) is set to `"strict-agentic"` for an OpenAI or OpenAI Codex GPT-5-family run. Set `true` to force the tool on outside that scope, or `false` to keep it off even for strict-agentic GPT-5 runs.
+- Default: `false` unless `agents.defaults.embeddedPi.customHarness` (or a per-agent override) resolves to a provider-owned custom harness contract that enables the tool. Set `true` to force the tool on outside that scope, or `false` to keep it off even when a custom harness would enable it.
 - When enabled, the system prompt also adds usage guidance so the model only uses it for substantial work and keeps at most one step `in_progress`.
 
 ### `agents.defaults.subagents`

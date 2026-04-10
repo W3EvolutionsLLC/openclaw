@@ -1,4 +1,4 @@
-import type { EmbeddedPiExecutionContract } from "../../../config/types.agent-defaults.js";
+import type { ProviderAgentHarnessContract } from "../../../plugins/types.js";
 import { normalizeLowercaseStringOrEmpty } from "../../../shared/string-coerce.js";
 import { isLikelyMutatingToolName } from "../../tool-mutation.js";
 import type { EmbeddedRunAttemptResult } from "./types.js";
@@ -84,8 +84,8 @@ export const PLANNING_ONLY_RETRY_INSTRUCTION =
   "The previous assistant turn only described the plan. Do not restate the plan. Act now: take the first concrete tool action you can. If a real blocker prevents action, reply with the exact blocker in one sentence.";
 export const ACK_EXECUTION_FAST_PATH_INSTRUCTION =
   "The latest user message is a short approval to proceed. Do not recap or restate the plan. Start with the first concrete tool action immediately. Keep any user-facing follow-up brief and natural.";
-export const STRICT_AGENTIC_BLOCKED_TEXT =
-  "⚠️ Agent stopped after repeated plan-only turns without taking a concrete action. No concrete tool action or external side effect advanced the task.";
+export const DEFAULT_CUSTOM_HARNESS_BLOCKED_TEXT =
+  "Agent stopped after repeated plan-only turns without taking a concrete action. No concrete tool action or external side effect advanced the task.";
 
 export type PlanningOnlyPlanDetails = {
   explanation: string;
@@ -132,17 +132,6 @@ export function resolveIncompleteTurnPayloadText(params: {
     : "⚠️ Agent couldn't generate a response. Please try again.";
 }
 
-function shouldApplyPlanningOnlyRetryGuard(params: {
-  provider?: string;
-  modelId?: string;
-}): boolean {
-  const provider = normalizeLowercaseStringOrEmpty(params.provider);
-  if (provider !== "openai" && provider !== "openai-codex") {
-    return false;
-  }
-  return /^gpt-5(?:[.-]|$)/i.test(params.modelId ?? "");
-}
-
 function normalizeAckPrompt(text: string): string {
   const normalized = text
     .normalize("NFKC")
@@ -162,17 +151,10 @@ export function isLikelyExecutionAckPrompt(text: string): boolean {
 }
 
 export function resolveAckExecutionFastPathInstruction(params: {
-  provider?: string;
-  modelId?: string;
+  enabled: boolean;
   prompt: string;
 }): string | null {
-  if (
-    !shouldApplyPlanningOnlyRetryGuard({
-      provider: params.provider,
-      modelId: params.modelId,
-    }) ||
-    !isLikelyExecutionAckPrompt(params.prompt)
-  ) {
+  if (!params.enabled || !isLikelyExecutionAckPrompt(params.prompt)) {
     return null;
   }
   return ACK_EXECUTION_FAST_PATH_INSTRUCTION;
@@ -231,24 +213,28 @@ function hasNonPlanToolActivity(toolMetas: PlanningOnlyAttempt["toolMetas"]): bo
 }
 
 export function resolvePlanningOnlyRetryLimit(
-  executionContract?: EmbeddedPiExecutionContract,
+  harnessContract?: ProviderAgentHarnessContract | null,
 ): number {
-  return executionContract === "strict-agentic" ? 2 : 1;
+  const limit = harnessContract?.planningOnlyRetryLimit;
+  return typeof limit === "number" && Number.isInteger(limit) && limit >= 0 ? limit : 0;
+}
+
+export function resolvePlanningOnlyBlockedText(
+  harnessContract?: ProviderAgentHarnessContract | null,
+): string {
+  const text = harnessContract?.planningOnlyBlockedText?.trim();
+  return text || DEFAULT_CUSTOM_HARNESS_BLOCKED_TEXT;
 }
 
 export function resolvePlanningOnlyRetryInstruction(params: {
-  provider?: string;
-  modelId?: string;
+  enabled: boolean;
   aborted: boolean;
   timedOut: boolean;
   attempt: PlanningOnlyAttempt;
 }): string | null {
   const planOnlyToolMetaCount = countPlanOnlyToolMetas(params.attempt.toolMetas);
   if (
-    !shouldApplyPlanningOnlyRetryGuard({
-      provider: params.provider,
-      modelId: params.modelId,
-    }) ||
+    !params.enabled ||
     params.aborted ||
     params.timedOut ||
     params.attempt.clientToolCall ||

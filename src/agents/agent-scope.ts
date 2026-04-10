@@ -3,7 +3,7 @@ import path from "node:path";
 import type { OpenClawConfig } from "../config/config.js";
 import { resolveAgentModelFallbackValues } from "../config/model-input.js";
 import { resolveStateDir } from "../config/paths.js";
-import type { AgentDefaultsConfig } from "../config/types.agent-defaults.js";
+import type { AgentDefaultsConfig } from "../config/types.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import {
   DEFAULT_AGENT_ID,
@@ -171,38 +171,30 @@ export function resolveAgentConfig(
   };
 }
 
-export function resolveAgentExecutionContract(
-  cfg: OpenClawConfig | undefined,
-  agentId?: string | null,
-): NonNullable<NonNullable<AgentDefaultsConfig["embeddedPi"]>["executionContract"]> | undefined {
-  const defaultContract = cfg?.agents?.defaults?.embeddedPi?.executionContract;
-  if (!cfg || !agentId) {
-    return defaultContract;
+function normalizeCustomHarnessId(value: unknown): string | undefined {
+  if (value === false) {
+    return undefined;
   }
-  const agentContract = resolveAgentConfig(cfg, agentId)?.embeddedPi?.executionContract;
-  return agentContract ?? defaultContract;
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed || undefined;
 }
 
-export function isStrictAgenticExecutionContractActive(params: {
-  config?: OpenClawConfig;
-  sessionKey?: string;
-  agentId?: string | null;
-  provider?: string | null;
-  modelId?: string | null;
-}): boolean {
-  const { sessionAgentId } = resolveSessionAgentIds({
-    sessionKey: params.sessionKey,
-    config: params.config,
-    agentId: params.agentId ?? undefined,
-  });
-  if (resolveAgentExecutionContract(params.config, sessionAgentId) !== "strict-agentic") {
-    return false;
+export function resolveAgentCustomHarnessId(
+  cfg: OpenClawConfig | undefined,
+  agentId?: string | null,
+): string | undefined {
+  const defaultHarness = normalizeCustomHarnessId(cfg?.agents?.defaults?.embeddedPi?.customHarness);
+  if (!cfg || !agentId) {
+    return defaultHarness;
   }
-  const provider = normalizeLowercaseStringOrEmpty(params.provider ?? "");
-  if (provider !== "openai" && provider !== "openai-codex") {
-    return false;
+  const embeddedPi = resolveAgentConfig(cfg, agentId)?.embeddedPi;
+  if (embeddedPi && Object.prototype.hasOwnProperty.call(embeddedPi, "customHarness")) {
+    return normalizeCustomHarnessId(embeddedPi.customHarness);
   }
-  return /^gpt-5(?:[.-]|$)/i.test(params.modelId?.trim() ?? "");
+  return defaultHarness;
 }
 
 export function resolveAgentSkillsFilter(

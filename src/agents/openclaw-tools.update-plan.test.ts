@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
 import { isUpdatePlanToolEnabledForOpenClawTools } from "./openclaw-tools.registration.js";
 import { createUpdatePlanTool } from "./tools/update-plan-tool.js";
@@ -29,7 +29,7 @@ describe("openclaw-tools update_plan gating", () => {
     expect(createUpdatePlanTool().displaySummary).toBe("Track a short structured work plan.");
   });
 
-  it("does not auto-enable update_plan outside strict-agentic mode", () => {
+  it("does not auto-enable update_plan without a configured custom harness", () => {
     const cfg = {
       agents: {
         list: [{ id: "main" }],
@@ -40,18 +40,22 @@ describe("openclaw-tools update_plan gating", () => {
       isUpdatePlanToolEnabledForOpenClawTools({
         config: cfg,
         agentSessionKey: "agent:main:main",
-        modelProvider: "openai",
-        modelId: "gpt-5.4",
+        modelProvider: "demo-provider",
+        modelId: "demo-model",
       }),
     ).toBe(false);
   });
 
-  it("auto-enables update_plan for strict-agentic GPT-5 agents", () => {
+  it("auto-enables update_plan when the provider harness contract requests it", () => {
+    const resolveHarnessContract = vi.fn(() => ({
+      id: "demo",
+      planToolDefault: true,
+    }));
     const cfg = {
       agents: {
         defaults: {
           embeddedPi: {
-            executionContract: "strict-agentic",
+            customHarness: "demo",
           },
         },
         list: [{ id: "main" }],
@@ -62,18 +66,32 @@ describe("openclaw-tools update_plan gating", () => {
       isUpdatePlanToolEnabledForOpenClawTools({
         config: cfg,
         agentSessionKey: "agent:main:main",
-        modelProvider: "openai",
-        modelId: "gpt-5.4",
+        modelProvider: "demo-provider",
+        modelId: "demo-model",
+        resolveHarnessContract,
       }),
     ).toBe(true);
+    expect(resolveHarnessContract).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "demo-provider",
+        context: expect.objectContaining({
+          provider: "demo-provider",
+          modelId: "demo-model",
+          customHarnessId: "demo",
+          agentId: "main",
+          sessionKey: "agent:main:main",
+        }),
+      }),
+    );
   });
 
-  it("does not auto-enable update_plan for unsupported providers or models", () => {
+  it("does not auto-enable update_plan when the provider does not resolve the harness", () => {
+    const resolveHarnessContract = vi.fn(() => undefined);
     const cfg = {
       agents: {
         defaults: {
           embeddedPi: {
-            executionContract: "strict-agentic",
+            customHarness: "demo",
           },
         },
         list: [{ id: "main" }],
@@ -84,21 +102,19 @@ describe("openclaw-tools update_plan gating", () => {
       isUpdatePlanToolEnabledForOpenClawTools({
         config: cfg,
         agentSessionKey: "agent:main:main",
-        modelProvider: "anthropic",
-        modelId: "claude-opus-4-6",
+        modelProvider: "demo-provider",
+        modelId: "demo-model",
+        resolveHarnessContract,
       }),
     ).toBe(false);
-    expect(
-      isUpdatePlanToolEnabledForOpenClawTools({
-        config: cfg,
-        agentSessionKey: "agent:main:main",
-        modelProvider: "openai",
-        modelId: "gpt-4.1",
-      }),
-    ).toBe(false);
+    expect(resolveHarnessContract).toHaveBeenCalledOnce();
   });
 
-  it("lets explicit planTool false override strict-agentic auto-enable", () => {
+  it("lets explicit planTool false override custom harness auto-enable", () => {
+    const resolveHarnessContract = vi.fn(() => ({
+      id: "demo",
+      planToolDefault: true,
+    }));
     const cfg = {
       tools: {
         experimental: {
@@ -108,7 +124,7 @@ describe("openclaw-tools update_plan gating", () => {
       agents: {
         defaults: {
           embeddedPi: {
-            executionContract: "strict-agentic",
+            customHarness: "demo",
           },
         },
         list: [{ id: "main" }],
@@ -119,18 +135,24 @@ describe("openclaw-tools update_plan gating", () => {
       isUpdatePlanToolEnabledForOpenClawTools({
         config: cfg,
         agentSessionKey: "agent:main:main",
-        modelProvider: "openai",
-        modelId: "gpt-5.4",
+        modelProvider: "demo-provider",
+        modelId: "demo-model",
+        resolveHarnessContract,
       }),
     ).toBe(false);
+    expect(resolveHarnessContract).not.toHaveBeenCalled();
   });
 
-  it("resolves strict-agentic gating from explicit agentId when no session key is available", () => {
+  it("resolves custom harness gating from explicit agentId when no session key is available", () => {
+    const resolveHarnessContract = vi.fn(() => ({
+      id: "demo",
+      planToolDefault: true,
+    }));
     const cfg = {
       agents: {
         defaults: {
           embeddedPi: {
-            executionContract: "default",
+            customHarness: false,
           },
         },
         list: [
@@ -138,7 +160,7 @@ describe("openclaw-tools update_plan gating", () => {
           {
             id: "research",
             embeddedPi: {
-              executionContract: "strict-agentic",
+              customHarness: "demo",
             },
           },
         ],
@@ -149,25 +171,38 @@ describe("openclaw-tools update_plan gating", () => {
       isUpdatePlanToolEnabledForOpenClawTools({
         config: cfg,
         agentId: "research",
-        modelProvider: "openai",
-        modelId: "gpt-5.4",
+        modelProvider: "demo-provider",
+        modelId: "demo-model",
+        resolveHarnessContract,
       }),
     ).toBe(true);
+    expect(resolveHarnessContract).toHaveBeenCalledWith(
+      expect.objectContaining({
+        context: expect.objectContaining({
+          customHarnessId: "demo",
+          agentId: "research",
+        }),
+      }),
+    );
   });
 
   it("applies per-agent overrides without leaking the contract to other agents", () => {
+    const resolveHarnessContract = vi.fn(() => ({
+      id: "demo",
+      planToolDefault: true,
+    }));
     const cfg = {
       agents: {
         defaults: {
           embeddedPi: {
-            executionContract: "strict-agentic",
+            customHarness: "demo",
           },
         },
         list: [
           {
             id: "main",
             embeddedPi: {
-              executionContract: "default",
+              customHarness: false,
             },
           },
           {
@@ -181,17 +216,20 @@ describe("openclaw-tools update_plan gating", () => {
       isUpdatePlanToolEnabledForOpenClawTools({
         config: cfg,
         agentId: "main",
-        modelProvider: "openai",
-        modelId: "gpt-5.4",
+        modelProvider: "demo-provider",
+        modelId: "demo-model",
+        resolveHarnessContract,
       }),
     ).toBe(false);
     expect(
       isUpdatePlanToolEnabledForOpenClawTools({
         config: cfg,
         agentId: "research",
-        modelProvider: "openai",
-        modelId: "gpt-5.4",
+        modelProvider: "demo-provider",
+        modelId: "demo-model",
+        resolveHarnessContract,
       }),
     ).toBe(true);
+    expect(resolveHarnessContract).toHaveBeenCalledOnce();
   });
 });

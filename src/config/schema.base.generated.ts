@@ -4463,20 +4463,20 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                     description:
                       'How embedded Pi handles workspace-local `.pi/config/settings.json`: "sanitize" (default) strips shellPath/shellCommandPrefix, "ignore" disables project settings entirely, and "trusted" applies project settings as-is.',
                   },
-                  executionContract: {
+                  customHarness: {
                     anyOf: [
                       {
                         type: "string",
-                        const: "default",
+                        minLength: 1,
                       },
                       {
-                        type: "string",
-                        const: "strict-agentic",
+                        type: "boolean",
+                        const: false,
                       },
                     ],
-                    title: "Embedded Pi Execution Contract",
+                    title: "Embedded Pi Custom Harness",
                     description:
-                      'Embedded Pi execution contract: "default" keeps the standard runner behavior, while "strict-agentic" keeps OpenAI/OpenAI Codex GPT-5-family runs acting until they hit a real blocker instead of stopping at plans or filler.',
+                      "Optional provider-owned embedded Pi custom harness id. Set a non-empty id to ask the active provider plugin for harness behavior, or false to disable inherited custom harness behavior.",
                   },
                 },
                 additionalProperties: false,
@@ -6095,26 +6095,26 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                 embeddedPi: {
                   type: "object",
                   properties: {
-                    executionContract: {
+                    customHarness: {
                       anyOf: [
                         {
                           type: "string",
-                          const: "default",
+                          minLength: 1,
                         },
                         {
-                          type: "string",
-                          const: "strict-agentic",
+                          type: "boolean",
+                          const: false,
                         },
                       ],
-                      title: "Agent Embedded Pi Execution Contract",
+                      title: "Agent Embedded Pi Custom Harness",
                       description:
-                        'Optional per-agent embedded Pi execution contract override. Set "strict-agentic" to keep that agent acting through plan-only turns on OpenAI/OpenAI Codex GPT-5-family runs, or "default" to inherit the standard runner behavior.',
+                        "Optional per-agent embedded Pi custom harness override. Set a non-empty id to ask the active provider plugin for harness behavior, or false to disable inherited custom harness behavior.",
                     },
                   },
                   additionalProperties: false,
                   title: "Agent Embedded Pi",
                   description:
-                    "Optional per-agent embedded Pi overrides. Use this to opt specific agents into stricter GPT-5 execution behavior without changing the global default.",
+                    "Optional per-agent embedded Pi overrides. Use this to opt specific agents into provider-owned custom harness behavior without changing the global default.",
                 },
                 sandbox: {
                   type: "object",
@@ -17246,7 +17246,7 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                 type: "boolean",
                 title: "Enable Structured Plan Tool",
                 description:
-                  "Enable the experimental structured `update_plan` tool for non-trivial multi-step work tracking. Leave this off unless you explicitly want the tool outside strict-agentic embedded Pi runs.",
+                  "Enable the experimental structured `update_plan` tool for non-trivial multi-step work tracking. Leave this off unless you explicitly want the tool outside provider-owned custom harness defaults.",
               },
             },
             additionalProperties: false,
@@ -23622,7 +23622,7 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
     },
     "tools.experimental.planTool": {
       label: "Enable Structured Plan Tool",
-      help: "Enable the experimental structured `update_plan` tool for non-trivial multi-step work tracking. Leave this off unless you explicitly want the tool outside strict-agentic embedded Pi runs.",
+      help: "Enable the experimental structured `update_plan` tool for non-trivial multi-step work tracking. Leave this off unless you explicitly want the tool outside provider-owned custom harness defaults.",
       tags: ["security", "tools", "advanced"],
     },
     "tools.elevated": {
@@ -25306,9 +25306,9 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
       help: 'How embedded Pi handles workspace-local `.pi/config/settings.json`: "sanitize" (default) strips shellPath/shellCommandPrefix, "ignore" disables project settings entirely, and "trusted" applies project settings as-is.',
       tags: ["access"],
     },
-    "agents.defaults.embeddedPi.executionContract": {
-      label: "Embedded Pi Execution Contract",
-      help: 'Embedded Pi execution contract: "default" keeps the standard runner behavior, while "strict-agentic" keeps OpenAI/OpenAI Codex GPT-5-family runs acting until they hit a real blocker instead of stopping at plans or filler.',
+    "agents.defaults.embeddedPi.customHarness": {
+      label: "Embedded Pi Custom Harness",
+      help: "Optional provider-owned embedded Pi custom harness id. Set a non-empty id to ask the active provider plugin for harness behavior, or false to disable inherited custom harness behavior.",
       tags: ["advanced"],
     },
     "agents.defaults.heartbeat.includeSystemPromptSection": {
@@ -25323,12 +25323,12 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
     },
     "agents.list[].embeddedPi": {
       label: "Agent Embedded Pi",
-      help: "Optional per-agent embedded Pi overrides. Use this to opt specific agents into stricter GPT-5 execution behavior without changing the global default.",
+      help: "Optional per-agent embedded Pi overrides. Use this to opt specific agents into provider-owned custom harness behavior without changing the global default.",
       tags: ["advanced"],
     },
-    "agents.list[].embeddedPi.executionContract": {
-      label: "Agent Embedded Pi Execution Contract",
-      help: 'Optional per-agent embedded Pi execution contract override. Set "strict-agentic" to keep that agent acting through plan-only turns on OpenAI/OpenAI Codex GPT-5-family runs, or "default" to inherit the standard runner behavior.',
+    "agents.list[].embeddedPi.customHarness": {
+      label: "Agent Embedded Pi Custom Harness",
+      help: "Optional per-agent embedded Pi custom harness override. Set a non-empty id to ask the active provider plugin for harness behavior, or false to disable inherited custom harness behavior.",
       tags: ["advanced"],
     },
     "agents.defaults.heartbeat.directPolicy": {

@@ -1093,6 +1093,25 @@ export type ProviderSystemPromptContributionContext = {
   agentId?: string;
 };
 
+export type ProviderAgentHarnessContext = {
+  config?: OpenClawConfig;
+  agentDir?: string;
+  workspaceDir?: string;
+  provider: string;
+  modelId: string;
+  customHarnessId: string;
+  agentId?: string;
+  sessionKey?: string;
+};
+
+export type ProviderAgentHarnessContract = {
+  id: string;
+  planToolDefault?: boolean;
+  planningOnlyRetryLimit?: number;
+  planningOnlyBlockedText?: string;
+  ackExecutionFastPath?: boolean;
+};
+
 /** Text-inference provider capability registered by a plugin. */
 export type ProviderPlugin = {
   id: string;
@@ -1465,6 +1484,15 @@ export type ProviderPlugin = {
   resolveSystemPromptContribution?: (
     ctx: ProviderSystemPromptContributionContext,
   ) => ProviderSystemPromptContribution | null | undefined;
+  /**
+   * Provider-owned custom embedded-agent harness contract.
+   *
+   * Use this when a provider/model family needs runtime behavior that should
+   * stay in the owning provider plugin rather than in OpenClaw core.
+   */
+  resolveAgentHarnessContract?: (
+    ctx: ProviderAgentHarnessContext,
+  ) => ProviderAgentHarnessContract | null | undefined;
   /**
    * Provider-owned global config defaults.
    *

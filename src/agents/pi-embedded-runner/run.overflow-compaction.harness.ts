@@ -6,6 +6,7 @@ import type {
   PluginHookBeforeAgentStartResult,
   PluginHookBeforeModelResolveResult,
   PluginHookBeforePromptBuildResult,
+  ProviderAgentHarnessContract,
 } from "../../plugins/types.js";
 import { normalizeLowercaseStringOrEmpty } from "../../shared/string-coerce.js";
 import type { FailoverReason } from "../pi-embedded-helpers/types.js";
@@ -68,6 +69,9 @@ export const mockedCompactDirect = mockedContextEngine.compact;
 export const mockedRunPostCompactionSideEffects = vi.fn(async () => {});
 export const mockedEnsureRuntimePluginsLoaded = vi.fn<(params?: unknown) => void>();
 export const mockedPrepareProviderRuntimeAuth = vi.fn(async () => undefined);
+export const mockedResolveProviderAgentHarnessContract = vi.fn<
+  (params?: unknown) => ProviderAgentHarnessContract | undefined
+>(() => undefined);
 export const mockedRunEmbeddedAttempt =
   vi.fn<(params: unknown) => Promise<EmbeddedRunAttemptResult>>();
 export const mockedRunContextEngineMaintenance = vi.fn(async () => undefined);
@@ -215,6 +219,8 @@ export function resetRunOverflowCompactionHarnessMocks(): void {
   mockedEnsureRuntimePluginsLoaded.mockReset();
   mockedPrepareProviderRuntimeAuth.mockReset();
   mockedPrepareProviderRuntimeAuth.mockResolvedValue(undefined);
+  mockedResolveProviderAgentHarnessContract.mockReset();
+  mockedResolveProviderAgentHarnessContract.mockReturnValue(undefined);
   mockedRunEmbeddedAttempt.mockReset();
   mockedRunContextEngineMaintenance.mockReset();
   mockedRunContextEngineMaintenance.mockResolvedValue(undefined);
@@ -340,6 +346,7 @@ export async function loadRunOverflowCompactionHarness(): Promise<{
     prepareProviderRuntimeAuth: mockedPrepareProviderRuntimeAuth,
     resolveProviderCapabilitiesWithPlugin: vi.fn(() => ({})),
     prepareProviderExtraParams: vi.fn(async () => ({})),
+    resolveProviderAgentHarnessContract: mockedResolveProviderAgentHarnessContract,
     wrapProviderStreamFn: vi.fn((_cfg: unknown, _model: unknown, fn: unknown) => fn),
   }));
 

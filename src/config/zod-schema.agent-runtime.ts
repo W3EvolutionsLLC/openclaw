@@ -822,7 +822,7 @@ export const AgentEntrySchema = z
       .optional(),
     embeddedPi: z
       .object({
-        executionContract: z.union([z.literal("default"), z.literal("strict-agentic")]).optional(),
+        customHarness: z.union([z.string().min(1), z.literal(false)]).optional(),
       })
       .strict()
       .optional(),
