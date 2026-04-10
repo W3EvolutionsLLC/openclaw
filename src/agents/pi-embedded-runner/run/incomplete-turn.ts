@@ -206,9 +206,8 @@ function hasStructuredPlanningOnlyFormat(text: string): boolean {
   }
   const bulletLineCount = lines.filter((line) => PLANNING_ONLY_BULLET_RE.test(line)).length;
   const hasPlanningCueLine = lines.some((line) => PLANNING_ONLY_PROMISE_RE.test(line));
-  return (
-    PLANNING_ONLY_HEADING_RE.test(lines[0] ?? "") || (bulletLineCount >= 2 && hasPlanningCueLine)
-  );
+  const hasPlanningHeading = PLANNING_ONLY_HEADING_RE.test(lines[0] ?? "");
+  return (hasPlanningHeading && hasPlanningCueLine) || (bulletLineCount >= 2 && hasPlanningCueLine);
 }
 
 export function extractPlanningOnlyPlanDetails(text: string): PlanningOnlyPlanDetails | null {

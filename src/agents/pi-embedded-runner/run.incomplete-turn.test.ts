@@ -116,14 +116,16 @@ describe("runEmbeddedPiAgent incomplete-turn safety", () => {
     expect(retryInstruction).toContain("Do not restate the plan");
   });
 
-  it("detects structured bullet-only plans as planning-only GPT turns", () => {
+  it("detects structured bullet-only plans with intent cues as planning-only GPT turns", () => {
     const retryInstruction = resolvePlanningOnlyRetryInstruction({
       provider: "openai",
       modelId: "gpt-5.4",
       aborted: false,
       timedOut: false,
       attempt: makeAttemptResult({
-        assistantTexts: ["Plan:\n1. Inspect the code\n2. Patch the issue\n3. Run the tests"],
+        assistantTexts: [
+          "Plan:\n1. I'll inspect the code\n2. I'll patch the issue\n3. I'll run the tests",
+        ],
       }),
     });
 
@@ -138,6 +140,20 @@ describe("runEmbeddedPiAgent incomplete-turn safety", () => {
       timedOut: false,
       attempt: makeAttemptResult({
         assistantTexts: ["1. Parser refactor\n2. Regression coverage\n3. Docs cleanup"],
+      }),
+    });
+
+    expect(retryInstruction).toBeNull();
+  });
+
+  it("does not treat a bare plan heading as planning-only without an intent cue", () => {
+    const retryInstruction = resolvePlanningOnlyRetryInstruction({
+      provider: "openai",
+      modelId: "gpt-5.4",
+      aborted: false,
+      timedOut: false,
+      attempt: makeAttemptResult({
+        assistantTexts: ["Plan:\n1. Parser refactor\n2. Regression coverage\n3. Docs cleanup"],
       }),
     });
 
