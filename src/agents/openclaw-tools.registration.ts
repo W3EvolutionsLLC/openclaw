@@ -1,5 +1,5 @@
 import type { OpenClawConfig } from "../config/config.js";
-import { resolveAgentExecutionContract, resolveSessionAgentId } from "./agent-scope.js";
+import { isStrictAgenticExecutionContractActive } from "./agent-scope.js";
 import type { AnyAgentTool } from "./tools/common.js";
 
 export function collectPresentOpenClawTools(
@@ -11,14 +11,19 @@ export function collectPresentOpenClawTools(
 export function isUpdatePlanToolEnabledForOpenClawTools(params: {
   config?: OpenClawConfig;
   agentSessionKey?: string;
+  agentId?: string | null;
+  modelProvider?: string;
+  modelId?: string;
 }): boolean {
   const configured = params.config?.tools?.experimental?.planTool;
   if (configured !== undefined) {
     return configured;
   }
-  const sessionAgentId = resolveSessionAgentId({
-    sessionKey: params.agentSessionKey,
+  return isStrictAgenticExecutionContractActive({
     config: params.config,
+    sessionKey: params.agentSessionKey,
+    agentId: params.agentId,
+    provider: params.modelProvider,
+    modelId: params.modelId,
   });
-  return resolveAgentExecutionContract(params.config, sessionAgentId) === "strict-agentic";
 }

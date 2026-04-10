@@ -1,4 +1,5 @@
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import type { OpenClawConfig } from "../../config/config.js";
 import { makeAttemptResult } from "./run.overflow-compaction.fixture.js";
 import {
   loadRunOverflowCompactionHarness,
@@ -55,6 +56,50 @@ describe("runEmbeddedPiAgent incomplete-turn safety", () => {
     expect(mockedClassifyFailoverReason).toHaveBeenCalledTimes(1);
     expect(result.payloads?.[0]?.isError).toBe(true);
     expect(result.payloads?.[0]?.text).toContain("verify before retrying");
+  });
+
+  it("uses explicit agentId without a session key before surfacing the strict-agentic blocked state", async () => {
+    mockedClassifyFailoverReason.mockReturnValue(null);
+    mockedRunEmbeddedAttempt.mockResolvedValue(
+      makeAttemptResult({
+        assistantTexts: ["I'll inspect the code, make the change, and run the checks."],
+      }),
+    );
+
+    const result = await runEmbeddedPiAgent({
+      ...overflowBaseRunParams,
+      sessionKey: undefined,
+      agentId: "research",
+      provider: "openai",
+      model: "gpt-5.4",
+      runId: "run-strict-agentic-explicit-agent",
+      config: {
+        agents: {
+          defaults: {
+            embeddedPi: {
+              executionContract: "default",
+            },
+          },
+          list: [
+            { id: "main" },
+            {
+              id: "research",
+              embeddedPi: {
+                executionContract: "strict-agentic",
+              },
+            },
+          ],
+        },
+      } as OpenClawConfig,
+    });
+
+    expect(mockedRunEmbeddedAttempt).toHaveBeenCalledTimes(3);
+    expect(result.payloads).toEqual([
+      {
+        text: STRICT_AGENTIC_BLOCKED_TEXT,
+        isError: true,
+      },
+    ]);
   });
 
   it("detects replay-safe planning-only GPT turns", () => {

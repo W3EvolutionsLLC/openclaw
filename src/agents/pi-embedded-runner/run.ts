@@ -16,8 +16,9 @@ import { isMarkdownCapableMessageChannel } from "../../utils/message-channel.js"
 import { resolveOpenClawAgentDir } from "../agent-paths.js";
 import {
   hasConfiguredModelFallbacks,
+  isStrictAgenticExecutionContractActive,
   resolveAgentExecutionContract,
-  resolveSessionAgentId,
+  resolveSessionAgentIds,
 } from "../agent-scope.js";
 import {
   type AuthProfileFailureReason,
@@ -391,12 +392,21 @@ export async function runEmbeddedPiAgent(
       });
 
       await initializeAuthProfile();
-      const sessionAgentId = resolveSessionAgentId({
+      const { sessionAgentId } = resolveSessionAgentIds({
         sessionKey: params.sessionKey,
         config: params.config,
+        agentId: params.agentId,
       });
-      const executionContract =
+      const configuredExecutionContract =
         resolveAgentExecutionContract(params.config, sessionAgentId) ?? "default";
+      const strictAgenticActive = isStrictAgenticExecutionContractActive({
+        config: params.config,
+        sessionKey: params.sessionKey,
+        agentId: params.agentId,
+        provider,
+        modelId,
+      });
+      const executionContract = strictAgenticActive ? "strict-agentic" : "default";
       const maxPlanningOnlyRetryAttempts = resolvePlanningOnlyRetryLimit(executionContract);
 
       const MAX_TIMEOUT_COMPACTION_ATTEMPTS = 2;
@@ -1539,19 +1549,15 @@ export async function runEmbeddedPiAgent(
             planningOnlyRetryInstruction = nextPlanningOnlyRetryInstruction;
             log.warn(
               `planning-only turn detected: runId=${params.runId} sessionId=${params.sessionId} ` +
-                `provider=${provider}/${modelId} contract=${executionContract} — retrying ` +
+                `provider=${provider}/${modelId} contract=${executionContract} configured=${configuredExecutionContract} — retrying ` +
                 `${planningOnlyRetryAttempts}/${maxPlanningOnlyRetryAttempts} with act-now steer`,
             );
             continue;
           }
-          if (
-            !incompleteTurnText &&
-            nextPlanningOnlyRetryInstruction &&
-            executionContract === "strict-agentic"
-          ) {
+          if (!incompleteTurnText && nextPlanningOnlyRetryInstruction && strictAgenticActive) {
             log.warn(
               `strict-agentic run exhausted planning-only retries: runId=${params.runId} sessionId=${params.sessionId} ` +
-                `provider=${provider}/${modelId} — surfacing blocked state`,
+                `provider=${provider}/${modelId} configured=${configuredExecutionContract} — surfacing blocked state`,
             );
             return {
               payloads: [

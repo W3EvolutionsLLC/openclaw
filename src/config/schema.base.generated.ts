@@ -4476,7 +4476,7 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                     ],
                     title: "Embedded Pi Execution Contract",
                     description:
-                      'Embedded Pi execution contract: "default" keeps the standard runner behavior, while "strict-agentic" keeps GPT-5 style runs acting until they hit a real blocker instead of stopping at plans or filler.',
+                      'Embedded Pi execution contract: "default" keeps the standard runner behavior, while "strict-agentic" keeps OpenAI/OpenAI Codex GPT-5-family runs acting until they hit a real blocker instead of stopping at plans or filler.',
                   },
                 },
                 additionalProperties: false,
@@ -6108,7 +6108,7 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                       ],
                       title: "Agent Embedded Pi Execution Contract",
                       description:
-                        'Optional per-agent embedded Pi execution contract override. Set "strict-agentic" to keep that agent acting through plan-only turns, or "default" to inherit the standard runner behavior.',
+                        'Optional per-agent embedded Pi execution contract override. Set "strict-agentic" to keep that agent acting through plan-only turns on OpenAI/OpenAI Codex GPT-5-family runs, or "default" to inherit the standard runner behavior.',
                     },
                   },
                   additionalProperties: false,
@@ -25308,7 +25308,7 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
     },
     "agents.defaults.embeddedPi.executionContract": {
       label: "Embedded Pi Execution Contract",
-      help: 'Embedded Pi execution contract: "default" keeps the standard runner behavior, while "strict-agentic" keeps GPT-5 style runs acting until they hit a real blocker instead of stopping at plans or filler.',
+      help: 'Embedded Pi execution contract: "default" keeps the standard runner behavior, while "strict-agentic" keeps OpenAI/OpenAI Codex GPT-5-family runs acting until they hit a real blocker instead of stopping at plans or filler.',
       tags: ["advanced"],
     },
     "agents.defaults.heartbeat.includeSystemPromptSection": {
@@ -25328,7 +25328,7 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
     },
     "agents.list[].embeddedPi.executionContract": {
       label: "Agent Embedded Pi Execution Contract",
-      help: 'Optional per-agent embedded Pi execution contract override. Set "strict-agentic" to keep that agent acting through plan-only turns, or "default" to inherit the standard runner behavior.',
+      help: 'Optional per-agent embedded Pi execution contract override. Set "strict-agentic" to keep that agent acting through plan-only turns on OpenAI/OpenAI Codex GPT-5-family runs, or "default" to inherit the standard runner behavior.',
       tags: ["advanced"],
     },
     "agents.defaults.heartbeat.directPolicy": {
