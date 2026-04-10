@@ -85,7 +85,7 @@ export const PLANNING_ONLY_RETRY_INSTRUCTION =
 export const ACK_EXECUTION_FAST_PATH_INSTRUCTION =
   "The latest user message is a short approval to proceed. Do not recap or restate the plan. Start with the first concrete tool action immediately. Keep any user-facing follow-up brief and natural.";
 export const STRICT_AGENTIC_BLOCKED_TEXT =
-  "⚠️ Agent stopped after repeated plan-only turns without taking a concrete action. No tool call or side effect was executed.";
+  "⚠️ Agent stopped after repeated plan-only turns without taking a concrete action. No concrete tool action or external side effect advanced the task.";
 
 export type PlanningOnlyPlanDetails = {
   explanation: string;
@@ -204,7 +204,10 @@ function hasStructuredPlanningOnlyFormat(text: string): boolean {
     return false;
   }
   const bulletLineCount = lines.filter((line) => PLANNING_ONLY_BULLET_RE.test(line)).length;
-  return PLANNING_ONLY_HEADING_RE.test(lines[0] ?? "") || bulletLineCount >= 2;
+  const hasPlanningCueLine = lines.some((line) => PLANNING_ONLY_PROMISE_RE.test(line));
+  return (
+    PLANNING_ONLY_HEADING_RE.test(lines[0] ?? "") || (bulletLineCount >= 2 && hasPlanningCueLine)
+  );
 }
 
 export function extractPlanningOnlyPlanDetails(text: string): PlanningOnlyPlanDetails | null {

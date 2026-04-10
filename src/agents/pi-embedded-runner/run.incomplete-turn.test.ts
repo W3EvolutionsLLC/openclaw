@@ -130,6 +130,20 @@ describe("runEmbeddedPiAgent incomplete-turn safety", () => {
     expect(retryInstruction).toContain("Do not restate the plan");
   });
 
+  it("does not misclassify ordinary bullet summaries as planning-only", () => {
+    const retryInstruction = resolvePlanningOnlyRetryInstruction({
+      provider: "openai",
+      modelId: "gpt-5.4",
+      aborted: false,
+      timedOut: false,
+      attempt: makeAttemptResult({
+        assistantTexts: ["1. Parser refactor\n2. Regression coverage\n3. Docs cleanup"],
+      }),
+    });
+
+    expect(retryInstruction).toBeNull();
+  });
+
   it("does not retry planning-only detection after tool activity", () => {
     const retryInstruction = resolvePlanningOnlyRetryInstruction({
       provider: "openai",
@@ -188,6 +202,7 @@ describe("runEmbeddedPiAgent incomplete-turn safety", () => {
     expect(resolvePlanningOnlyRetryLimit("default")).toBe(1);
     expect(resolvePlanningOnlyRetryLimit("strict-agentic")).toBe(2);
     expect(STRICT_AGENTIC_BLOCKED_TEXT).toContain("plan-only turns");
+    expect(STRICT_AGENTIC_BLOCKED_TEXT).toContain("advanced the task");
   });
 
   it("detects short execution approval prompts", () => {
