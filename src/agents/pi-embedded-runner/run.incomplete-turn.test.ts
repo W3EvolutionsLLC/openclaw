@@ -12,7 +12,9 @@ import {
   extractPlanningOnlyPlanDetails,
   isLikelyExecutionAckPrompt,
   resolveAckExecutionFastPathInstruction,
+  resolvePlanningOnlyRetryLimit,
   resolvePlanningOnlyRetryInstruction,
+  STRICT_AGENTIC_BLOCKED_TEXT,
 } from "./run/incomplete-turn.js";
 import type { EmbeddedRunAttemptResult } from "./run/types.js";
 
@@ -101,6 +103,32 @@ describe("runEmbeddedPiAgent incomplete-turn safety", () => {
     });
 
     expect(retryInstruction).toBeNull();
+  });
+
+  it("treats update_plan as non-progress for planning-only retry detection", () => {
+    const retryInstruction = resolvePlanningOnlyRetryInstruction({
+      provider: "openai",
+      modelId: "gpt-5.4",
+      aborted: false,
+      timedOut: false,
+      attempt: makeAttemptResult({
+        assistantTexts: ["I'll capture the steps, then take the first tool action."],
+        toolMetas: [{ toolName: "update_plan", meta: "status=updated" }],
+        itemLifecycle: {
+          startedCount: 1,
+          completedCount: 1,
+          activeCount: 0,
+        },
+      }),
+    });
+
+    expect(retryInstruction).toContain("Act now");
+  });
+
+  it("allows one retry by default and two retries for strict-agentic runs", () => {
+    expect(resolvePlanningOnlyRetryLimit("default")).toBe(1);
+    expect(resolvePlanningOnlyRetryLimit("strict-agentic")).toBe(2);
+    expect(STRICT_AGENTIC_BLOCKED_TEXT).toContain("plan-only turns");
   });
 
   it("detects short execution approval prompts", () => {

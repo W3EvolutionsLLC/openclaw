@@ -5,7 +5,11 @@ import { createUpdatePlanTool } from "./tools/update-plan-tool.js";
 
 describe("openclaw-tools update_plan gating", () => {
   it("keeps update_plan disabled by default", () => {
-    expect(isUpdatePlanToolEnabledForOpenClawTools({} as OpenClawConfig)).toBe(false);
+    expect(
+      isUpdatePlanToolEnabledForOpenClawTools({
+        config: {} as OpenClawConfig,
+      }),
+    ).toBe(false);
   });
 
   it("registers update_plan when explicitly enabled", () => {
@@ -17,27 +21,46 @@ describe("openclaw-tools update_plan gating", () => {
       },
     } as OpenClawConfig;
 
-    expect(isUpdatePlanToolEnabledForOpenClawTools(config)).toBe(true);
+    expect(
+      isUpdatePlanToolEnabledForOpenClawTools({
+        config,
+      }),
+    ).toBe(true);
     expect(createUpdatePlanTool().displaySummary).toBe("Track a short structured work plan.");
   });
 
-  it("auto-enables update_plan for OpenAI-family providers", () => {
-    expect(isUpdatePlanToolEnabledForOpenClawTools({} as OpenClawConfig, "openai")).toBe(true);
-    expect(isUpdatePlanToolEnabledForOpenClawTools({} as OpenClawConfig, "openai-codex")).toBe(
-      true,
-    );
-    expect(isUpdatePlanToolEnabledForOpenClawTools({} as OpenClawConfig, "anthropic")).toBe(false);
-  });
-
-  it("lets config disable update_plan auto-enable", () => {
-    const config = {
-      tools: {
-        experimental: {
-          planTool: false,
-        },
+  it("does not auto-enable update_plan outside strict-agentic mode", () => {
+    const cfg = {
+      agents: {
+        list: [{ id: "main" }],
       },
     } as OpenClawConfig;
 
-    expect(isUpdatePlanToolEnabledForOpenClawTools(config, "openai")).toBe(false);
+    expect(
+      isUpdatePlanToolEnabledForOpenClawTools({
+        config: cfg,
+        agentSessionKey: "agent:main:main",
+      }),
+    ).toBe(false);
+  });
+
+  it("auto-enables update_plan for strict-agentic agents", () => {
+    const cfg = {
+      agents: {
+        defaults: {
+          embeddedPi: {
+            executionContract: "strict-agentic",
+          },
+        },
+        list: [{ id: "main" }],
+      },
+    } as OpenClawConfig;
+
+    expect(
+      isUpdatePlanToolEnabledForOpenClawTools({
+        config: cfg,
+        agentSessionKey: "agent:main:main",
+      }),
+    ).toBe(true);
   });
 });

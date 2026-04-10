@@ -243,7 +243,10 @@ export function createOpenClawTools(
       agentSessionKey: options?.agentSessionKey,
       requesterAgentIdOverride: options?.requesterAgentIdOverride,
     }),
-    ...(isUpdatePlanToolEnabledForOpenClawTools(resolvedConfig, options?.modelProvider)
+    ...(isUpdatePlanToolEnabledForOpenClawTools({
+      config: resolvedConfig,
+      agentSessionKey: options?.agentSessionKey,
+    })
       ? [createUpdatePlanTool()]
       : []),
     createSessionsListTool({

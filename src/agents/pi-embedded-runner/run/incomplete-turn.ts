@@ -1,3 +1,4 @@
+import type { EmbeddedPiExecutionContract } from "../../../config/types.agent-defaults.js";
 import { normalizeLowercaseStringOrEmpty } from "../../../shared/string-coerce.js";
 import { isLikelyMutatingToolName } from "../../tool-mutation.js";
 import type { EmbeddedRunAttemptResult } from "./types.js";
@@ -81,6 +82,8 @@ export const PLANNING_ONLY_RETRY_INSTRUCTION =
   "The previous assistant turn only described the plan. Do not restate the plan. Act now: take the first concrete tool action you can. If a real blocker prevents action, reply with the exact blocker in one sentence.";
 export const ACK_EXECUTION_FAST_PATH_INSTRUCTION =
   "The latest user message is a short approval to proceed. Do not recap or restate the plan. Start with the first concrete tool action immediately. Keep any user-facing follow-up brief and natural.";
+export const STRICT_AGENTIC_BLOCKED_TEXT =
+  "⚠️ Agent stopped after repeated plan-only turns without taking a concrete action. No tool call or side effect was executed.";
 
 export type PlanningOnlyPlanDetails = {
   explanation: string;
@@ -202,6 +205,20 @@ export function extractPlanningOnlyPlanDetails(text: string): PlanningOnlyPlanDe
   };
 }
 
+function countPlanOnlyToolMetas(toolMetas: PlanningOnlyAttempt["toolMetas"]): number {
+  return toolMetas.filter((entry) => entry.toolName === "update_plan").length;
+}
+
+function hasNonPlanToolActivity(toolMetas: PlanningOnlyAttempt["toolMetas"]): boolean {
+  return toolMetas.some((entry) => entry.toolName !== "update_plan");
+}
+
+export function resolvePlanningOnlyRetryLimit(
+  executionContract?: EmbeddedPiExecutionContract,
+): number {
+  return executionContract === "strict-agentic" ? 2 : 1;
+}
+
 export function resolvePlanningOnlyRetryInstruction(params: {
   provider?: string;
   modelId?: string;
@@ -209,6 +226,7 @@ export function resolvePlanningOnlyRetryInstruction(params: {
   timedOut: boolean;
   attempt: PlanningOnlyAttempt;
 }): string | null {
+  const planOnlyToolMetaCount = countPlanOnlyToolMetas(params.attempt.toolMetas);
   if (
     !shouldApplyPlanningOnlyRetryGuard({
       provider: params.provider,
@@ -221,7 +239,8 @@ export function resolvePlanningOnlyRetryInstruction(params: {
     params.attempt.didSendDeterministicApprovalPrompt ||
     params.attempt.didSendViaMessagingTool ||
     params.attempt.lastToolError ||
-    params.attempt.itemLifecycle.startedCount > 0 ||
+    hasNonPlanToolActivity(params.attempt.toolMetas) ||
+    params.attempt.itemLifecycle.startedCount > planOnlyToolMetaCount ||
     params.attempt.replayMetadata.hadPotentialSideEffects
   ) {
     return null;
