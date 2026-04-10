@@ -116,6 +116,20 @@ describe("runEmbeddedPiAgent incomplete-turn safety", () => {
     expect(retryInstruction).toContain("Do not restate the plan");
   });
 
+  it("detects structured bullet-only plans as planning-only GPT turns", () => {
+    const retryInstruction = resolvePlanningOnlyRetryInstruction({
+      provider: "openai",
+      modelId: "gpt-5.4",
+      aborted: false,
+      timedOut: false,
+      attempt: makeAttemptResult({
+        assistantTexts: ["Plan:\n1. Inspect the code\n2. Patch the issue\n3. Run the tests"],
+      }),
+    });
+
+    expect(retryInstruction).toContain("Do not restate the plan");
+  });
+
   it("does not retry planning-only detection after tool activity", () => {
     const retryInstruction = resolvePlanningOnlyRetryInstruction({
       provider: "openai",

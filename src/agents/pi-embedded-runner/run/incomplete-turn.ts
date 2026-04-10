@@ -36,6 +36,8 @@ const PLANNING_ONLY_PROMISE_RE =
   /\b(?:i(?:'ll| will)|let me|going to|first[, ]+i(?:'ll| will)|next[, ]+i(?:'ll| will)|i can do that)\b/i;
 const PLANNING_ONLY_COMPLETION_RE =
   /\b(?:done|finished|implemented|updated|fixed|changed|ran|verified|found|here(?:'s| is) what|blocked by|the blocker is)\b/i;
+const PLANNING_ONLY_HEADING_RE = /^(?:plan|steps?|next steps?)\s*:/i;
+const PLANNING_ONLY_BULLET_RE = /^(?:[-*•]\s+|\d+[.)]\s+)/u;
 const ACK_EXECUTION_NORMALIZED_SET = new Set([
   "ok",
   "okay",
@@ -193,6 +195,18 @@ function extractPlanningOnlySteps(text: string): string[] {
     .slice(0, 4);
 }
 
+function hasStructuredPlanningOnlyFormat(text: string): boolean {
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length === 0) {
+    return false;
+  }
+  const bulletLineCount = lines.filter((line) => PLANNING_ONLY_BULLET_RE.test(line)).length;
+  return PLANNING_ONLY_HEADING_RE.test(lines[0] ?? "") || bulletLineCount >= 2;
+}
+
 export function extractPlanningOnlyPlanDetails(text: string): PlanningOnlyPlanDetails | null {
   const trimmed = text.trim();
   if (!trimmed) {
@@ -255,7 +269,7 @@ export function resolvePlanningOnlyRetryInstruction(params: {
   if (!text || text.length > 700 || text.includes("```")) {
     return null;
   }
-  if (!PLANNING_ONLY_PROMISE_RE.test(text)) {
+  if (!PLANNING_ONLY_PROMISE_RE.test(text) && !hasStructuredPlanningOnlyFormat(text)) {
     return null;
   }
   if (PLANNING_ONLY_COMPLETION_RE.test(text)) {
