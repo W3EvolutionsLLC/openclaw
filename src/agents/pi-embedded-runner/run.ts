@@ -1571,6 +1571,7 @@ export async function runEmbeddedPiAgent(
                 agentMeta,
                 aborted,
                 systemPromptReport: attempt.systemPromptReport,
+                finalAssistantVisibleText,
               },
               didSendViaMessagingTool: attempt.didSendViaMessagingTool,
               didSendDeterministicApprovalPrompt: attempt.didSendDeterministicApprovalPrompt,

@@ -136,7 +136,8 @@ function shouldApplyPlanningOnlyRetryGuard(params: {
   provider?: string;
   modelId?: string;
 }): boolean {
-  if (params.provider !== "openai" && params.provider !== "openai-codex") {
+  const provider = normalizeLowercaseStringOrEmpty(params.provider);
+  if (provider !== "openai" && provider !== "openai-codex") {
     return false;
   }
   return /^gpt-5(?:[.-]|$)/i.test(params.modelId ?? "");
