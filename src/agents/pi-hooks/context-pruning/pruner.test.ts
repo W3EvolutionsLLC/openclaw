@@ -82,9 +82,15 @@ function pruneWithOversizedAssistantThinking(params: {
 
 function buildToolTrimSettings() {
   return {
+    ...DEFAULT_CONTEXT_PRUNING_SETTINGS,
     keepLastAssistants: 1,
     softTrimRatio: 0.5,
-    softTrim: { maxChars: 200, headChars: 100, tailChars: 50 },
+    softTrim: {
+      ...DEFAULT_CONTEXT_PRUNING_SETTINGS.softTrim,
+      maxChars: 200,
+      headChars: 100,
+      tailChars: 50,
+    },
     hardClear: { ...DEFAULT_CONTEXT_PRUNING_SETTINGS.hardClear, enabled: false },
   };
 }
