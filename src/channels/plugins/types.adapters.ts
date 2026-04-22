@@ -172,7 +172,6 @@ export type ChannelGroupAdapter = {
 
 export type ChannelStatusAdapter<ResolvedAccount, Probe = unknown, Audit = unknown> = {
   defaultRuntime?: ChannelAccountSnapshot;
-  skipStaleSocketHealthCheck?: boolean;
   buildChannelSummary?: BivariantCallback<
     (params: {
       account: ResolvedAccount;
