@@ -156,7 +156,7 @@ Internal OpenClaw runtime code has the same direction: load config once at the C
     ```
 
     <Warning>
-    Model overrides (`provider`/`model`) require operator opt-in via `plugins.entries.<id>.subagent.allowModelOverride: true` in config. Untrusted plugins can still run subagents, but override requests are rejected.
+    Extra system prompts require operator opt-in via `plugins.entries.<id>.subagent.allowExtraSystemPrompt: true`, and model overrides (`provider`/`model`) require `plugins.entries.<id>.subagent.allowModelOverride: true` in config. Untrusted plugins can still run subagents, but privileged prompt and override requests are rejected.
     </Warning>
 
     `deleteSession(...)` can delete sessions created by the same plugin through `api.runtime.subagent.run(...)`. Deleting arbitrary user or operator sessions still requires an admin-scoped Gateway request.

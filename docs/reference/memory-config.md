@@ -565,6 +565,7 @@ For conceptual behavior and slash commands, see [Dreaming](/concepts/dreaming).
     entries: {
       "memory-core": {
         subagent: {
+          allowExtraSystemPrompt: true,
           allowModelOverride: true,
           allowedModels: ["anthropic/claude-sonnet-4-6"],
         },
@@ -584,7 +585,7 @@ For conceptual behavior and slash commands, see [Dreaming](/concepts/dreaming).
 <Note>
 - Dreaming writes machine state to `memory/.dreams/`.
 - Dreaming writes human-readable narrative output to `DREAMS.md` (or existing `dreams.md`).
-- `dreaming.model` uses the existing plugin subagent trust gate; set `plugins.entries.memory-core.subagent.allowModelOverride: true` before enabling it.
+- Dream Diary prose uses the plugin subagent trust gate; set `plugins.entries.memory-core.subagent.allowExtraSystemPrompt: true` for generated diary entries, and set `plugins.entries.memory-core.subagent.allowModelOverride: true` before enabling a custom model.
 - The light/deep/REM phase policy and thresholds are internal behavior, not user-facing config.
 </Note>
 

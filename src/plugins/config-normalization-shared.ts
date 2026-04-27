@@ -25,6 +25,7 @@ export type NormalizedPluginsConfig = {
       };
       subagent?: {
         allowModelOverride?: boolean;
+        allowExtraSystemPrompt?: boolean;
         allowedModels?: string[];
         hasAllowedModelsConfig?: boolean;
       };
@@ -104,6 +105,8 @@ function normalizePluginEntries(
         ? {
             allowModelOverride: (subagentRaw as { allowModelOverride?: unknown })
               .allowModelOverride,
+            allowExtraSystemPrompt: (subagentRaw as { allowExtraSystemPrompt?: unknown })
+              .allowExtraSystemPrompt,
             hasAllowedModelsConfig: Array.isArray(
               (subagentRaw as { allowedModels?: unknown }).allowedModels,
             ),
@@ -117,11 +120,15 @@ function normalizePluginEntries(
     const normalizedSubagent =
       subagent &&
       (typeof subagent.allowModelOverride === "boolean" ||
+        typeof subagent.allowExtraSystemPrompt === "boolean" ||
         subagent.hasAllowedModelsConfig ||
         (Array.isArray(subagent.allowedModels) && subagent.allowedModels.length > 0))
         ? {
             ...(typeof subagent.allowModelOverride === "boolean"
               ? { allowModelOverride: subagent.allowModelOverride }
+              : {}),
+            ...(typeof subagent.allowExtraSystemPrompt === "boolean"
+              ? { allowExtraSystemPrompt: subagent.allowExtraSystemPrompt }
               : {}),
             ...(subagent.hasAllowedModelsConfig ? { hasAllowedModelsConfig: true } : {}),
             ...(Array.isArray(subagent.allowedModels) && subagent.allowedModels.length > 0

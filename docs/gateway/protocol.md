@@ -216,6 +216,7 @@ Common scopes:
 
 - `operator.read`
 - `operator.write`
+- `operator.agentPrompt`
 - `operator.admin`
 - `operator.approvals`
 - `operator.pairing`
@@ -223,6 +224,9 @@ Common scopes:
 
 `talk.config` with `includeSecrets: true` requires `operator.talk.secrets`
 (or `operator.admin`).
+`operator.agentPrompt` is an auxiliary prompt-authority scope for trusted
+internal `agent` calls that pass `extraSystemPrompt`; it does not authorize the
+`agent` method without `operator.write`.
 
 Plugin-registered gateway RPC methods may request their own operator scope, but
 reserved core admin prefixes (`config.*`, `exec.approvals.*`, `wizard.*`,

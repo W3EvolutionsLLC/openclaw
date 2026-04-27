@@ -54,7 +54,7 @@ describe("runAgentStep", () => {
       deliver: false,
       lane: "nested:agent:main:subagent:child",
     });
-    expect(gatewayCalls[0]?.scopes).toEqual(["operator.admin"]);
+    expect(gatewayCalls[0]?.scopes).toEqual(["operator.write", "operator.agentPrompt"]);
     expect(bundleMcpRuntimeMocks.retireSessionMcpRuntimeForSessionKey).toHaveBeenCalledWith({
       sessionKey: "agent:main:subagent:child",
       reason: "nested-agent-step-complete",

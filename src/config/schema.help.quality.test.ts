@@ -359,6 +359,7 @@ const TARGET_KEYS = [
   "plugins.entries.*.hooks.allowPromptInjection",
   "plugins.entries.*.hooks.allowConversationAccess",
   "plugins.entries.*.subagent",
+  "plugins.entries.*.subagent.allowExtraSystemPrompt",
   "plugins.entries.*.subagent.allowModelOverride",
   "plugins.entries.*.subagent.allowedModels",
   "plugins.entries.*.apiKey",

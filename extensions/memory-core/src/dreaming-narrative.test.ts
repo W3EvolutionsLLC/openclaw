@@ -610,6 +610,11 @@ describe("generateAndAppendDreamNarrative", () => {
       deliver: false,
       model: "anthropic/claude-sonnet-4-6",
     });
+    const runParams = subagent.run.mock.calls[0][0];
+    expect(runParams.message).toContain("Write a dream diary entry from these memory fragments:");
+    expect(runParams.message).toContain("API endpoints need authentication");
+    expect(runParams.message).not.toContain("You are keeping a dream diary.");
+    expect(runParams.extraSystemPrompt).toContain("You are keeping a dream diary.");
     expect(subagent.waitForRun).toHaveBeenCalledOnce();
     expect(subagent.deleteSession).toHaveBeenCalledOnce();
 
@@ -728,6 +733,29 @@ describe("generateAndAppendDreamNarrative", () => {
     expect(logger.warn).not.toHaveBeenCalledWith(
       expect.stringContaining("narrative session cleanup failed"),
     );
+    expect(subagent.deleteSession).not.toHaveBeenCalled();
+  });
+
+  it("falls back locally when the subagent runtime lacks prompt authority", async () => {
+    const workspaceDir = await createTempWorkspace("openclaw-dreaming-narrative-");
+    const subagent = createMockSubagent("");
+    subagent.run.mockRejectedValue(
+      new Error('plugin "memory-core" is not trusted for fallback extra system prompt requests.'),
+    );
+    const logger = createMockLogger();
+
+    await generateAndAppendDreamNarrative({
+      subagent,
+      workspaceDir,
+      data: { phase: "light", snippets: ["API endpoints need authentication"] },
+      nowMs: Date.parse("2026-04-05T03:00:00Z"),
+      timezone: "UTC",
+      logger,
+    });
+
+    const content = await fs.readFile(path.join(workspaceDir, "DREAMS.md"), "utf-8");
+    expect(content).toContain("API endpoints need authentication");
+    expect(logger.info).toHaveBeenCalledWith(expect.stringContaining("prompt authority"));
     expect(subagent.deleteSession).not.toHaveBeenCalled();
   });
 

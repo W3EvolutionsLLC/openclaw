@@ -12,6 +12,8 @@ export type PluginEntryConfig = {
   subagent?: {
     /** Explicitly allow this plugin to request per-run provider/model overrides for subagent runs. */
     allowModelOverride?: boolean;
+    /** Explicitly allow this plugin to request per-run extra system prompts for subagent runs. */
+    allowExtraSystemPrompt?: boolean;
     /**
      * Allowed override targets as canonical provider/model refs.
      * Use "*" to explicitly allow any model for this plugin.

@@ -1181,7 +1181,9 @@ export const FIELD_HELP: Record<string, string> = {
   "plugins.entries.*.hooks.allowConversationAccess":
     "Controls whether this plugin may read raw conversation content from typed hooks such as `llm_input`, `llm_output`, `before_agent_finalize`, and `agent_end`. Non-bundled plugins must opt in explicitly.",
   "plugins.entries.*.subagent":
-    "Per-plugin subagent runtime controls for model override trust and allowlists. Keep this unset unless a plugin must explicitly steer subagent model selection.",
+    "Per-plugin subagent runtime controls for prompt/model trust and allowlists. Keep this unset unless a plugin must explicitly steer subagent prompts or model selection.",
+  "plugins.entries.*.subagent.allowExtraSystemPrompt":
+    "Explicitly allows this plugin to request extra system prompts in background subagent runs. Keep false unless the plugin is trusted to add privileged run instructions.",
   "plugins.entries.*.subagent.allowModelOverride":
     "Explicitly allows this plugin to request provider/model overrides in background subagent runs. Keep false unless the plugin is trusted to steer model selection.",
   "plugins.entries.*.subagent.allowedModels":

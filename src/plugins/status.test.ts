@@ -438,6 +438,7 @@ describe("plugin status reports", () => {
           enabled: true,
           subagent: {
             allowModelOverride: true,
+            allowExtraSystemPrompt: true,
             allowedModels: ["openai/gpt-5.5"],
             hasAllowedModelsConfig: true,
           },
@@ -469,6 +470,7 @@ describe("plugin status reports", () => {
       allowPromptInjection: undefined,
       allowConversationAccess: undefined,
       allowModelOverride: true,
+      allowExtraSystemPrompt: true,
       allowedModels: ["openai/gpt-5.5"],
       hasAllowedModelsConfig: true,
     });
@@ -627,6 +629,7 @@ describe("plugin status reports", () => {
       allowPromptInjection: false,
       allowConversationAccess: true,
       allowModelOverride: true,
+      allowExtraSystemPrompt: undefined,
       allowedModels: ["openai/gpt-5.5"],
       hasAllowedModelsConfig: true,
     });

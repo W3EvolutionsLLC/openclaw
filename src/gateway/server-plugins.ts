@@ -13,7 +13,7 @@ import { createPluginRuntimeLoaderLogger } from "../plugins/runtime/load-context
 import type { PluginRuntime } from "../plugins/runtime/types.js";
 import type { PluginLogger } from "../plugins/types.js";
 import { resolveGlobalSingleton } from "../shared/global-singleton.js";
-import { ADMIN_SCOPE, WRITE_SCOPE } from "./method-scopes.js";
+import { ADMIN_SCOPE, AGENT_PROMPT_SCOPE, WRITE_SCOPE } from "./method-scopes.js";
 import { GATEWAY_CLIENT_IDS, GATEWAY_CLIENT_MODES } from "./protocol/client-info.js";
 import type { ErrorShape } from "./protocol/index.js";
 import { PROTOCOL_VERSION } from "./protocol/index.js";
@@ -65,6 +65,7 @@ function getFallbackGatewayContext(): GatewayRequestContext | undefined {
 
 type PluginSubagentOverridePolicy = {
   allowModelOverride: boolean;
+  allowExtraSystemPrompt: boolean;
   allowAnyModel: boolean;
   hasConfiguredAllowlist: boolean;
   allowedModels: Set<string>;
@@ -110,6 +111,7 @@ export function setPluginSubagentOverridePolicies(cfg: OpenClawConfig): void {
   const policies: PluginSubagentPolicyState["policies"] = {};
   for (const [pluginId, entry] of Object.entries(normalized.entries)) {
     const allowModelOverride = entry.subagent?.allowModelOverride === true;
+    const allowExtraSystemPrompt = entry.subagent?.allowExtraSystemPrompt === true;
     const hasConfiguredAllowlist = entry.subagent?.hasAllowedModelsConfig === true;
     const configuredAllowedModels = entry.subagent?.allowedModels ?? [];
     const allowedModels = new Set<string>();
@@ -127,6 +129,7 @@ export function setPluginSubagentOverridePolicies(cfg: OpenClawConfig): void {
     }
     if (
       !allowModelOverride &&
+      !allowExtraSystemPrompt &&
       !hasConfiguredAllowlist &&
       allowedModels.size === 0 &&
       !allowAnyModel
@@ -135,12 +138,37 @@ export function setPluginSubagentOverridePolicies(cfg: OpenClawConfig): void {
     }
     policies[pluginId] = {
       allowModelOverride,
+      allowExtraSystemPrompt,
       allowAnyModel,
       hasConfiguredAllowlist,
       allowedModels,
     };
   }
   pluginSubagentPolicyState.policies = policies;
+}
+
+function authorizeFallbackExtraSystemPrompt(params: {
+  pluginId?: string;
+}): { allowed: true } | { allowed: false; reason: string } {
+  const pluginSubagentPolicyState = getPluginSubagentPolicyState();
+  const pluginId = params.pluginId?.trim();
+  if (!pluginId) {
+    return {
+      allowed: false,
+      reason: "extraSystemPrompt requires plugin identity in fallback subagent runs.",
+    };
+  }
+  const policy = pluginSubagentPolicyState.policies[pluginId];
+  if (policy?.allowExtraSystemPrompt) {
+    return { allowed: true };
+  }
+  return {
+    allowed: false,
+    reason:
+      `plugin "${pluginId}" is not trusted for fallback extra system prompt requests. ` +
+      "See https://docs.openclaw.ai/tools/plugin#runtime-helpers and search for: " +
+      "plugins.entries.<id>.subagent.allowExtraSystemPrompt",
+  };
 }
 
 function authorizeFallbackModelOverride(params: {
@@ -252,12 +280,21 @@ function hasAdminScope(client: GatewayRequestOptions["client"] | undefined): boo
   return scopes.includes(ADMIN_SCOPE);
 }
 
+function hasAgentPromptScope(client: GatewayRequestOptions["client"] | undefined): boolean {
+  const scopes = Array.isArray(client?.connect?.scopes) ? client.connect.scopes : [];
+  return scopes.includes(AGENT_PROMPT_SCOPE);
+}
+
 function canClientUseModelOverride(client: GatewayRequestOptions["client"]): boolean {
   return hasAdminScope(client) || client?.internal?.allowModelOverride === true;
 }
 
 function canClientUseExtraSystemPrompt(client: GatewayRequestOptions["client"]): boolean {
-  return hasAdminScope(client) || client?.internal?.allowExtraSystemPrompt === true;
+  return (
+    hasAdminScope(client) ||
+    hasAgentPromptScope(client) ||
+    client?.internal?.allowExtraSystemPrompt === true
+  );
 }
 
 function mergeGatewayClientInternal(
@@ -364,11 +401,12 @@ export function createGatewaySubagentRuntime(): PluginRuntime["subagent"] {
       const extraSystemPromptRequested = Boolean(params.extraSystemPrompt);
       const hasRequestScopeClient = Boolean(scope?.client);
       let allowOverride = hasRequestScopeClient && canClientUseModelOverride(scope?.client ?? null);
-      const allowExtraSystemPrompt =
+      let allowExtraSystemPrompt =
         extraSystemPromptRequested &&
         hasRequestScopeClient &&
         canClientUseExtraSystemPrompt(scope?.client ?? null);
       let allowSyntheticModelOverride = false;
+      let allowSyntheticExtraSystemPrompt = false;
       if (overrideRequested && !allowOverride && !hasRequestScopeClient) {
         const fallbackAuth = authorizeFallbackModelOverride({
           pluginId: scope?.pluginId,
@@ -380,6 +418,16 @@ export function createGatewaySubagentRuntime(): PluginRuntime["subagent"] {
         }
         allowOverride = true;
         allowSyntheticModelOverride = true;
+      }
+      if (extraSystemPromptRequested && !allowExtraSystemPrompt && !hasRequestScopeClient) {
+        const fallbackAuth = authorizeFallbackExtraSystemPrompt({
+          pluginId: scope?.pluginId,
+        });
+        if (!fallbackAuth.allowed) {
+          throw new Error(fallbackAuth.reason);
+        }
+        allowExtraSystemPrompt = true;
+        allowSyntheticExtraSystemPrompt = true;
       }
       if (overrideRequested && !allowOverride) {
         throw new Error("provider/model override is not authorized for this plugin subagent run.");
@@ -409,6 +457,9 @@ export function createGatewaySubagentRuntime(): PluginRuntime["subagent"] {
           allowSyntheticModelOverride,
           allowExtraSystemPrompt,
           ...(pluginId ? { pluginRuntimeOwnerId: pluginId } : {}),
+          ...(allowSyntheticExtraSystemPrompt
+            ? { syntheticScopes: [WRITE_SCOPE, AGENT_PROMPT_SCOPE] }
+            : {}),
         },
       );
       const runId = payload?.runId;

@@ -500,6 +500,8 @@ Notes:
 
 - `provider` and `model` are optional per-run overrides, not persistent session changes.
 - OpenClaw only honors those override fields for trusted callers.
+- `extraSystemPrompt` is only honored for callers with prompt authority.
+- For plugin-owned fallback runs, operators must opt in with `plugins.entries.<id>.subagent.allowExtraSystemPrompt: true` before a plugin can request an extra system prompt.
 - For plugin-owned fallback runs, operators must opt in with `plugins.entries.<id>.subagent.allowModelOverride: true`.
 - Use `plugins.entries.<id>.subagent.allowedModels` to restrict trusted plugins to specific canonical `provider/model` targets, or `"*"` to allow any target explicitly.
 - Untrusted plugin subagent runs still work, but override requests are rejected instead of silently falling back.

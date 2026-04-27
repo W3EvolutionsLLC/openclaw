@@ -323,6 +323,7 @@ beforeEach(() => {
   pluginRuntimeLoaderLogger.debug.mockClear();
   handleGatewayRequest.mockReset();
   runtimeModule.clearGatewaySubagentRuntime();
+  serverPluginsModule.setPluginSubagentOverridePolicies({});
   handleGatewayRequest.mockImplementation(async (opts: HandleGatewayRequestOptions) => {
     switch (opts.req.method) {
       case "agent":
@@ -841,7 +842,7 @@ describe("loadGatewayPlugins", () => {
         extraSystemPrompt: "Use the plugin subagent contract.",
         deliver: false,
       }),
-    ).rejects.toThrow("extraSystemPrompt is not authorized for this plugin subagent run.");
+    ).rejects.toThrow("extraSystemPrompt requires plugin identity in fallback subagent runs.");
 
     expect(handleGatewayRequest).not.toHaveBeenCalled();
   });
@@ -880,7 +881,7 @@ describe("loadGatewayPlugins", () => {
       context: createTestContext("request-scope-extra-system-prompt-forward"),
       client: {
         connect: {
-          scopes: ["operator.admin"],
+          scopes: ["operator.write", "operator.agentPrompt"],
         },
       } as GatewayRequestOptions["client"],
       isWebchatConnect: () => false,
@@ -903,6 +904,46 @@ describe("loadGatewayPlugins", () => {
     });
     expect(getLastDispatchedClientInternal()).toMatchObject({
       allowExtraSystemPrompt: true,
+    });
+    expect(getLastDispatchedClientScopes()).toEqual(["operator.write", "operator.agentPrompt"]);
+  });
+
+  test("forwards configured fallback runtime extra system prompts without minting admin", async () => {
+    const serverPlugins = serverPluginsModule;
+    const runtime = await createSubagentRuntime(serverPlugins);
+    serverPlugins.setFallbackGatewayContext(createTestContext("fallback-extra-system-prompt"));
+    serverPlugins.setPluginSubagentOverridePolicies({
+      plugins: {
+        entries: {
+          "memory-core": {
+            subagent: {
+              allowExtraSystemPrompt: true,
+            },
+          },
+        },
+      },
+    });
+
+    await gatewayRequestScopeModule.withPluginRuntimePluginIdScope("memory-core", () =>
+      runtime.run({
+        sessionKey: "s-extra-system-prompt-fallback",
+        message: "hello",
+        extraSystemPrompt: "Use the plugin subagent contract.",
+        deliver: false,
+      }),
+    );
+
+    expect(getLastDispatchedParams()).toMatchObject({
+      sessionKey: "s-extra-system-prompt-fallback",
+      message: "hello",
+      extraSystemPrompt: "Use the plugin subagent contract.",
+      deliver: false,
+    });
+    expect(getLastDispatchedClientScopes()).toEqual(["operator.write", "operator.agentPrompt"]);
+    expect(getLastDispatchedClientScopes()).not.toContain("operator.admin");
+    expect(getLastDispatchedClientInternal()).toMatchObject({
+      allowExtraSystemPrompt: true,
+      pluginRuntimeOwnerId: "memory-core",
     });
   });
 

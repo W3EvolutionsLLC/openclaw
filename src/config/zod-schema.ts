@@ -167,6 +167,7 @@ const PluginEntrySchema = z
     subagent: z
       .object({
         allowModelOverride: z.boolean().optional(),
+        allowExtraSystemPrompt: z.boolean().optional(),
         allowedModels: z.array(z.string()).optional(),
       })
       .strict()

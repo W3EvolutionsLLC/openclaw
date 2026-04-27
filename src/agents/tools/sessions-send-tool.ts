@@ -3,7 +3,7 @@ import { Type } from "typebox";
 import { isRequesterParentOfBackgroundAcpSession } from "../../acp/session-interaction-mode.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { callGateway } from "../../gateway/call.js";
-import { ADMIN_SCOPE } from "../../gateway/method-scopes.js";
+import { AGENT_PROMPT_SCOPE, WRITE_SCOPE } from "../../gateway/method-scopes.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import { normalizeAgentId, resolveAgentIdFromSessionKey } from "../../routing/session-key.js";
 import { SESSION_LABEL_MAX_LENGTH } from "../../sessions/session-label.js";
@@ -45,6 +45,7 @@ const SessionsSendToolSchema = Type.Object({
 
 type GatewayCaller = typeof callGateway;
 const SESSIONS_SEND_REPLY_HISTORY_LIMIT = 50;
+const AGENT_EXTRA_SYSTEM_PROMPT_SCOPES = [WRITE_SCOPE, AGENT_PROMPT_SCOPE] as const;
 
 async function startAgentRun(params: {
   callGateway: GatewayCaller;
@@ -343,7 +344,7 @@ export function createSessionsSendTool(opts?: {
           callGateway: gatewayCall,
           runId,
           sendParams,
-          scopes: [ADMIN_SCOPE],
+          scopes: [...AGENT_EXTRA_SYSTEM_PROMPT_SCOPES],
           sessionKey: displayKey,
         });
         if (!start.ok) {
@@ -363,7 +364,7 @@ export function createSessionsSendTool(opts?: {
         callGateway: gatewayCall,
         runId,
         sendParams,
-        scopes: [ADMIN_SCOPE],
+        scopes: [...AGENT_EXTRA_SYSTEM_PROMPT_SCOPES],
         sessionKey: displayKey,
       });
       if (!start.ok) {

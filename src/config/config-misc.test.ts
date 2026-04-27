@@ -287,6 +287,7 @@ describe("plugins.entries.*.subagent", () => {
           "voice-call": {
             subagent: {
               allowModelOverride: true,
+              allowExtraSystemPrompt: true,
               allowedModels: ["anthropic/claude-haiku-4-5"],
             },
           },
@@ -303,6 +304,7 @@ describe("plugins.entries.*.subagent", () => {
           "voice-call": {
             subagent: {
               allowModelOverride: "yes",
+              allowExtraSystemPrompt: "yes",
               allowedModels: [1],
             },
           },

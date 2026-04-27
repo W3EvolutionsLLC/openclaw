@@ -81,7 +81,7 @@ import { resolveAssistantIdentity } from "../assistant-identity.js";
 import { registerChatAbortController, resolveAgentRunExpiresAtMs } from "../chat-abort.js";
 import { MediaOffloadError, parseMessageWithAttachments } from "../chat-attachments.js";
 import { resolveAssistantAvatarUrl } from "../control-ui-shared.js";
-import { ADMIN_SCOPE } from "../method-scopes.js";
+import { ADMIN_SCOPE, AGENT_PROMPT_SCOPE } from "../method-scopes.js";
 import { GATEWAY_CLIENT_CAPS, hasGatewayClientCap } from "../protocol/client-info.js";
 import {
   ErrorCodes,
@@ -119,9 +119,16 @@ import type { GatewayRequestHandlerOptions, GatewayRequestHandlers } from "./typ
 
 const RESET_COMMAND_RE = /^\/(new|reset)(?:\s+([\s\S]*))?$/i;
 
-function resolveSenderIsOwnerFromClient(client: GatewayRequestHandlerOptions["client"]): boolean {
+function clientHasOperatorScope(
+  client: GatewayRequestHandlerOptions["client"],
+  scope: string,
+): boolean {
   const scopes = Array.isArray(client?.connect?.scopes) ? client.connect.scopes : [];
-  return scopes.includes(ADMIN_SCOPE);
+  return scopes.includes(scope);
+}
+
+function resolveSenderIsOwnerFromClient(client: GatewayRequestHandlerOptions["client"]): boolean {
+  return clientHasOperatorScope(client, ADMIN_SCOPE);
 }
 
 function resolveAllowModelOverrideFromClient(
@@ -134,7 +141,9 @@ function resolveAllowExtraSystemPromptFromClient(
   client: GatewayRequestHandlerOptions["client"],
 ): boolean {
   return (
-    resolveSenderIsOwnerFromClient(client) || client?.internal?.allowExtraSystemPrompt === true
+    resolveSenderIsOwnerFromClient(client) ||
+    clientHasOperatorScope(client, AGENT_PROMPT_SCOPE) ||
+    client?.internal?.allowExtraSystemPrompt === true
   );
 }
 

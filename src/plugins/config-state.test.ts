@@ -97,10 +97,12 @@ describe("normalizePluginsConfig", () => {
       name: "normalizes plugin subagent override policy settings",
       subagent: {
         allowModelOverride: true,
+        allowExtraSystemPrompt: true,
         allowedModels: [" anthropic/claude-sonnet-4-6 ", "", "openai/gpt-5.5"],
       },
       expected: {
         allowModelOverride: true,
+        allowExtraSystemPrompt: true,
         hasAllowedModelsConfig: true,
         allowedModels: ["anthropic/claude-sonnet-4-6", "openai/gpt-5.5"],
       },
@@ -121,9 +123,15 @@ describe("normalizePluginsConfig", () => {
       name: "keeps explicit invalid subagent allowlist config visible to callers",
       subagent: {
         allowModelOverride: "nope",
+        allowExtraSystemPrompt: true,
         allowedModels: [42, null],
-      } as unknown as { allowModelOverride: boolean; allowedModels: string[] },
+      } as unknown as {
+        allowModelOverride: boolean;
+        allowExtraSystemPrompt: boolean;
+        allowedModels: string[];
+      },
       expected: {
+        allowExtraSystemPrompt: true,
         hasAllowedModelsConfig: true,
       },
     },

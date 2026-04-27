@@ -779,7 +779,7 @@ describe("sessions tools", () => {
   });
 
   it("sessions_send supports fire-and-forget and wait", async () => {
-    const calls: Array<{ method?: string; params?: unknown }> = [];
+    const calls: Array<{ method?: string; params?: unknown; scopes?: string[] }> = [];
     let agentCallCount = 0;
     let _historyCallCount = 0;
     let sendCallCount = 0;
@@ -787,7 +787,7 @@ describe("sessions tools", () => {
     const replyByRunId = new Map<string, string>();
     const requesterKey = "discord:group:req";
     callGatewayMock.mockImplementation(async (opts: unknown) => {
-      const request = opts as { method?: string; params?: unknown };
+      const request = opts as { method?: string; params?: unknown; scopes?: string[] };
       calls.push(request);
       if (request.method === "agent") {
         agentCallCount += 1;
@@ -887,6 +887,7 @@ describe("sessions tools", () => {
     const historyOnlyCalls = calls.filter((call) => call.method === "chat.history");
     expect(agentCalls).toHaveLength(8);
     for (const call of agentCalls) {
+      expect(call.scopes).toEqual(["operator.write", "operator.agentPrompt"]);
       expect(call.params).toMatchObject({
         lane: expect.stringMatching(/^nested(?::|$)/),
         channel: "webchat",
@@ -974,7 +975,7 @@ describe("sessions tools", () => {
   });
 
   it("sessions_send runs ping-pong then announces", async () => {
-    const calls: Array<{ method?: string; params?: unknown }> = [];
+    const calls: Array<{ method?: string; params?: unknown; scopes?: string[] }> = [];
     let agentCallCount = 0;
     let lastWaitedRunId: string | undefined;
     const replyByRunId = new Map<string, string>();
@@ -982,7 +983,7 @@ describe("sessions tools", () => {
     const targetKey = "discord:group:target";
     let sendParams: { to?: string; channel?: string; message?: string } = {};
     callGatewayMock.mockImplementation(async (opts: unknown) => {
-      const request = opts as { method?: string; params?: unknown };
+      const request = opts as { method?: string; params?: unknown; scopes?: string[] };
       calls.push(request);
       if (request.method === "agent") {
         agentCallCount += 1;
@@ -1067,6 +1068,7 @@ describe("sessions tools", () => {
     const agentCalls = calls.filter((call) => call.method === "agent");
     expect(agentCalls).toHaveLength(4);
     for (const call of agentCalls) {
+      expect(call.scopes).toEqual(["operator.write", "operator.agentPrompt"]);
       expect(call.params).toMatchObject({
         lane: expect.stringMatching(/^nested(?::|$)/),
         channel: "webchat",
@@ -1091,7 +1093,7 @@ describe("sessions tools", () => {
   });
 
   it("sessions_send preserves threadId when announce target is hydrated via sessions.list", async () => {
-    const calls: Array<{ method?: string; params?: unknown }> = [];
+    const calls: Array<{ method?: string; params?: unknown; scopes?: string[] }> = [];
     let agentCallCount = 0;
     let lastWaitedRunId: string | undefined;
     const replyByRunId = new Map<string, string>();
@@ -1106,7 +1108,7 @@ describe("sessions tools", () => {
     } = {};
 
     callGatewayMock.mockImplementation(async (opts: unknown) => {
-      const request = opts as { method?: string; params?: unknown };
+      const request = opts as { method?: string; params?: unknown; scopes?: string[] };
       calls.push(request);
       if (request.method === "agent") {
         agentCallCount += 1;
@@ -1210,6 +1212,9 @@ describe("sessions tools", () => {
       },
       { timeout: 2_000, interval: 5 },
     );
+    for (const call of calls.filter((candidate) => candidate.method === "agent")) {
+      expect(call.scopes).toEqual(["operator.write", "operator.agentPrompt"]);
+    }
 
     expect(sendParams).toMatchObject({
       to: "123@g.us",

@@ -86,6 +86,12 @@ const NARRATIVE_SYSTEM_PROMPT = [
   "- Keep it between 80-180 words. Quality over quantity.",
   "- Output ONLY the diary entry. No preamble, no sign-off, no commentary.",
 ].join("\n");
+const SUBAGENT_EXTRA_SYSTEM_PROMPT_AUTH_ERROR =
+  "extraSystemPrompt is not authorized for this plugin subagent run.";
+const SUBAGENT_EXTRA_SYSTEM_PROMPT_IDENTITY_ERROR =
+  "extraSystemPrompt requires plugin identity in fallback subagent runs.";
+const SUBAGENT_EXTRA_SYSTEM_PROMPT_TRUST_ERROR =
+  "is not trusted for fallback extra system prompt requests.";
 
 // Narrative generation is best-effort. Keep the timeout bounded so a stalled
 // diary subagent does not leave the parent dreaming cron job "running" for
@@ -145,6 +151,15 @@ function buildRequestScopedFallbackNarrative(data: NarrativePhaseData): string {
   );
 }
 
+function isSubagentExtraSystemPromptAuthError(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    (err.message.includes(SUBAGENT_EXTRA_SYSTEM_PROMPT_AUTH_ERROR) ||
+      err.message.includes(SUBAGENT_EXTRA_SYSTEM_PROMPT_IDENTITY_ERROR) ||
+      err.message.includes(SUBAGENT_EXTRA_SYSTEM_PROMPT_TRUST_ERROR))
+  );
+}
+
 async function startNarrativeRunOrFallback(params: {
   subagent: SubagentSurface;
   sessionKey: string;
@@ -160,7 +175,8 @@ async function startNarrativeRunOrFallback(params: {
     const run = await params.subagent.run({
       idempotencyKey: params.sessionKey,
       sessionKey: params.sessionKey,
-      message: [NARRATIVE_SYSTEM_PROMPT, params.message].join("\n\n"),
+      message: params.message,
+      extraSystemPrompt: NARRATIVE_SYSTEM_PROMPT,
       ...(params.model ? { model: params.model } : {}),
       lane: `dreaming-narrative:${params.sessionKey}`,
       lightContext: true,
@@ -168,7 +184,12 @@ async function startNarrativeRunOrFallback(params: {
     });
     return run.runId;
   } catch (runErr) {
-    if (!isRequestScopedSubagentRuntimeError(runErr)) {
+    const fallbackReason = isRequestScopedSubagentRuntimeError(runErr)
+      ? "subagent runtime is request-scoped"
+      : isSubagentExtraSystemPromptAuthError(runErr)
+        ? "subagent runtime lacks prompt authority"
+        : null;
+    if (!fallbackReason) {
       throw runErr;
     }
     try {
@@ -179,7 +200,7 @@ async function startNarrativeRunOrFallback(params: {
         timezone: params.timezone,
       });
       params.logger.info(
-        `memory-core: narrative generation used fallback for ${params.data.phase} phase because subagent runtime is request-scoped.`,
+        `memory-core: narrative generation used fallback for ${params.data.phase} phase because ${fallbackReason}.`,
       );
     } catch (fallbackErr) {
       params.logger.warn(

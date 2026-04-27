@@ -582,6 +582,36 @@ describe("gateway agent handler", () => {
     );
   });
 
+  it("forwards extra system prompts for prompt-scoped write callers", async () => {
+    primeMainAgentRun();
+
+    await invokeAgent(
+      {
+        message: "test extra prompt",
+        agentId: "main",
+        sessionKey: "agent:main:main",
+        extraSystemPrompt: "Use the channel-specific reply contract.",
+        idempotencyKey: "test-idem-extra-system-prompt-scoped",
+      },
+      {
+        reqId: "test-idem-extra-system-prompt-scoped",
+        client: {
+          connect: {
+            scopes: ["operator.write", "operator.agentPrompt"],
+          },
+        } as AgentHandlerArgs["client"],
+      },
+    );
+
+    const lastCall = mocks.agentCommand.mock.calls.at(-1);
+    expect(lastCall?.[0]).toEqual(
+      expect.objectContaining({
+        extraSystemPrompt: "Use the channel-specific reply contract.",
+        senderIsOwner: false,
+      }),
+    );
+  });
+
   it("rejects extra system prompts for write-scoped callers", async () => {
     primeMainAgentRun();
     mocks.agentCommand.mockClear();

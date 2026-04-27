@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import { callGateway } from "../../gateway/call.js";
-import { ADMIN_SCOPE } from "../../gateway/method-scopes.js";
+import { AGENT_PROMPT_SCOPE, WRITE_SCOPE } from "../../gateway/method-scopes.js";
 import { INTERNAL_MESSAGE_CHANNEL } from "../../utils/message-channel.js";
 import { resolveNestedAgentLaneForSession } from "../lanes.js";
 import { retireSessionMcpRuntimeForSessionKey } from "../pi-bundle-mcp-tools.js";
@@ -9,6 +9,7 @@ import { waitForAgentRunAndReadUpdatedAssistantReply } from "../run-wait.js";
 export { readLatestAssistantReply } from "../run-wait.js";
 
 type GatewayCaller = typeof callGateway;
+const AGENT_EXTRA_SYSTEM_PROMPT_SCOPES = [WRITE_SCOPE, AGENT_PROMPT_SCOPE] as const;
 
 const defaultAgentStepDeps = {
   callGateway,
@@ -47,7 +48,7 @@ export async function runAgentStep(params: {
         sourceTool: params.sourceTool ?? "sessions_send",
       },
     },
-    scopes: [ADMIN_SCOPE],
+    scopes: [...AGENT_EXTRA_SYSTEM_PROMPT_SCOPES],
     timeoutMs: 10_000,
   });
 

@@ -216,7 +216,7 @@ All settings live under `plugins.entries.memory-core.config.dreaming`.
 </ParamField>
 
 <Warning>
-`dreaming.model` requires `plugins.entries.memory-core.subagent.allowModelOverride: true`. To restrict it, also set `plugins.entries.memory-core.subagent.allowedModels`.
+Dream Diary prose requires `plugins.entries.memory-core.subagent.allowExtraSystemPrompt: true`. `dreaming.model` also requires `plugins.entries.memory-core.subagent.allowModelOverride: true`; to restrict it, set `plugins.entries.memory-core.subagent.allowedModels`.
 </Warning>
 
 <Note>

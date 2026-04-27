@@ -891,6 +891,7 @@ export const FIELD_LABELS: Record<string, string> = {
   "plugins.entries.*.hooks.allowConversationAccess": "Allow Conversation Access Hooks",
   "plugins.entries.*.hooks.allowPromptInjection": "Allow Prompt Injection Hooks",
   "plugins.entries.*.subagent": "Plugin Subagent Policy",
+  "plugins.entries.*.subagent.allowExtraSystemPrompt": "Allow Plugin Subagent Extra System Prompts",
   "plugins.entries.*.subagent.allowModelOverride": "Allow Plugin Subagent Model Override",
   "plugins.entries.*.subagent.allowedModels": "Plugin Subagent Allowed Models",
   "plugins.entries.*.apiKey": "Plugin API Key", // pragma: allowlist secret

@@ -1,6 +1,7 @@
 import { getPluginRegistryState } from "../plugins/runtime-state.js";
 import { resolveReservedGatewayMethodScope } from "../shared/gateway-method-policy.js";
 import {
+  AGENT_PROMPT_SCOPE,
   ADMIN_SCOPE,
   APPROVALS_SCOPE,
   PAIRING_SCOPE,
@@ -11,6 +12,7 @@ import {
 } from "./operator-scopes.js";
 
 export {
+  AGENT_PROMPT_SCOPE,
   ADMIN_SCOPE,
   APPROVALS_SCOPE,
   PAIRING_SCOPE,
@@ -40,6 +42,7 @@ const NODE_ROLE_METHODS = new Set([
 ]);
 
 const METHOD_SCOPE_GROUPS: Record<OperatorScope, readonly string[]> = {
+  [AGENT_PROMPT_SCOPE]: [],
   [APPROVALS_SCOPE]: [
     "exec.approval.get",
     "exec.approval.list",
