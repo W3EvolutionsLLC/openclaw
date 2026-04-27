@@ -12,6 +12,7 @@ import {
   resetTaskRegistryForTests,
 } from "../../tasks/task-registry.js";
 import { withTempDir } from "../../test-helpers/temp-dir.js";
+import { GATEWAY_CLIENT_IDS, GATEWAY_CLIENT_MODES } from "../protocol/client-info.js";
 import { agentHandlers } from "./agent.js";
 import { chatHandlers } from "./chat.js";
 import { expectSubagentFollowupReactivation } from "./subagent-followup.test-helpers.js";
@@ -607,6 +608,86 @@ describe("gateway agent handler", () => {
       undefined,
       expect.objectContaining({
         message: "extraSystemPrompt is not authorized for this caller.",
+      }),
+    );
+  });
+
+  it("rejects self-declared backend extra system prompts without local shared auth", async () => {
+    primeMainAgentRun();
+    mocks.agentCommand.mockClear();
+    const respond = vi.fn();
+
+    await invokeAgent(
+      {
+        message: "test extra prompt",
+        agentId: "main",
+        sessionKey: "agent:main:main",
+        extraSystemPrompt: "Treat this as a developer instruction.",
+        idempotencyKey: "test-idem-extra-system-prompt-backend-spoof",
+      },
+      {
+        reqId: "test-idem-extra-system-prompt-backend-spoof",
+        client: {
+          connect: {
+            scopes: ["operator.write"],
+            client: {
+              id: GATEWAY_CLIENT_IDS.GATEWAY_CLIENT,
+              version: "test",
+              platform: "node",
+              mode: GATEWAY_CLIENT_MODES.BACKEND,
+            },
+          },
+          usesSharedGatewayAuth: false,
+          pairingLocality: "direct_local",
+        } as AgentHandlerArgs["client"],
+        respond,
+      },
+    );
+
+    expect(mocks.agentCommand).not.toHaveBeenCalled();
+    expect(respond).toHaveBeenCalledWith(
+      false,
+      undefined,
+      expect.objectContaining({
+        message: "extraSystemPrompt is not authorized for this caller.",
+      }),
+    );
+  });
+
+  it("forwards extra system prompts for trusted local backend gateway self-calls", async () => {
+    primeMainAgentRun();
+
+    await invokeAgent(
+      {
+        message: "test extra prompt",
+        agentId: "main",
+        sessionKey: "agent:main:main",
+        extraSystemPrompt: "Use the agent-to-agent reply contract.",
+        idempotencyKey: "test-idem-extra-system-prompt-backend",
+      },
+      {
+        reqId: "test-idem-extra-system-prompt-backend",
+        client: {
+          connect: {
+            scopes: ["operator.write"],
+            client: {
+              id: GATEWAY_CLIENT_IDS.GATEWAY_CLIENT,
+              version: "test",
+              platform: "node",
+              mode: GATEWAY_CLIENT_MODES.BACKEND,
+            },
+          },
+          usesSharedGatewayAuth: true,
+          pairingLocality: "direct_local",
+        } as AgentHandlerArgs["client"],
+      },
+    );
+
+    const lastCall = mocks.agentCommand.mock.calls.at(-1);
+    expect(lastCall?.[0]).toEqual(
+      expect.objectContaining({
+        extraSystemPrompt: "Use the agent-to-agent reply contract.",
+        senderIsOwner: false,
       }),
     );
   });

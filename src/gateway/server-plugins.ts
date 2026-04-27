@@ -256,6 +256,14 @@ function canClientUseModelOverride(client: GatewayRequestOptions["client"]): boo
   return hasAdminScope(client) || client?.internal?.allowModelOverride === true;
 }
 
+function canClientUseExtraSystemPrompt(client: GatewayRequestOptions["client"]): boolean {
+  return (
+    hasAdminScope(client) ||
+    client?.internal?.allowExtraSystemPrompt === true ||
+    client?.internal?.allowModelOverride === true
+  );
+}
+
 function mergeGatewayClientInternal(
   client: GatewayRequestOptions["client"] | undefined,
   internal: NonNullable<GatewayRequestOptions["client"]>["internal"],
@@ -360,6 +368,9 @@ export function createGatewaySubagentRuntime(): PluginRuntime["subagent"] {
       const extraSystemPromptRequested = Boolean(params.extraSystemPrompt);
       const hasRequestScopeClient = Boolean(scope?.client);
       let allowOverride = hasRequestScopeClient && canClientUseModelOverride(scope?.client ?? null);
+      const allowExtraSystemPrompt =
+        extraSystemPromptRequested &&
+        (hasRequestScopeClient ? canClientUseExtraSystemPrompt(scope?.client ?? null) : true);
       let allowSyntheticModelOverride = false;
       if (overrideRequested && !allowOverride && !hasRequestScopeClient) {
         const fallbackAuth = authorizeFallbackModelOverride({
@@ -376,6 +387,9 @@ export function createGatewaySubagentRuntime(): PluginRuntime["subagent"] {
       if (overrideRequested && !allowOverride) {
         throw new Error("provider/model override is not authorized for this plugin subagent run.");
       }
+      if (extraSystemPromptRequested && !allowExtraSystemPrompt) {
+        throw new Error("extraSystemPrompt is not authorized for this plugin subagent run.");
+      }
       const payload = await dispatchGatewayMethod<{ runId?: string }>(
         "agent",
         {
@@ -384,7 +398,8 @@ export function createGatewaySubagentRuntime(): PluginRuntime["subagent"] {
           deliver: params.deliver ?? false,
           ...(allowOverride && params.provider && { provider: params.provider }),
           ...(allowOverride && params.model && { model: params.model }),
-          ...(params.extraSystemPrompt && { extraSystemPrompt: params.extraSystemPrompt }),
+          ...(allowExtraSystemPrompt &&
+            params.extraSystemPrompt && { extraSystemPrompt: params.extraSystemPrompt }),
           ...(params.lane && { lane: params.lane }),
           ...(params.lightContext === true && { bootstrapContextMode: "lightweight" }),
           // The gateway `agent` schema requires `idempotencyKey: NonEmptyString`,
@@ -395,7 +410,7 @@ export function createGatewaySubagentRuntime(): PluginRuntime["subagent"] {
         },
         {
           allowSyntheticModelOverride,
-          allowExtraSystemPrompt: extraSystemPromptRequested,
+          allowExtraSystemPrompt,
           ...(pluginId ? { pluginRuntimeOwnerId: pluginId } : {}),
         },
       );

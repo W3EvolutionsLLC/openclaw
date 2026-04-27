@@ -852,6 +852,66 @@ describe("loadGatewayPlugins", () => {
     });
   });
 
+  test("rejects request-scoped runtime extra system prompts without prompt authority", async () => {
+    const serverPlugins = serverPluginsModule;
+    const runtime = await createSubagentRuntime(serverPlugins);
+    const scope = {
+      context: createTestContext("request-scope-extra-system-prompt-reject"),
+      client: {
+        connect: {
+          scopes: ["operator.write"],
+        },
+      } as GatewayRequestOptions["client"],
+      isWebchatConnect: () => false,
+    } satisfies PluginRuntimeGatewayRequestScope;
+
+    await expect(
+      gatewayRequestScopeModule.withPluginRuntimeGatewayRequestScope(scope, () =>
+        runtime.run({
+          sessionKey: "s-extra-system-prompt-reject",
+          message: "hello",
+          extraSystemPrompt: "Use the plugin subagent contract.",
+          deliver: false,
+        }),
+      ),
+    ).rejects.toThrow("extraSystemPrompt is not authorized for this plugin subagent run.");
+
+    expect(handleGatewayRequest).not.toHaveBeenCalled();
+  });
+
+  test("forwards request-scoped runtime extra system prompts with prompt authority", async () => {
+    const serverPlugins = serverPluginsModule;
+    const runtime = await createSubagentRuntime(serverPlugins);
+    const scope = {
+      context: createTestContext("request-scope-extra-system-prompt-forward"),
+      client: {
+        connect: {
+          scopes: ["operator.admin"],
+        },
+      } as GatewayRequestOptions["client"],
+      isWebchatConnect: () => false,
+    } satisfies PluginRuntimeGatewayRequestScope;
+
+    await gatewayRequestScopeModule.withPluginRuntimeGatewayRequestScope(scope, () =>
+      runtime.run({
+        sessionKey: "s-extra-system-prompt-forward",
+        message: "hello",
+        extraSystemPrompt: "Use the plugin subagent contract.",
+        deliver: false,
+      }),
+    );
+
+    expect(getLastDispatchedParams()).toMatchObject({
+      sessionKey: "s-extra-system-prompt-forward",
+      message: "hello",
+      extraSystemPrompt: "Use the plugin subagent contract.",
+      deliver: false,
+    });
+    expect(getLastDispatchedClientInternal()).toMatchObject({
+      allowExtraSystemPrompt: true,
+    });
+  });
+
   test("generates a non-empty idempotencyKey when the caller omits it", async () => {
     const serverPlugins = serverPluginsModule;
     const runtime = await createSubagentRuntime(serverPlugins);

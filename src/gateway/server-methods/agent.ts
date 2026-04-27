@@ -82,7 +82,12 @@ import { registerChatAbortController, resolveAgentRunExpiresAtMs } from "../chat
 import { MediaOffloadError, parseMessageWithAttachments } from "../chat-attachments.js";
 import { resolveAssistantAvatarUrl } from "../control-ui-shared.js";
 import { ADMIN_SCOPE } from "../method-scopes.js";
-import { GATEWAY_CLIENT_CAPS, hasGatewayClientCap } from "../protocol/client-info.js";
+import {
+  GATEWAY_CLIENT_CAPS,
+  GATEWAY_CLIENT_IDS,
+  GATEWAY_CLIENT_MODES,
+  hasGatewayClientCap,
+} from "../protocol/client-info.js";
 import {
   ErrorCodes,
   errorShape,
@@ -126,13 +131,26 @@ function resolveAllowModelOverrideFromClient(
   return resolveSenderIsOwnerFromClient(client) || client?.internal?.allowModelOverride === true;
 }
 
+function resolveIsTrustedLocalBackendGatewayClient(
+  client: GatewayRequestHandlerOptions["client"],
+): boolean {
+  const info = client?.connect?.client;
+  return (
+    client?.usesSharedGatewayAuth === true &&
+    client?.pairingLocality === "direct_local" &&
+    info?.id === GATEWAY_CLIENT_IDS.GATEWAY_CLIENT &&
+    info?.mode === GATEWAY_CLIENT_MODES.BACKEND
+  );
+}
+
 function resolveAllowExtraSystemPromptFromClient(
   client: GatewayRequestHandlerOptions["client"],
 ): boolean {
   return (
     resolveSenderIsOwnerFromClient(client) ||
     client?.internal?.allowExtraSystemPrompt === true ||
-    client?.internal?.allowModelOverride === true
+    client?.internal?.allowModelOverride === true ||
+    resolveIsTrustedLocalBackendGatewayClient(client)
   );
 }
 
