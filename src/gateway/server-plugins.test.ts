@@ -842,7 +842,9 @@ describe("loadGatewayPlugins", () => {
         extraSystemPrompt: "Use the plugin subagent contract.",
         deliver: false,
       }),
-    ).rejects.toThrow("extraSystemPrompt requires plugin identity in fallback subagent runs.");
+    ).rejects.toThrow(
+      "extraSystemPrompt requires verified plugin identity in fallback subagent runs.",
+    );
 
     expect(handleGatewayRequest).not.toHaveBeenCalled();
   });
@@ -924,7 +926,7 @@ describe("loadGatewayPlugins", () => {
       },
     });
 
-    await gatewayRequestScopeModule.withPluginRuntimePluginIdScope("memory-core", () =>
+    await gatewayRequestScopeModule.withVerifiedPluginRuntimePluginIdScope("memory-core", () =>
       runtime.run({
         sessionKey: "s-extra-system-prompt-fallback",
         message: "hello",
@@ -945,6 +947,38 @@ describe("loadGatewayPlugins", () => {
       allowExtraSystemPrompt: true,
       pluginRuntimeOwnerId: "memory-core",
     });
+  });
+
+  test("does not trust caller-set plugin id for fallback extra system prompts", async () => {
+    const serverPlugins = serverPluginsModule;
+    const runtime = await createSubagentRuntime(serverPlugins);
+    serverPlugins.setFallbackGatewayContext(createTestContext("fallback-extra-system-spoof"));
+    serverPlugins.setPluginSubagentOverridePolicies({
+      plugins: {
+        entries: {
+          "memory-core": {
+            subagent: {
+              allowExtraSystemPrompt: true,
+            },
+          },
+        },
+      },
+    });
+
+    await expect(
+      gatewayRequestScopeModule.withPluginRuntimePluginIdScope("memory-core", () =>
+        runtime.run({
+          sessionKey: "s-extra-system-prompt-spoof",
+          message: "hello",
+          extraSystemPrompt: "Use the plugin subagent contract.",
+          deliver: false,
+        }),
+      ),
+    ).rejects.toThrow(
+      "extraSystemPrompt requires verified plugin identity in fallback subagent runs.",
+    );
+
+    expect(handleGatewayRequest).not.toHaveBeenCalled();
   });
 
   test("generates a non-empty idempotencyKey when the caller omits it", async () => {
@@ -1001,7 +1035,7 @@ describe("loadGatewayPlugins", () => {
       },
     });
     serverPlugins.setFallbackGatewayContext(createTestContext("fallback-trusted-overrides"));
-    await gatewayRequestScopeModule.withPluginRuntimePluginIdScope("voice-call", () =>
+    await gatewayRequestScopeModule.withVerifiedPluginRuntimePluginIdScope("voice-call", () =>
       runtime.run({
         sessionKey: "s-trusted-override",
         message: "use trusted override",
@@ -1023,7 +1057,7 @@ describe("loadGatewayPlugins", () => {
     const runtime = await createSubagentRuntime(serverPlugins);
     serverPlugins.setFallbackGatewayContext(createTestContext("fallback-plugin-owner"));
 
-    await gatewayRequestScopeModule.withPluginRuntimePluginIdScope("memory-core", () =>
+    await gatewayRequestScopeModule.withVerifiedPluginRuntimePluginIdScope("memory-core", () =>
       runtime.run({
         sessionKey: "dreaming-narrative-light-workspace-1",
         message: "write a narrative",
@@ -1042,7 +1076,7 @@ describe("loadGatewayPlugins", () => {
     serverPlugins.setFallbackGatewayContext(createTestContext("fallback-untrusted-plugin"));
 
     await expect(
-      gatewayRequestScopeModule.withPluginRuntimePluginIdScope("voice-call", () =>
+      gatewayRequestScopeModule.withVerifiedPluginRuntimePluginIdScope("voice-call", () =>
         runtime.run({
           sessionKey: "s-untrusted-override",
           message: "use untrusted override",
@@ -1071,7 +1105,7 @@ describe("loadGatewayPlugins", () => {
       },
     });
     serverPlugins.setFallbackGatewayContext(createTestContext("fallback-model-only-override"));
-    await gatewayRequestScopeModule.withPluginRuntimePluginIdScope("voice-call", () =>
+    await gatewayRequestScopeModule.withVerifiedPluginRuntimePluginIdScope("voice-call", () =>
       runtime.run({
         sessionKey: "s-model-only-override",
         message: "use trusted model-only override",
@@ -1103,7 +1137,7 @@ describe("loadGatewayPlugins", () => {
     });
     serverPlugins.setFallbackGatewayContext(createTestContext("fallback-invalid-allowlist"));
     await expect(
-      gatewayRequestScopeModule.withPluginRuntimePluginIdScope("voice-call", () =>
+      gatewayRequestScopeModule.withVerifiedPluginRuntimePluginIdScope("voice-call", () =>
         runtime.run({
           sessionKey: "s-invalid-allowlist",
           message: "use trusted override",
@@ -1212,7 +1246,7 @@ describe("loadGatewayPlugins", () => {
     });
 
     await expect(
-      gatewayRequestScopeModule.withPluginRuntimePluginIdScope("memory-core", () =>
+      gatewayRequestScopeModule.withVerifiedPluginRuntimePluginIdScope("memory-core", () =>
         runtime.deleteSession({
           sessionKey: "dreaming-narrative-light-workspace-1",
           deleteTranscript: true,
@@ -1266,7 +1300,7 @@ describe("loadGatewayPlugins", () => {
 
     await expect(
       gatewayRequestScopeModule.withPluginRuntimeGatewayRequestScope(scope, () =>
-        gatewayRequestScopeModule.withPluginRuntimePluginIdScope("memory-core", () =>
+        gatewayRequestScopeModule.withVerifiedPluginRuntimePluginIdScope("memory-core", () =>
           runtime.deleteSession({
             sessionKey: "dreaming-narrative-light-workspace-1",
             deleteTranscript: true,
@@ -1329,7 +1363,7 @@ describe("loadGatewayPlugins", () => {
     const runtime = await createSubagentRuntime(serverPlugins, {});
     serverPlugins.setFallbackGatewayContext(createTestContext("auto-enabled-bootstrap-policy"));
 
-    await gatewayRequestScopeModule.withPluginRuntimePluginIdScope("demo", () =>
+    await gatewayRequestScopeModule.withVerifiedPluginRuntimePluginIdScope("demo", () =>
       runtime.run({
         sessionKey: "s-auto-enabled-bootstrap-policy",
         message: "use trusted override",

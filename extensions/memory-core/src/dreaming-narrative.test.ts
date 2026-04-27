@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import {
   RequestScopedSubagentRuntimeError,
+  SubagentExtraSystemPromptNotAuthorizedError,
   SUBAGENT_RUNTIME_REQUEST_SCOPE_ERROR_CODE,
 } from "openclaw/plugin-sdk/error-runtime";
 import { resolveGlobalMap } from "openclaw/plugin-sdk/global-singleton";
@@ -740,7 +741,9 @@ describe("generateAndAppendDreamNarrative", () => {
     const workspaceDir = await createTempWorkspace("openclaw-dreaming-narrative-");
     const subagent = createMockSubagent("");
     subagent.run.mockRejectedValue(
-      new Error('plugin "memory-core" is not trusted for fallback extra system prompt requests.'),
+      new SubagentExtraSystemPromptNotAuthorizedError(
+        'plugin "memory-core" is not trusted for fallback extra system prompt requests.',
+      ),
     );
     const logger = createMockLogger();
 
@@ -757,6 +760,29 @@ describe("generateAndAppendDreamNarrative", () => {
     expect(content).toContain("API endpoints need authentication");
     expect(logger.info).toHaveBeenCalledWith(expect.stringContaining("prompt authority"));
     expect(subagent.deleteSession).not.toHaveBeenCalled();
+  });
+
+  it("does not fall back for plain errors that only mention prompt authority", async () => {
+    const workspaceDir = await createTempWorkspace("openclaw-dreaming-narrative-");
+    const subagent = createMockSubagent("");
+    subagent.run.mockRejectedValue(
+      new Error('plugin "memory-core" is not trusted for fallback extra system prompt requests.'),
+    );
+    const logger = createMockLogger();
+
+    await generateAndAppendDreamNarrative({
+      subagent,
+      workspaceDir,
+      data: { phase: "light", snippets: ["should not persist"] },
+      logger,
+    });
+
+    await expect(fs.access(path.join(workspaceDir, "DREAMS.md"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("narrative generation failed"),
+    );
   });
 
   it("falls back when the request-scoped runtime error is detected by stable code", async () => {

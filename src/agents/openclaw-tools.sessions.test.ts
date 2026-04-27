@@ -921,6 +921,27 @@ describe("sessions tools", () => {
           ),
       ),
     ).toBe(true);
+    const announceCalls = agentCalls.filter(
+      (call) =>
+        typeof (call.params as { extraSystemPrompt?: string })?.extraSystemPrompt === "string" &&
+        (call.params as { extraSystemPrompt?: string })?.extraSystemPrompt?.includes(
+          "Agent-to-agent announce step",
+        ),
+    );
+    expect(announceCalls.length).toBeGreaterThan(0);
+    for (const call of announceCalls) {
+      const params = call.params as { extraSystemPrompt?: string; message?: string };
+      expect(params.extraSystemPrompt).not.toContain("Original request:");
+      expect(params.extraSystemPrompt).not.toContain("Round 1 reply:");
+      expect(params.extraSystemPrompt).not.toContain("Latest reply:");
+      expect(params.extraSystemPrompt).not.toContain("ping");
+      expect(params.extraSystemPrompt).not.toContain("done");
+      expect(params.message).toContain("Agent-to-agent announce data:");
+      expect(params.message).toContain("Original request:");
+      expect(params.message).toMatch(/ping|wait/);
+      expect(params.message).toContain("Round 1 reply:");
+      expect(params.message).toContain("Latest reply:");
+    }
     expect(waitCalls).toHaveLength(8);
     expect(historyOnlyCalls).toHaveLength(9);
     expect(sendCallCount).toBe(0);
@@ -1085,6 +1106,24 @@ describe("sessions tools", () => {
         ),
     );
     expect(replySteps).toHaveLength(2);
+    const announceStep = agentCalls.find(
+      (call) =>
+        typeof (call.params as { extraSystemPrompt?: string })?.extraSystemPrompt === "string" &&
+        (call.params as { extraSystemPrompt?: string })?.extraSystemPrompt?.includes(
+          "Agent-to-agent announce step",
+        ),
+    );
+    expect(announceStep).toBeDefined();
+    const announceParams = announceStep?.params as
+      | { extraSystemPrompt?: string; message?: string }
+      | undefined;
+    expect(announceParams?.extraSystemPrompt).not.toContain("Original request:");
+    expect(announceParams?.extraSystemPrompt).not.toContain("initial");
+    expect(announceParams?.extraSystemPrompt).not.toContain("pong-2");
+    expect(announceParams?.message).toContain("Agent-to-agent announce data:");
+    expect(announceParams?.message).toContain("Original request:\nping");
+    expect(announceParams?.message).toContain("Round 1 reply:\ninitial");
+    expect(announceParams?.message).toContain("Latest reply:\npong-2");
     expect(sendParams).toMatchObject({
       to: "group:target",
       channel: "discord",

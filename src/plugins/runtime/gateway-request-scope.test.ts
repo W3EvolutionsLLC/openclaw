@@ -62,4 +62,23 @@ describe("gateway request scope", () => {
   it("attaches plugin id to the active scope", async () => {
     await expectPluginIdScopedGatewayScope("voice-call");
   });
+
+  it("does not verify caller-set plugin id scopes", async () => {
+    await withPluginIdScope("voice-call", async (runtimeScope) => {
+      expect(runtimeScope.getVerifiedPluginRuntimePluginId()).toBeUndefined();
+    });
+  });
+
+  it("attaches verified host plugin id to the active scope", async () => {
+    const pluginId = "voice-call";
+    await withTestGatewayScope(async (runtimeScope) => {
+      await runtimeScope.withVerifiedPluginRuntimePluginIdScope(pluginId, async () => {
+        expectGatewayScope(runtimeScope, {
+          ...TEST_SCOPE,
+          pluginId,
+        });
+        expect(runtimeScope.getVerifiedPluginRuntimePluginId()).toBe(pluginId);
+      });
+    });
+  });
 });

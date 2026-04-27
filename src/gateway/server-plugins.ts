@@ -2,13 +2,17 @@ import { randomUUID } from "node:crypto";
 import { normalizeModelRef, parseModelRef } from "../agents/model-selection.js";
 import { applyPluginAutoEnable } from "../config/plugin-auto-enable.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { SubagentExtraSystemPromptNotAuthorizedError } from "../plugin-sdk/error-runtime.js";
 import type { BundledRuntimeDepsInstallParams } from "../plugins/bundled-runtime-deps.js";
 import { normalizePluginsConfig } from "../plugins/config-state.js";
 import { loadOpenClawPlugins } from "../plugins/loader.js";
 import { loadPluginLookUpTable, type PluginLookUpTable } from "../plugins/plugin-lookup-table.js";
 import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
 import { setActivePluginRegistry } from "../plugins/runtime.js";
-import { getPluginRuntimeGatewayRequestScope } from "../plugins/runtime/gateway-request-scope.js";
+import {
+  getPluginRuntimeGatewayRequestScope,
+  getVerifiedPluginRuntimePluginId,
+} from "../plugins/runtime/gateway-request-scope.js";
 import { createPluginRuntimeLoaderLogger } from "../plugins/runtime/load-context.js";
 import type { PluginRuntime } from "../plugins/runtime/types.js";
 import type { PluginLogger } from "../plugins/types.js";
@@ -155,7 +159,7 @@ function authorizeFallbackExtraSystemPrompt(params: {
   if (!pluginId) {
     return {
       allowed: false,
-      reason: "extraSystemPrompt requires plugin identity in fallback subagent runs.",
+      reason: "extraSystemPrompt requires verified plugin identity in fallback subagent runs.",
     };
   }
   const policy = pluginSubagentPolicyState.policies[pluginId];
@@ -393,10 +397,7 @@ export function createGatewaySubagentRuntime(): PluginRuntime["subagent"] {
   return {
     async run(params) {
       const scope = getPluginRuntimeGatewayRequestScope();
-      const pluginId =
-        typeof scope?.pluginId === "string" && scope.pluginId.trim()
-          ? scope.pluginId.trim()
-          : undefined;
+      const pluginId = getVerifiedPluginRuntimePluginId();
       const overrideRequested = Boolean(params.provider || params.model);
       const extraSystemPromptRequested = Boolean(params.extraSystemPrompt);
       const hasRequestScopeClient = Boolean(scope?.client);
@@ -409,7 +410,7 @@ export function createGatewaySubagentRuntime(): PluginRuntime["subagent"] {
       let allowSyntheticExtraSystemPrompt = false;
       if (overrideRequested && !allowOverride && !hasRequestScopeClient) {
         const fallbackAuth = authorizeFallbackModelOverride({
-          pluginId: scope?.pluginId,
+          pluginId,
           provider: params.provider,
           model: params.model,
         });
@@ -421,10 +422,10 @@ export function createGatewaySubagentRuntime(): PluginRuntime["subagent"] {
       }
       if (extraSystemPromptRequested && !allowExtraSystemPrompt && !hasRequestScopeClient) {
         const fallbackAuth = authorizeFallbackExtraSystemPrompt({
-          pluginId: scope?.pluginId,
+          pluginId,
         });
         if (!fallbackAuth.allowed) {
-          throw new Error(fallbackAuth.reason);
+          throw new SubagentExtraSystemPromptNotAuthorizedError(fallbackAuth.reason);
         }
         allowExtraSystemPrompt = true;
         allowSyntheticExtraSystemPrompt = true;
@@ -491,10 +492,7 @@ export function createGatewaySubagentRuntime(): PluginRuntime["subagent"] {
     },
     async deleteSession(params) {
       const scope = getPluginRuntimeGatewayRequestScope();
-      const pluginId =
-        typeof scope?.pluginId === "string" && scope.pluginId.trim()
-          ? scope.pluginId.trim()
-          : undefined;
+      const pluginId = getVerifiedPluginRuntimePluginId();
       const pluginOwnedCleanupOptions = pluginId
         ? {
             pluginRuntimeOwnerId: pluginId,

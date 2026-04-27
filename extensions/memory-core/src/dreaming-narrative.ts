@@ -7,6 +7,8 @@ import {
   extractErrorCode,
   formatErrorMessage,
   RequestScopedSubagentRuntimeError,
+  SubagentExtraSystemPromptNotAuthorizedError,
+  SUBAGENT_EXTRA_SYSTEM_PROMPT_NOT_AUTHORIZED_ERROR_CODE,
   readErrorName,
   SUBAGENT_RUNTIME_REQUEST_SCOPE_ERROR_CODE,
 } from "openclaw/plugin-sdk/error-runtime";
@@ -88,10 +90,6 @@ const NARRATIVE_SYSTEM_PROMPT = [
 ].join("\n");
 const SUBAGENT_EXTRA_SYSTEM_PROMPT_AUTH_ERROR =
   "extraSystemPrompt is not authorized for this plugin subagent run.";
-const SUBAGENT_EXTRA_SYSTEM_PROMPT_IDENTITY_ERROR =
-  "extraSystemPrompt requires plugin identity in fallback subagent runs.";
-const SUBAGENT_EXTRA_SYSTEM_PROMPT_TRUST_ERROR =
-  "is not trusted for fallback extra system prompt requests.";
 
 // Narrative generation is best-effort. Keep the timeout bounded so a stalled
 // diary subagent does not leave the parent dreaming cron job "running" for
@@ -153,10 +151,11 @@ function buildRequestScopedFallbackNarrative(data: NarrativePhaseData): string {
 
 function isSubagentExtraSystemPromptAuthError(err: unknown): boolean {
   return (
-    err instanceof Error &&
-    (err.message.includes(SUBAGENT_EXTRA_SYSTEM_PROMPT_AUTH_ERROR) ||
-      err.message.includes(SUBAGENT_EXTRA_SYSTEM_PROMPT_IDENTITY_ERROR) ||
-      err.message.includes(SUBAGENT_EXTRA_SYSTEM_PROMPT_TRUST_ERROR))
+    err instanceof SubagentExtraSystemPromptNotAuthorizedError ||
+    (err instanceof Error &&
+      (extractErrorCode(err) === SUBAGENT_EXTRA_SYSTEM_PROMPT_NOT_AUTHORIZED_ERROR_CODE ||
+        (readErrorName(err) === "SubagentExtraSystemPromptNotAuthorizedError" &&
+          err.message === SUBAGENT_EXTRA_SYSTEM_PROMPT_AUTH_ERROR)))
   );
 }
 

@@ -115,7 +115,7 @@ import type {
   PluginToolMetadataRegistryRegistration,
   PluginTrustedToolPolicyRegistryRegistration,
 } from "./registry-types.js";
-import { withPluginRuntimePluginIdScope } from "./runtime/gateway-request-scope.js";
+import { withVerifiedPluginRuntimePluginIdScope } from "./runtime/gateway-request-scope.js";
 import type { PluginRuntime } from "./runtime/types.js";
 import { defaultSlotIdForKey, hasKind } from "./slots.js";
 import {
@@ -1923,15 +1923,18 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
         }
         const subagent = Reflect.get(target, prop, receiver);
         return {
-          run: (params) => withPluginRuntimePluginIdScope(pluginId, () => subagent.run(params)),
+          run: (params) =>
+            withVerifiedPluginRuntimePluginIdScope(pluginId, () => subagent.run(params)),
           waitForRun: (params) =>
-            withPluginRuntimePluginIdScope(pluginId, () => subagent.waitForRun(params)),
+            withVerifiedPluginRuntimePluginIdScope(pluginId, () => subagent.waitForRun(params)),
           getSessionMessages: (params) =>
-            withPluginRuntimePluginIdScope(pluginId, () => subagent.getSessionMessages(params)),
+            withVerifiedPluginRuntimePluginIdScope(pluginId, () =>
+              subagent.getSessionMessages(params),
+            ),
           getSession: (params) =>
-            withPluginRuntimePluginIdScope(pluginId, () => subagent.getSession(params)),
+            withVerifiedPluginRuntimePluginIdScope(pluginId, () => subagent.getSession(params)),
           deleteSession: (params) =>
-            withPluginRuntimePluginIdScope(pluginId, () => subagent.deleteSession(params)),
+            withVerifiedPluginRuntimePluginIdScope(pluginId, () => subagent.deleteSession(params)),
         } satisfies PluginRuntime["subagent"];
       },
     });

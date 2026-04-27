@@ -12,6 +12,12 @@ export type PluginRuntimeGatewayRequestScope = {
   pluginId?: string;
 };
 
+const VERIFIED_PLUGIN_ID_SCOPE: unique symbol = Symbol("openclaw.verifiedPluginRuntimePluginId");
+
+type VerifiedPluginRuntimeGatewayRequestScope = PluginRuntimeGatewayRequestScope & {
+  [VERIFIED_PLUGIN_ID_SCOPE]?: string;
+};
+
 const PLUGIN_RUNTIME_GATEWAY_REQUEST_SCOPE_KEY: unique symbol = Symbol.for(
   "openclaw.pluginRuntimeGatewayRequestScope",
 );
@@ -45,6 +51,44 @@ export function withPluginRuntimePluginIdScope<T>(pluginId: string, run: () => T
         isWebchatConnect: () => false,
       };
   return pluginRuntimeGatewayRequestScope.run(scoped, run);
+}
+
+function setVerifiedPluginIdScope(
+  scope: PluginRuntimeGatewayRequestScope,
+  pluginId: string,
+): VerifiedPluginRuntimeGatewayRequestScope {
+  Object.defineProperty(scope, VERIFIED_PLUGIN_ID_SCOPE, {
+    configurable: true,
+    enumerable: false,
+    value: pluginId,
+    writable: false,
+  });
+  return scope as VerifiedPluginRuntimeGatewayRequestScope;
+}
+
+/**
+ * Host-only plugin identity scope for authorization-sensitive runtime helpers.
+ */
+export function withVerifiedPluginRuntimePluginIdScope<T>(pluginId: string, run: () => T): T {
+  const current = pluginRuntimeGatewayRequestScope.getStore();
+  const scoped = setVerifiedPluginIdScope(
+    current
+      ? { ...current, pluginId }
+      : {
+          pluginId,
+          isWebchatConnect: () => false,
+        },
+    pluginId,
+  );
+  return pluginRuntimeGatewayRequestScope.run(scoped, run);
+}
+
+export function getVerifiedPluginRuntimePluginId(): string | undefined {
+  const scope = pluginRuntimeGatewayRequestScope.getStore() as
+    | VerifiedPluginRuntimeGatewayRequestScope
+    | undefined;
+  const pluginId = scope?.[VERIFIED_PLUGIN_ID_SCOPE];
+  return typeof pluginId === "string" && pluginId.trim() ? pluginId.trim() : undefined;
 }
 
 /**

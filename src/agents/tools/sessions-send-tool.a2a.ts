@@ -9,6 +9,7 @@ import { runAgentStep } from "./agent-step.js";
 import { resolveAnnounceTarget } from "./sessions-announce-target.js";
 import {
   buildAgentToAgentAnnounceContext,
+  buildAgentToAgentAnnounceMessage,
   buildAgentToAgentReplyContext,
   isAnnounceSkip,
   isReplySkip,
@@ -114,13 +115,15 @@ export async function runSessionsSendA2AFlow(params: {
       requesterChannel: params.requesterChannel,
       targetSessionKey: params.displayKey,
       targetChannel,
+    });
+    const announceMessage = buildAgentToAgentAnnounceMessage({
       originalMessage: params.message,
       roundOneReply: primaryReply,
       latestReply,
     });
     const announceReply = await runAgentStep({
       sessionKey: params.targetSessionKey,
-      message: "Agent-to-agent announce step.",
+      message: announceMessage,
       extraSystemPrompt: announcePrompt,
       timeoutMs: params.announceTimeoutMs,
       lane: resolveNestedAgentLaneForSession(params.targetSessionKey),
