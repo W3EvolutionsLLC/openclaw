@@ -7,6 +7,7 @@ import {
 import { InputProvenanceSchema, NonEmptyString, SessionLabelString } from "./primitives.js";
 
 export const MAX_EXTRA_SYSTEM_PROMPT_CHARS = 8_000;
+export const MAX_AGENT_MESSAGE_CHARS = 200_000;
 
 export const AgentInternalEventSchema = Type.Object(
   {
@@ -132,7 +133,7 @@ export const PollParamsSchema = Type.Object(
 
 export const AgentParamsSchema = Type.Object(
   {
-    message: NonEmptyString,
+    message: Type.String({ minLength: 1, maxLength: MAX_AGENT_MESSAGE_CHARS }),
     agentId: Type.Optional(NonEmptyString),
     provider: Type.Optional(Type.String()),
     model: Type.Optional(Type.String()),

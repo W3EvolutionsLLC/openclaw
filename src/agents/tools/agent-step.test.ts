@@ -49,11 +49,12 @@ describe("runAgentStep", () => {
 
     expect(gatewayCalls[0]?.params).toMatchObject({
       sessionKey: "agent:main:subagent:child",
-      message: expect.stringContaining("reply briefly"),
+      message: "hello",
+      extraSystemPrompt: "reply briefly",
       deliver: false,
       lane: "nested:agent:main:subagent:child",
     });
-    expect(gatewayCalls[0]?.params).not.toHaveProperty("extraSystemPrompt");
+    expect(gatewayCalls[0]?.scopes).toEqual(["operator.admin"]);
     expect(bundleMcpRuntimeMocks.retireSessionMcpRuntimeForSessionKey).toHaveBeenCalledWith({
       sessionKey: "agent:main:subagent:child",
       reason: "nested-agent-step-complete",

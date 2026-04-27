@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { callGateway } from "../../gateway/call.js";
+import { ADMIN_SCOPE } from "../../gateway/method-scopes.js";
 import { INTERNAL_MESSAGE_CHANNEL } from "../../utils/message-channel.js";
 import { resolveNestedAgentLaneForSession } from "../lanes.js";
 import { retireSessionMcpRuntimeForSessionKey } from "../pi-bundle-mcp-tools.js";
@@ -29,19 +30,16 @@ export async function runAgentStep(params: {
   sourceTool?: string;
 }): Promise<string | undefined> {
   const stepIdem = crypto.randomUUID();
-  const message = [params.extraSystemPrompt, params.message]
-    .map((part) => part.trim())
-    .filter(Boolean)
-    .join("\n\n");
   const response = await agentStepDeps.callGateway({
     method: "agent",
     params: {
-      message,
+      message: params.message,
       sessionKey: params.sessionKey,
       idempotencyKey: stepIdem,
       deliver: false,
       channel: params.channel ?? INTERNAL_MESSAGE_CHANNEL,
       lane: params.lane ?? resolveNestedAgentLaneForSession(params.sessionKey),
+      extraSystemPrompt: params.extraSystemPrompt,
       inputProvenance: {
         kind: "inter_session",
         sourceSessionKey: params.sourceSessionKey,
@@ -49,6 +47,7 @@ export async function runAgentStep(params: {
         sourceTool: params.sourceTool ?? "sessions_send",
       },
     },
+    scopes: [ADMIN_SCOPE],
     timeoutMs: 10_000,
   });
 

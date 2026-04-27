@@ -13,7 +13,10 @@ import {
 } from "../../tasks/task-registry.js";
 import { withTempDir } from "../../test-helpers/temp-dir.js";
 import { GATEWAY_CLIENT_IDS, GATEWAY_CLIENT_MODES } from "../protocol/client-info.js";
-import { MAX_EXTRA_SYSTEM_PROMPT_CHARS } from "../protocol/schema/agent.js";
+import {
+  MAX_AGENT_MESSAGE_CHARS,
+  MAX_EXTRA_SYSTEM_PROMPT_CHARS,
+} from "../protocol/schema/agent.js";
 import { agentHandlers } from "./agent.js";
 import { chatHandlers } from "./chat.js";
 import { expectSubagentFollowupReactivation } from "./subagent-followup.test-helpers.js";
@@ -797,6 +800,41 @@ describe("gateway agent handler", () => {
       undefined,
       expect.objectContaining({
         message: expect.stringContaining("must NOT have more than 8000 characters"),
+      }),
+    );
+  });
+
+  it("rejects oversized messages before dispatch", async () => {
+    primeMainAgentRun();
+    mocks.agentCommand.mockClear();
+    const respond = vi.fn();
+
+    await invokeAgent(
+      {
+        message: "x".repeat(MAX_AGENT_MESSAGE_CHARS + 1),
+        agentId: "main",
+        sessionKey: "agent:main:main",
+        idempotencyKey: "test-idem-message-too-large",
+      },
+      {
+        reqId: "test-idem-message-too-large",
+        client: {
+          connect: {
+            scopes: ["operator.write"],
+          },
+        } as AgentHandlerArgs["client"],
+        respond,
+      },
+    );
+
+    expect(mocks.agentCommand).not.toHaveBeenCalled();
+    expect(respond).toHaveBeenCalledWith(
+      false,
+      undefined,
+      expect.objectContaining({
+        message: expect.stringContaining(
+          `must NOT have more than ${MAX_AGENT_MESSAGE_CHARS} characters`,
+        ),
       }),
     );
   });

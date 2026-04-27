@@ -91,7 +91,10 @@ import {
   validateAgentParams,
   validateAgentWaitParams,
 } from "../protocol/index.js";
-import { MAX_EXTRA_SYSTEM_PROMPT_CHARS } from "../protocol/schema/agent.js";
+import {
+  MAX_AGENT_MESSAGE_CHARS,
+  MAX_EXTRA_SYSTEM_PROMPT_CHARS,
+} from "../protocol/schema/agent.js";
 import { performGatewaySessionReset } from "../session-reset-service.js";
 import { reactivateCompletedSubagentSession } from "../session-subagent-reactivation.js";
 import {
@@ -462,6 +465,11 @@ export const agentHandlers: GatewayRequestHandlers = {
           "provider/model overrides are not authorized for this caller.",
         ),
       );
+      return;
+    }
+    const rawMessage = typeof request.message === "string" ? request.message : "";
+    if (rawMessage.length > MAX_AGENT_MESSAGE_CHARS) {
+      respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "message is too large."));
       return;
     }
     const rawExtraSystemPrompt =

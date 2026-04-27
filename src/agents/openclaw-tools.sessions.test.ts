@@ -792,13 +792,16 @@ describe("sessions tools", () => {
       if (request.method === "agent") {
         agentCallCount += 1;
         const runId = `run-${agentCallCount}`;
-        const params = request.params as { message?: string; sessionKey?: string } | undefined;
+        const params = request.params as
+          | { extraSystemPrompt?: string; message?: string; sessionKey?: string }
+          | undefined;
         const message = params?.message ?? "";
+        const prompt = params?.extraSystemPrompt ?? "";
         const userMessage = message.split("\n\n").at(-1) ?? "";
         let reply = "REPLY_SKIP";
         if (userMessage === "ping" || userMessage === "wait") {
           reply = "done";
-        } else if (message.includes("Agent-to-agent announce step")) {
+        } else if (prompt.includes("Agent-to-agent announce step")) {
           reply = "ANNOUNCE_SKIP";
         } else if (params?.sessionKey === requesterKey) {
           reply = "pong";
@@ -893,8 +896,8 @@ describe("sessions tools", () => {
     expect(
       agentCalls.some(
         (call) =>
-          typeof (call.params as { message?: string })?.message === "string" &&
-          (call.params as { message?: string })?.message?.includes(
+          typeof (call.params as { extraSystemPrompt?: string })?.extraSystemPrompt === "string" &&
+          (call.params as { extraSystemPrompt?: string })?.extraSystemPrompt?.includes(
             "Agent-to-agent message context",
           ),
       ),
@@ -902,15 +905,19 @@ describe("sessions tools", () => {
     expect(
       agentCalls.some(
         (call) =>
-          typeof (call.params as { message?: string })?.message === "string" &&
-          (call.params as { message?: string })?.message?.includes("Agent-to-agent reply step"),
+          typeof (call.params as { extraSystemPrompt?: string })?.extraSystemPrompt === "string" &&
+          (call.params as { extraSystemPrompt?: string })?.extraSystemPrompt?.includes(
+            "Agent-to-agent reply step",
+          ),
       ),
     ).toBe(true);
     expect(
       agentCalls.some(
         (call) =>
-          typeof (call.params as { message?: string })?.message === "string" &&
-          (call.params as { message?: string })?.message?.includes("Agent-to-agent announce step"),
+          typeof (call.params as { extraSystemPrompt?: string })?.extraSystemPrompt === "string" &&
+          (call.params as { extraSystemPrompt?: string })?.extraSystemPrompt?.includes(
+            "Agent-to-agent announce step",
+          ),
       ),
     ).toBe(true);
     expect(waitCalls).toHaveLength(8);
@@ -982,15 +989,16 @@ describe("sessions tools", () => {
         const runId = `run-${agentCallCount}`;
         const params = request.params as
           | {
+              extraSystemPrompt?: string;
               message?: string;
               sessionKey?: string;
             }
           | undefined;
         let reply = "initial";
-        if (params?.message?.includes("Agent-to-agent reply step")) {
+        if (params?.extraSystemPrompt?.includes("Agent-to-agent reply step")) {
           reply = params.sessionKey === requesterKey ? "pong-1" : "pong-2";
         }
-        if (params?.message?.includes("Agent-to-agent announce step")) {
+        if (params?.extraSystemPrompt?.includes("Agent-to-agent announce step")) {
           reply = "announce now";
         }
         replyByRunId.set(runId, reply);
@@ -1069,8 +1077,10 @@ describe("sessions tools", () => {
     const replySteps = calls.filter(
       (call) =>
         call.method === "agent" &&
-        typeof (call.params as { message?: string })?.message === "string" &&
-        (call.params as { message?: string })?.message?.includes("Agent-to-agent reply step"),
+        typeof (call.params as { extraSystemPrompt?: string })?.extraSystemPrompt === "string" &&
+        (call.params as { extraSystemPrompt?: string })?.extraSystemPrompt?.includes(
+          "Agent-to-agent reply step",
+        ),
     );
     expect(replySteps).toHaveLength(2);
     expect(sendParams).toMatchObject({
@@ -1103,15 +1113,16 @@ describe("sessions tools", () => {
         const runId = `run-${agentCallCount}`;
         const params = request.params as
           | {
+              extraSystemPrompt?: string;
               message?: string;
               sessionKey?: string;
             }
           | undefined;
         let reply = "initial";
-        if (params?.message?.includes("Agent-to-agent reply step")) {
+        if (params?.extraSystemPrompt?.includes("Agent-to-agent reply step")) {
           reply = params.sessionKey === requesterKey ? "pong-1" : "pong-2";
         }
-        if (params?.message?.includes("Agent-to-agent announce step")) {
+        if (params?.extraSystemPrompt?.includes("Agent-to-agent announce step")) {
           reply = "announce now";
         }
         replyByRunId.set(runId, reply);

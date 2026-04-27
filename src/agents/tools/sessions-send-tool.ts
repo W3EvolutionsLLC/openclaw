@@ -3,6 +3,7 @@ import { Type } from "typebox";
 import { isRequesterParentOfBackgroundAcpSession } from "../../acp/session-interaction-mode.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { callGateway } from "../../gateway/call.js";
+import { ADMIN_SCOPE } from "../../gateway/method-scopes.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import { normalizeAgentId, resolveAgentIdFromSessionKey } from "../../routing/session-key.js";
 import { SESSION_LABEL_MAX_LENGTH } from "../../sessions/session-label.js";
@@ -49,12 +50,14 @@ async function startAgentRun(params: {
   callGateway: GatewayCaller;
   runId: string;
   sendParams: Record<string, unknown>;
+  scopes?: Parameters<GatewayCaller>[0]["scopes"];
   sessionKey: string;
 }): Promise<{ ok: true; runId: string } | { ok: false; result: ReturnType<typeof jsonResult> }> {
   try {
     const response = await params.callGateway<{ runId: string }>({
       method: "agent",
       params: params.sendParams,
+      ...(params.scopes ? { scopes: params.scopes } : {}),
       timeoutMs: 10_000,
     });
     return {
@@ -272,17 +275,14 @@ export function createSessionsSendTool(opts?: {
         requesterChannel: opts?.agentChannel,
         targetSessionKey: displayKey,
       });
-      const agentMessage = [agentMessageContext, message]
-        .map((part) => part.trim())
-        .filter(Boolean)
-        .join("\n\n");
       const sendParams = {
-        message: agentMessage,
+        message,
         sessionKey: resolvedKey,
         idempotencyKey,
         deliver: false,
         channel: INTERNAL_MESSAGE_CHANNEL,
         lane: resolveNestedAgentLaneForSession(resolvedKey),
+        extraSystemPrompt: agentMessageContext,
         inputProvenance: {
           kind: "inter_session",
           sourceSessionKey: opts?.agentSessionKey,
@@ -343,6 +343,7 @@ export function createSessionsSendTool(opts?: {
           callGateway: gatewayCall,
           runId,
           sendParams,
+          scopes: [ADMIN_SCOPE],
           sessionKey: displayKey,
         });
         if (!start.ok) {
@@ -362,6 +363,7 @@ export function createSessionsSendTool(opts?: {
         callGateway: gatewayCall,
         runId,
         sendParams,
+        scopes: [ADMIN_SCOPE],
         sessionKey: displayKey,
       });
       if (!start.ok) {
