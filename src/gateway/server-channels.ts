@@ -43,6 +43,7 @@ type ChannelRuntimeStore = {
   aborts: Map<string, AbortController>;
   starting: Map<string, Promise<void>>;
   tasks: Map<string, Promise<unknown>>;
+  taskCleanups: Map<string, () => Promise<void>>;
   runtimes: Map<string, ChannelAccountSnapshot>;
 };
 
@@ -65,6 +66,7 @@ function createRuntimeStore(): ChannelRuntimeStore {
     aborts: new Map(),
     starting: new Map(),
     tasks: new Map(),
+    taskCleanups: new Map(),
     runtimes: new Map(),
   };
 }
@@ -437,6 +439,10 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
             log.error?.(`[${id}] ${label}: ${formatErrorMessage(error)}`);
           }
         };
+        const cleanupRetiredLifecycle = async () => {
+          await cleanupTaskScopedApprovalRuntime("channel lifecycle retirement cleanup failed");
+        };
+        store.taskCleanups.set(id, cleanupRetiredLifecycle);
 
         try {
           const account = plugin.config.resolveAccount(cfg, id);
@@ -556,6 +562,9 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
             })
             .finally(async () => {
               await cleanupTaskScopedApprovalRuntime("channel cleanup failed");
+              if (store.taskCleanups.get(id) === cleanupRetiredLifecycle) {
+                store.taskCleanups.delete(id);
+              }
               if (isCurrentLifecycle()) {
                 setRuntime(channelId, id, {
                   accountId: id,
@@ -641,6 +650,9 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
           if (!handedOffTask && store.aborts.get(id) === abort) {
             store.aborts.delete(id);
           }
+          if (!handedOffTask && store.taskCleanups.get(id) === cleanupRetiredLifecycle) {
+            store.taskCleanups.delete(id);
+          }
         }
       }),
     });
@@ -718,6 +730,11 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
             if (store.tasks.get(id) === task) {
               store.tasks.delete(id);
             }
+            const cleanupRetiredTask = store.taskCleanups.get(id);
+            if (cleanupRetiredTask) {
+              store.taskCleanups.delete(id);
+              await cleanupRetiredTask();
+            }
             setRuntime(channelId, id, {
               accountId: id,
               running: false,
@@ -740,6 +757,7 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
         }
         store.aborts.delete(id);
         store.tasks.delete(id);
+        store.taskCleanups.delete(id);
         setRuntime(channelId, id, {
           accountId: id,
           running: false,
