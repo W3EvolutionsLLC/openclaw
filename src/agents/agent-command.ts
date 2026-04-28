@@ -939,6 +939,7 @@ async function agentCommandInternal(
           runId,
           agentDir,
           fallbacksOverride: effectiveFallbacksOverride,
+          transientRetry: { enabled: true },
           onFallbackStep: (step) => {
             fallbackTrajectoryRecorder?.recordEvent("model.fallback_step", step);
           },
