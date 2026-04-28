@@ -1,4 +1,5 @@
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { AGENT_PROMPT_SCOPE, WRITE_SCOPE } from "../gateway/method-scopes.js";
 import type { ConversationRef } from "../infra/outbound/session-binding-service.js";
 import { stringifyRouteThreadId } from "../plugin-sdk/channel-route.js";
 import { normalizeAccountId } from "../routing/session-key.js";
@@ -49,6 +50,7 @@ export { resolveAnnounceOrigin } from "./subagent-announce-origin.js";
 
 const DEFAULT_SUBAGENT_ANNOUNCE_TIMEOUT_MS = 120_000;
 const MAX_TIMER_SAFE_TIMEOUT_MS = 2_147_000_000;
+const ANNOUNCE_AGENT_PROMPT_SCOPES = [WRITE_SCOPE, AGENT_PROMPT_SCOPE] as const;
 
 type SubagentAnnounceDeliveryDeps = {
   callGateway: typeof callGateway;
@@ -79,6 +81,12 @@ const defaultSubagentAnnounceDeliveryDeps: SubagentAnnounceDeliveryDeps = {
 
 let subagentAnnounceDeliveryDeps: SubagentAnnounceDeliveryDeps =
   defaultSubagentAnnounceDeliveryDeps;
+
+function resolveAnnounceAgentScopes(internalEvents?: readonly AgentInternalEvent[]) {
+  return internalEvents && internalEvents.length > 0
+    ? [...ANNOUNCE_AGENT_PROMPT_SCOPES]
+    : undefined;
+}
 
 function resolveBoundConversationOrigin(params: {
   bindingConversation: ConversationRef & { parentConversationId?: string };
@@ -399,6 +407,7 @@ async function sendAnnounce(item: AnnounceQueueItem) {
       enqueuedAt: item.enqueuedAt,
     }),
   );
+  const scopes = resolveAnnounceAgentScopes(item.internalEvents);
   await subagentAnnounceDeliveryDeps.callGateway({
     method: "agent",
     params: {
@@ -418,6 +427,7 @@ async function sendAnnounce(item: AnnounceQueueItem) {
       },
       idempotencyKey,
     },
+    ...(scopes ? { scopes } : {}),
     timeoutMs: announceTimeoutMs,
   });
 }
@@ -768,6 +778,7 @@ async function sendSubagentAnnounceDirectly(params: {
       };
     }
     let directAnnounceResponse: unknown;
+    const scopes = resolveAnnounceAgentScopes(params.internalEvents);
     try {
       directAnnounceResponse = await runAnnounceDeliveryWithRetry({
         operation: params.expectsCompletionMessage
@@ -807,6 +818,7 @@ async function sendSubagentAnnounceDirectly(params: {
               },
               idempotencyKey: params.directIdempotencyKey,
             },
+            ...(scopes ? { scopes } : {}),
             expectFinal: true,
             timeoutMs: announceTimeoutMs,
           }),

@@ -5,6 +5,7 @@ import { isAcpRuntimeSpawnAvailable } from "../acp/runtime/availability.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { SubagentSpawnPreparation } from "../context-engine/types.js";
+import { AGENT_PROMPT_SCOPE, WRITE_SCOPE } from "../gateway/method-scopes.js";
 import { stringifyRouteThreadId } from "../plugin-sdk/channel-route.js";
 import { listRegisteredPluginAgentPromptGuidance } from "../plugins/command-registry-state.js";
 import type { SubagentLifecycleHookRunner } from "../plugins/hooks.js";
@@ -110,6 +111,7 @@ let subagentSpawnDeps: SubagentSpawnDeps = defaultSubagentSpawnDeps;
 const SUBAGENT_CONTROL_GATEWAY_TIMEOUT_MS = 60_000;
 const DEFAULT_SUBAGENT_AGENT_GATEWAY_TIMEOUT_MS = 60_000;
 const MAX_SUBAGENT_AGENT_GATEWAY_TIMEOUT_MS = 300_000;
+const AGENT_EXTRA_SYSTEM_PROMPT_SCOPES = [WRITE_SCOPE, AGENT_PROMPT_SCOPE] as const;
 
 export type SpawnSubagentParams = {
   task: string;
@@ -187,7 +189,21 @@ async function callSubagentGateway(
   // Only admin-only methods are pinned to ADMIN_SCOPE; other methods (e.g.
   // "agent" → write) keep their least-privilege scope so that the gateway does
   // not treat the caller as owner (senderIsOwner) and expose owner-only tools.
-  const scopes = params.scopes ?? (isAdminOnlyMethod(params.method) ? [ADMIN_SCOPE] : undefined);
+  const agentParams = params.params as
+    | { extraSystemPrompt?: unknown; internalEvents?: unknown }
+    | undefined;
+  const needsAgentPromptScope =
+    params.method === "agent" &&
+    ((typeof agentParams?.extraSystemPrompt === "string" &&
+      agentParams.extraSystemPrompt.trim().length > 0) ||
+      (Array.isArray(agentParams?.internalEvents) && agentParams.internalEvents.length > 0));
+  const scopes =
+    params.scopes ??
+    (isAdminOnlyMethod(params.method)
+      ? [ADMIN_SCOPE]
+      : needsAgentPromptScope
+        ? [...AGENT_EXTRA_SYSTEM_PROMPT_SCOPES]
+        : undefined);
   return await subagentSpawnDeps.callGateway({
     ...params,
     ...(scopes != null ? { scopes } : {}),

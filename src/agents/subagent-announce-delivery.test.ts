@@ -44,6 +44,21 @@ function createSendMessageMock() {
   })) as unknown as typeof runtimeSendMessage;
 }
 
+function makeTaskCompletionEvent(): AgentInternalEvent {
+  return {
+    type: "task_completion",
+    source: "subagent",
+    childSessionKey: "agent:worker:subagent:child",
+    childSessionId: "child-session-id",
+    announceType: "subagent task",
+    taskLabel: "thread completion smoke",
+    status: "ok",
+    statusLabel: "completed successfully",
+    result: "child completion output",
+    replyInstruction: "Summarize the result.",
+  };
+}
+
 async function deliverSlackThreadAnnouncement(params: {
   callGateway: typeof runtimeCallGateway;
   isActive: boolean;
@@ -355,6 +370,7 @@ describe("deliverSubagentAnnouncement queued delivery", () => {
       accountId?: string;
       threadId?: string | number;
     };
+    internalEvents?: AgentInternalEvent[];
   }) {
     const callGateway = createGatewayMock();
     let activityChecks = 0;
@@ -384,6 +400,7 @@ describe("deliverSubagentAnnouncement queued delivery", () => {
       requesterIsSubagent: false,
       expectsCompletionMessage: false,
       directIdempotencyKey: "announce-no-external-route",
+      internalEvents: params.internalEvents,
     });
 
     expect(result).toEqual(
@@ -477,6 +494,22 @@ describe("deliverSubagentAnnouncement queued delivery", () => {
       }),
     );
   });
+
+  it("requests prompt scope for queued internal-event announces", async () => {
+    const callGateway = await deliverQueuedAnnouncement({
+      internalEvents: [makeTaskCompletionEvent()],
+    });
+
+    expect(callGateway).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: "agent",
+        scopes: ["operator.write", "operator.agentPrompt"],
+        params: expect.objectContaining({
+          internalEvents: expect.any(Array),
+        }),
+      }),
+    );
+  });
 });
 
 describe("deliverSubagentAnnouncement completion delivery", () => {
@@ -541,20 +574,7 @@ describe("deliverSubagentAnnouncement completion delivery", () => {
       isActive: false,
       expectsCompletionMessage: true,
       directIdempotencyKey: "announce-thread-fallback-1",
-      internalEvents: [
-        {
-          type: "task_completion",
-          source: "subagent",
-          childSessionKey: "agent:worker:subagent:child",
-          childSessionId: "child-session-id",
-          announceType: "subagent task",
-          taskLabel: "thread completion smoke",
-          status: "ok",
-          statusLabel: "completed successfully",
-          result: "child completion output",
-          replyInstruction: "Summarize the result.",
-        },
-      ],
+      internalEvents: [makeTaskCompletionEvent()],
     });
 
     expect(result).toEqual(
@@ -566,6 +586,7 @@ describe("deliverSubagentAnnouncement completion delivery", () => {
     expect(callGateway).toHaveBeenCalledWith(
       expect.objectContaining({
         method: "agent",
+        scopes: ["operator.write", "operator.agentPrompt"],
         params: expect.objectContaining({
           deliver: true,
           channel: "slack",

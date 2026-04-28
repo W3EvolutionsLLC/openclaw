@@ -507,6 +507,19 @@ export const agentHandlers: GatewayRequestHandlers = {
       );
       return;
     }
+    const requestedInternalEvents =
+      Array.isArray(request.internalEvents) && request.internalEvents.length > 0;
+    if (requestedInternalEvents && !allowExtraSystemPrompt) {
+      respond(
+        false,
+        undefined,
+        errorShape(
+          ErrorCodes.INVALID_REQUEST,
+          "internalEvents are not authorized for this caller.",
+        ),
+      );
+      return;
+    }
     const providerOverride = allowModelOverride ? request.provider : undefined;
     const modelOverride = allowModelOverride ? request.model : undefined;
     const extraSystemPrompt = allowExtraSystemPrompt ? request.extraSystemPrompt : undefined;

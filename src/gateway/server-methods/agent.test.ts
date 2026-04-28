@@ -612,6 +612,54 @@ describe("gateway agent handler", () => {
     );
   });
 
+  it("forwards internal events for prompt-scoped write callers", async () => {
+    primeMainAgentRun();
+
+    await invokeAgent(
+      {
+        message: "process completion",
+        agentId: "main",
+        sessionKey: "agent:main:main",
+        internalEvents: [
+          {
+            type: "task_completion",
+            source: "subagent",
+            childSessionKey: "agent:worker:subagent:child",
+            childSessionId: "child-session-id",
+            announceType: "subagent task",
+            taskLabel: "compile report",
+            status: "ok",
+            statusLabel: "completed successfully",
+            result: "done",
+            replyInstruction: "Summarize the result.",
+          },
+        ],
+        idempotencyKey: "test-idem-internal-events-scoped",
+      },
+      {
+        reqId: "test-idem-internal-events-scoped",
+        client: {
+          connect: {
+            scopes: ["operator.write", "operator.agentPrompt"],
+          },
+        } as AgentHandlerArgs["client"],
+      },
+    );
+
+    const lastCall = mocks.agentCommand.mock.calls.at(-1);
+    expect(lastCall?.[0]).toEqual(
+      expect.objectContaining({
+        internalEvents: expect.arrayContaining([
+          expect.objectContaining({
+            type: "task_completion",
+            result: "done",
+          }),
+        ]),
+        senderIsOwner: false,
+      }),
+    );
+  });
+
   it("rejects extra system prompts for write-scoped callers", async () => {
     primeMainAgentRun();
     mocks.agentCommand.mockClear();
@@ -642,6 +690,53 @@ describe("gateway agent handler", () => {
       undefined,
       expect.objectContaining({
         message: "extraSystemPrompt is not authorized for this caller.",
+      }),
+    );
+  });
+
+  it("rejects internal events for write-scoped callers", async () => {
+    primeMainAgentRun();
+    mocks.agentCommand.mockClear();
+    const respond = vi.fn();
+
+    await invokeAgent(
+      {
+        message: "process completion",
+        agentId: "main",
+        sessionKey: "agent:main:main",
+        internalEvents: [
+          {
+            type: "task_completion",
+            source: "subagent",
+            childSessionKey: "agent:worker:subagent:child",
+            childSessionId: "child-session-id",
+            announceType: "subagent task",
+            taskLabel: "compile report",
+            status: "ok",
+            statusLabel: "completed successfully",
+            result: "done",
+            replyInstruction: "Summarize the result.",
+          },
+        ],
+        idempotencyKey: "test-idem-internal-events-write",
+      },
+      {
+        reqId: "test-idem-internal-events-write",
+        client: {
+          connect: {
+            scopes: ["operator.write"],
+          },
+        } as AgentHandlerArgs["client"],
+        respond,
+      },
+    );
+
+    expect(mocks.agentCommand).not.toHaveBeenCalled();
+    expect(respond).toHaveBeenCalledWith(
+      false,
+      undefined,
+      expect.objectContaining({
+        message: "internalEvents are not authorized for this caller.",
       }),
     );
   });
@@ -1312,7 +1407,15 @@ describe("gateway agent handler", () => {
         ],
         idempotencyKey: "music-generation-event",
       },
-      { reqId: "music-generation-event-1", respond },
+      {
+        reqId: "music-generation-event-1",
+        client: {
+          connect: {
+            scopes: ["operator.write", "operator.agentPrompt"],
+          },
+        } as AgentHandlerArgs["client"],
+        respond,
+      },
     );
 
     await waitForAssertion(() => expect(mocks.agentCommand).toHaveBeenCalled());
@@ -1359,7 +1462,14 @@ describe("gateway agent handler", () => {
         },
         idempotencyKey: "music-generation-event-inter-session",
       },
-      { reqId: "music-generation-event-inter-session" },
+      {
+        reqId: "music-generation-event-inter-session",
+        client: {
+          connect: {
+            scopes: ["operator.write", "operator.agentPrompt"],
+          },
+        } as AgentHandlerArgs["client"],
+      },
     );
 
     await waitForAssertion(() => expect(mocks.agentCommand).toHaveBeenCalled());

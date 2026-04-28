@@ -328,9 +328,13 @@ describe("spawnSubagentDirect seam flow", () => {
       if (call.method === "sessions.patch" || call.method === "sessions.delete") {
         // Admin-only methods must be pinned to operator.admin.
         expect(call.scopes).toEqual(["operator.admin"]);
+      } else if (call.method === "agent") {
+        // The child run includes a runtime-generated system prompt, so it
+        // needs the narrow prompt scope without becoming an admin caller.
+        expect(call.scopes).toEqual(["operator.write", "operator.agentPrompt"]);
       } else {
-        // Non-admin methods (e.g. "agent") must NOT be forced to admin scope
-        // so the gateway preserves least-privilege and senderIsOwner stays false.
+        // Other non-admin methods must not be forced to admin scope so the
+        // gateway preserves least-privilege and senderIsOwner stays false.
         expect(call.scopes).toBeUndefined();
       }
     }
