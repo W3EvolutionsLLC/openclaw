@@ -876,9 +876,51 @@ describe("loadGatewayPlugins", () => {
     expect(handleGatewayRequest).not.toHaveBeenCalled();
   });
 
-  test("forwards request-scoped runtime extra system prompts with prompt authority", async () => {
+  test("rejects request-scoped runtime extra system prompts without plugin trust", async () => {
     const serverPlugins = serverPluginsModule;
     const runtime = await createSubagentRuntime(serverPlugins);
+    const scope = {
+      context: createTestContext("request-scope-extra-system-prompt-untrusted"),
+      client: {
+        connect: {
+          scopes: ["operator.write", "operator.agentPrompt"],
+        },
+      } as GatewayRequestOptions["client"],
+      isWebchatConnect: () => false,
+    } satisfies PluginRuntimeGatewayRequestScope;
+
+    await expect(
+      gatewayRequestScopeModule.withPluginRuntimeGatewayRequestScope(scope, () =>
+        gatewayRequestScopeModule.withVerifiedPluginRuntimePluginIdScope("memory-core", () =>
+          runtime.run({
+            sessionKey: "s-extra-system-prompt-untrusted-request",
+            message: "hello",
+            extraSystemPrompt: "Use the plugin subagent contract.",
+            deliver: false,
+          }),
+        ),
+      ),
+    ).rejects.toThrow(
+      'plugin "memory-core" is not trusted for request-scoped extra system prompt requests.',
+    );
+
+    expect(handleGatewayRequest).not.toHaveBeenCalled();
+  });
+
+  test("forwards trusted request-scoped runtime extra system prompts with prompt authority", async () => {
+    const serverPlugins = serverPluginsModule;
+    const runtime = await createSubagentRuntime(serverPlugins);
+    serverPlugins.setPluginSubagentOverridePolicies({
+      plugins: {
+        entries: {
+          "memory-core": {
+            subagent: {
+              allowExtraSystemPrompt: true,
+            },
+          },
+        },
+      },
+    });
     const scope = {
       context: createTestContext("request-scope-extra-system-prompt-forward"),
       client: {
@@ -890,12 +932,14 @@ describe("loadGatewayPlugins", () => {
     } satisfies PluginRuntimeGatewayRequestScope;
 
     await gatewayRequestScopeModule.withPluginRuntimeGatewayRequestScope(scope, () =>
-      runtime.run({
-        sessionKey: "s-extra-system-prompt-forward",
-        message: "hello",
-        extraSystemPrompt: "Use the plugin subagent contract.",
-        deliver: false,
-      }),
+      gatewayRequestScopeModule.withVerifiedPluginRuntimePluginIdScope("memory-core", () =>
+        runtime.run({
+          sessionKey: "s-extra-system-prompt-forward",
+          message: "hello",
+          extraSystemPrompt: "Use the plugin subagent contract.",
+          deliver: false,
+        }),
+      ),
     );
 
     expect(getLastDispatchedParams()).toMatchObject({

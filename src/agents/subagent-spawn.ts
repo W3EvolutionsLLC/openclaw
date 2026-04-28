@@ -176,9 +176,14 @@ async function updateSubagentSessionStore(
   return await subagentSpawnDeps.updateSessionStore(storePath, mutator);
 }
 
-async function callSubagentGateway(
-  params: Parameters<typeof callGateway>[0],
-): Promise<Awaited<ReturnType<typeof callGateway>>> {
+type SubagentGatewayCallOptions = Parameters<typeof callGateway>[0] & {
+  trustedAgentPromptContext?: boolean;
+};
+
+async function callSubagentGateway({
+  trustedAgentPromptContext,
+  ...params
+}: SubagentGatewayCallOptions): Promise<Awaited<ReturnType<typeof callGateway>>> {
   // Subagent lifecycle requires methods spanning multiple scope tiers
   // (sessions.patch / sessions.delete → admin, agent → write).  When each call
   // independently negotiates least-privilege scopes the first connection pairs
@@ -193,6 +198,7 @@ async function callSubagentGateway(
     | { extraSystemPrompt?: unknown; internalEvents?: unknown }
     | undefined;
   const needsAgentPromptScope =
+    trustedAgentPromptContext === true &&
     params.method === "agent" &&
     ((typeof agentParams?.extraSystemPrompt === "string" &&
       agentParams.extraSystemPrompt.trim().length > 0) ||
@@ -1069,6 +1075,7 @@ export async function spawnSubagentDirect(
     } = spawnedMetadata;
     const response = await callSubagentGateway({
       method: "agent",
+      trustedAgentPromptContext: true,
       params: {
         message: childTaskMessage,
         sessionKey: childSessionKey,

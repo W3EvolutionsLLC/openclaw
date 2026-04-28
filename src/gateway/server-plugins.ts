@@ -175,6 +175,31 @@ function authorizeFallbackExtraSystemPrompt(params: {
   };
 }
 
+function authorizeRequestScopedExtraSystemPrompt(params: {
+  pluginId?: string;
+}): { allowed: true } | { allowed: false; reason: string } {
+  const pluginSubagentPolicyState = getPluginSubagentPolicyState();
+  const pluginId = params.pluginId?.trim();
+  if (!pluginId) {
+    return {
+      allowed: false,
+      reason:
+        "extraSystemPrompt requires verified plugin identity in request-scoped subagent runs.",
+    };
+  }
+  const policy = pluginSubagentPolicyState.policies[pluginId];
+  if (policy?.allowExtraSystemPrompt) {
+    return { allowed: true };
+  }
+  return {
+    allowed: false,
+    reason:
+      `plugin "${pluginId}" is not trusted for request-scoped extra system prompt requests. ` +
+      "See https://docs.openclaw.ai/tools/plugin#runtime-helpers and search for: " +
+      "plugins.entries.<id>.subagent.allowExtraSystemPrompt",
+  };
+}
+
 function authorizeFallbackModelOverride(params: {
   pluginId?: string;
   provider?: string;
@@ -402,12 +427,22 @@ export function createGatewaySubagentRuntime(): PluginRuntime["subagent"] {
       const extraSystemPromptRequested = Boolean(params.extraSystemPrompt);
       const hasRequestScopeClient = Boolean(scope?.client);
       let allowOverride = hasRequestScopeClient && canClientUseModelOverride(scope?.client ?? null);
-      let allowExtraSystemPrompt =
-        extraSystemPromptRequested &&
-        hasRequestScopeClient &&
-        canClientUseExtraSystemPrompt(scope?.client ?? null);
+      let allowExtraSystemPrompt = false;
       let allowSyntheticModelOverride = false;
       let allowSyntheticExtraSystemPrompt = false;
+      if (
+        extraSystemPromptRequested &&
+        hasRequestScopeClient &&
+        canClientUseExtraSystemPrompt(scope?.client ?? null)
+      ) {
+        const requestAuth = authorizeRequestScopedExtraSystemPrompt({
+          pluginId,
+        });
+        if (!requestAuth.allowed) {
+          throw new SubagentExtraSystemPromptNotAuthorizedError(requestAuth.reason);
+        }
+        allowExtraSystemPrompt = true;
+      }
       if (overrideRequested && !allowOverride && !hasRequestScopeClient) {
         const fallbackAuth = authorizeFallbackModelOverride({
           pluginId,

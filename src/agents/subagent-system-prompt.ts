@@ -1,5 +1,8 @@
 import { DEFAULT_SUBAGENT_MAX_SPAWN_DEPTH } from "../config/agent-limits.js";
 import type { DeliveryContext } from "../utils/delivery-context.types.js";
+import { wrapUntrustedPromptDataBlock } from "./sanitize-for-prompt.js";
+
+const MAX_SUBAGENT_SYSTEM_PROMPT_TASK_CHARS = 3000;
 
 export function buildSubagentSystemPrompt(params: {
   requesterSessionKey?: string;
@@ -32,26 +35,22 @@ export function buildSubagentSystemPrompt(params: {
   );
   const canSpawn = childDepth < maxSpawnDepth;
   const parentLabel = childDepth >= 2 ? "parent orchestrator" : "main agent";
-  const roleLines =
-    hasTask && taskBody.includes("\n")
-      ? [
-          "## Your Role",
-          "- You were created to handle the following task (verbatim; line breaks preserved):",
-          "",
-          "```",
-          taskBody,
-          "```",
-          "- Complete this task. That's your entire purpose.",
-          `- You are NOT the ${parentLabel}. Don't try to be.`,
-          "",
-        ]
-      : [
-          "## Your Role",
-          `- You were created to handle: ${hasTask ? taskBody : "{{TASK_DESCRIPTION}}"}`,
-          "- Complete this task. That's your entire purpose.",
-          `- You are NOT the ${parentLabel}. Don't try to be.`,
-          "",
-        ];
+  const taskBlock = hasTask
+    ? wrapUntrustedPromptDataBlock({
+        label: "Assigned task",
+        text: taskBody,
+        maxChars: MAX_SUBAGENT_SYSTEM_PROMPT_TASK_CHARS,
+      })
+    : "";
+  const roleLines = [
+    "## Your Role",
+    ...(taskBlock
+      ? ["- You were created to handle the assigned task below.", "", taskBlock]
+      : [`- You were created to handle: {{TASK_DESCRIPTION}}`]),
+    "- Complete this task. That's your entire purpose.",
+    `- You are NOT the ${parentLabel}. Don't try to be.`,
+    "",
+  ];
 
   const lines = [
     "# Subagent Context",

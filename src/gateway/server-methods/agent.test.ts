@@ -1548,6 +1548,37 @@ describe("gateway agent handler", () => {
     expect(findTaskByRunId("music-generation-event-inter-session")).toBeUndefined();
   });
 
+  it("does not persist inter-session agent step message text as a tracked task", async () => {
+    primeMainAgentRun();
+    mocks.agentCommand.mockClear();
+
+    await invokeAgent(
+      {
+        message: "Original request: secret-token-123\nLatest reply: private details",
+        sessionKey: "agent:main:main",
+        extraSystemPrompt: "Agent-to-agent announce step.",
+        inputProvenance: {
+          kind: "inter_session",
+          sourceSessionKey: "agent:main:peer",
+          sourceChannel: "internal",
+          sourceTool: "sessions_send",
+        },
+        idempotencyKey: "a2a-announce-inter-session",
+      },
+      {
+        reqId: "a2a-announce-inter-session",
+        client: {
+          connect: {
+            scopes: ["operator.write", "operator.agentPrompt"],
+          },
+        } as AgentHandlerArgs["client"],
+      },
+    );
+
+    await waitForAssertion(() => expect(mocks.agentCommand).toHaveBeenCalled());
+    expect(findTaskByRunId("a2a-announce-inter-session")).toBeUndefined();
+  });
+
   it("only forwards workspaceDir for spawned sessions with stored workspace inheritance", async () => {
     primeMainAgentRun();
     mockMainSessionEntry({
