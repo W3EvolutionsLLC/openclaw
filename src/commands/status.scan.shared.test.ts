@@ -191,6 +191,10 @@ describe("resolveGatewayProbeSnapshot", () => {
       gatewayMode: "local",
       remoteUrlMissing: false,
     });
+    mocks.resolveGatewayProbeAuthResolution.mockResolvedValue({
+      auth: {},
+      warning: "warn",
+    });
     mocks.probeGateway.mockResolvedValue({
       ok: false,
       url: "ws://127.0.0.1:18789",
@@ -220,8 +224,8 @@ describe("resolveGatewayProbeSnapshot", () => {
       expect.objectContaining({
         config: {},
         method: "status",
-        token: "tok",
-        password: "pw",
+        token: undefined,
+        password: undefined,
         timeoutMs: 2000,
         mode: "backend",
         clientName: "gateway-client",
@@ -368,6 +372,45 @@ describe("resolveGatewayProbeSnapshot", () => {
     );
     expect(mocks.callGateway.mock.calls[0]?.[0]).not.toHaveProperty("deviceIdentity");
     expect(result.gatewayReachable).toBe(true);
+  });
+
+  it("does not send shared credentials on unpinned local status RPC fallback", async () => {
+    mocks.resolveGatewayProbeTarget.mockReturnValue({
+      mode: "local",
+      gatewayMode: "local",
+      remoteUrlMissing: false,
+    });
+    mocks.probeGateway.mockResolvedValue({
+      ok: false,
+      url: "ws://127.0.0.1:18789",
+      connectLatencyMs: null,
+      error: "timeout",
+      close: null,
+      auth: {
+        role: null,
+        scopes: [],
+        capability: "unknown",
+      },
+      health: null,
+      status: null,
+      presence: null,
+      configSnapshot: null,
+    });
+
+    const result = await resolveGatewayProbeSnapshot({
+      cfg: {},
+      opts: {
+        timeoutMs: 8000,
+      },
+    });
+
+    expect(mocks.callGateway).not.toHaveBeenCalled();
+    expect(result.gatewayReachable).toBe(false);
+    expect(result.gatewayProbe).toMatchObject({
+      ok: false,
+      error: "timeout; warn",
+      auth: { capability: "unknown" },
+    });
   });
 
   it("does not use the status RPC fallback for remote probe failures", async () => {

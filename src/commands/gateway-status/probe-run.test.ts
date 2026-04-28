@@ -46,7 +46,7 @@ describe("runGatewayStatusProbePass", () => {
 
     const result = await runGatewayStatusProbePass({
       cfg: {},
-      opts: { token: "tok", password: "pw" },
+      opts: {},
       overallTimeoutMs: 8_000,
       discoveryTimeoutMs: 10,
       baseTargets: [
@@ -67,8 +67,8 @@ describe("runGatewayStatusProbePass", () => {
       expect.objectContaining({
         config: {},
         url: "ws://127.0.0.1:18789",
-        token: "tok",
-        password: "pw",
+        token: undefined,
+        password: undefined,
         method: "status",
         timeoutMs: 1000,
         mode: "backend",
@@ -81,6 +81,51 @@ describe("runGatewayStatusProbePass", () => {
       error: "timeout",
       status: { sessions: 1 },
       auth: { capability: "read_only" },
+    });
+  });
+
+  it("does not use the status RPC fallback with shared credentials on unpinned loopback", async () => {
+    mocks.probeGateway.mockResolvedValueOnce({
+      ok: false,
+      url: "ws://127.0.0.1:18789",
+      connectLatencyMs: null,
+      error: "timeout",
+      close: null,
+      auth: {
+        role: null,
+        scopes: [],
+        capability: "unknown",
+      },
+      health: null,
+      status: null,
+      presence: null,
+      configSnapshot: null,
+    });
+
+    const result = await runGatewayStatusProbePass({
+      cfg: {},
+      opts: { token: "tok", password: "pw" },
+      overallTimeoutMs: 8_000,
+      discoveryTimeoutMs: 10,
+      baseTargets: [
+        {
+          id: "localLoopback",
+          kind: "localLoopback",
+          url: "ws://127.0.0.1:18789",
+          active: true,
+        },
+      ],
+      remotePort: 18789,
+      sshTarget: null,
+      sshIdentity: null,
+      loadSshTunnelModule: vi.fn(),
+    });
+
+    expect(mocks.callGateway).not.toHaveBeenCalled();
+    expect(result.probed[0]?.probe).toMatchObject({
+      ok: false,
+      error: "timeout",
+      auth: { capability: "unknown" },
     });
   });
 

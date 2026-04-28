@@ -150,6 +150,9 @@ export async function resolveGatewayProbeSnapshot(params: {
     gatewayMode,
     gatewayUrl: gatewayConnection.url,
     gatewayProbe: initialGatewayProbe,
+    hasSharedCredentials: Boolean(
+      gatewayProbeAuthResolution.auth.token || gatewayProbeAuthResolution.auth.password,
+    ),
     callStatus: async () => {
       const { callGateway } = await loadGatewayCallModule();
       const boundedFallbackTimeoutMs = Math.min(2000, Math.max(1000, probeTimeoutMs));

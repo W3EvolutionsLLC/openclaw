@@ -100,7 +100,7 @@ describe("probeGatewayStatus", () => {
     callGatewayMock.mockResolvedValueOnce({ status: "ok" });
 
     const result = await probeGatewayStatus({
-      url: "ws://127.0.0.1:19191",
+      url: "wss://127.0.0.1:19191",
       token: "temp-token",
       tlsFingerprint: "abc123",
       timeoutMs: 5_000,
@@ -119,7 +119,7 @@ describe("probeGatewayStatus", () => {
       },
     });
     expect(callGatewayMock).toHaveBeenCalledWith({
-      url: "ws://127.0.0.1:19191",
+      url: "wss://127.0.0.1:19191",
       token: "temp-token",
       password: undefined,
       tlsFingerprint: "abc123",
@@ -130,6 +130,41 @@ describe("probeGatewayStatus", () => {
       deviceIdentity: null,
       configPath: "/tmp/openclaw-daemon/openclaw.json",
     });
+  });
+
+  it("does not send shared credentials on unpinned local status RPC fallback", async () => {
+    callGatewayMock.mockReset();
+    probeGatewayMock.mockReset();
+    probeGatewayMock.mockResolvedValueOnce({
+      ok: false,
+      error: "timeout",
+      close: null,
+      auth: {
+        role: null,
+        scopes: [],
+        capability: "unknown",
+      },
+    });
+
+    const result = await probeGatewayStatus({
+      url: "ws://127.0.0.1:19191",
+      token: "temp-token",
+      timeoutMs: 5_000,
+      json: true,
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      kind: "connect",
+      capability: "unknown",
+      auth: {
+        role: null,
+        scopes: [],
+        capability: "unknown",
+      },
+      error: "timeout",
+    });
+    expect(callGatewayMock).not.toHaveBeenCalled();
   });
 
   it("uses a real status RPC when requireRpc is enabled", async () => {

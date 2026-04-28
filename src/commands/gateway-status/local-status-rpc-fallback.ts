@@ -16,10 +16,14 @@ export function shouldTryLocalStatusRpcFallback(params: {
   gatewayMode: "local" | "remote";
   gatewayUrl: string;
   gatewayProbe: GatewayProbeResult | null;
+  hasSharedCredentials?: boolean;
+  tlsFingerprint?: string;
 }): params is {
   gatewayMode: "local";
   gatewayUrl: string;
   gatewayProbe: GatewayProbeResult;
+  hasSharedCredentials?: boolean;
+  tlsFingerprint?: string;
 } {
   if (
     params.gatewayMode !== "local" ||
@@ -29,6 +33,15 @@ export function shouldTryLocalStatusRpcFallback(params: {
   ) {
     return false;
   }
+  if (params.hasSharedCredentials === true) {
+    const hasPinnedTlsIdentity =
+      params.gatewayUrl.startsWith("wss://") &&
+      typeof params.tlsFingerprint === "string" &&
+      params.tlsFingerprint.trim().length > 0;
+    if (!hasPinnedTlsIdentity) {
+      return false;
+    }
+  }
   const error = params.gatewayProbe.error?.toLowerCase() ?? "";
   return error.includes("timeout") || params.gatewayProbe.auth?.capability === "unknown";
 }
@@ -37,6 +50,8 @@ export async function applyLocalStatusRpcFallback(params: {
   gatewayMode: "local" | "remote";
   gatewayUrl: string;
   gatewayProbe: GatewayProbeResult | null;
+  hasSharedCredentials?: boolean;
+  tlsFingerprint?: string;
   callStatus: () => Promise<unknown>;
 }): Promise<GatewayProbeResult | null> {
   if (!shouldTryLocalStatusRpcFallback(params)) {

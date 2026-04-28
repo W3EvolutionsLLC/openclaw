@@ -141,6 +141,11 @@ export async function runGatewayStatusProbePass(params: {
           gatewayMode: target.kind === "localLoopback" ? "local" : "remote",
           gatewayUrl: target.url,
           gatewayProbe: initialProbe,
+          hasSharedCredentials: Boolean(authResolution.token || authResolution.password),
+          tlsFingerprint:
+            target.kind === "localLoopback" && target.url.startsWith("wss://")
+              ? params.localTlsFingerprint
+              : undefined,
           callStatus: async () =>
             await callGateway({
               config: params.cfg,
