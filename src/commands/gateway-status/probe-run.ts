@@ -1,4 +1,5 @@
 import type { OpenClawConfig } from "../../config/types.js";
+import { callGateway } from "../../gateway/call.js";
 import { probeGateway } from "../../gateway/probe.js";
 import {
   discoverGatewayBeacons,
@@ -15,6 +16,7 @@ import {
   type GatewayConfigSummary,
   type GatewayStatusTarget,
 } from "./helpers.js";
+import { applyLocalStatusRpcFallback } from "./local-status-rpc-fallback.js";
 
 export type GatewayStatusProbedTarget = {
   target: GatewayStatusTarget;
@@ -121,7 +123,8 @@ export async function runGatewayStatusProbePass(params: {
           token: readStringValue(params.opts.token),
           password: readStringValue(params.opts.password),
         });
-        const probe = await probeGateway({
+        const probeBudgetMs = resolveProbeBudgetMs(params.overallTimeoutMs, target);
+        const initialProbe = await probeGateway({
           url: target.url,
           auth: {
             token: authResolution.token,
@@ -132,8 +135,30 @@ export async function runGatewayStatusProbePass(params: {
               ? params.localTlsFingerprint
               : undefined,
           preauthHandshakeTimeoutMs: params.cfg.gateway?.handshakeTimeoutMs,
-          timeoutMs: resolveProbeBudgetMs(params.overallTimeoutMs, target),
+          timeoutMs: probeBudgetMs,
         });
+        const fallbackProbe = await applyLocalStatusRpcFallback({
+          gatewayMode: target.kind === "localLoopback" ? "local" : "remote",
+          gatewayUrl: target.url,
+          gatewayProbe: initialProbe,
+          callStatus: async () =>
+            await callGateway({
+              config: params.cfg,
+              url: target.url,
+              token: authResolution.token,
+              password: authResolution.password,
+              tlsFingerprint:
+                target.kind === "localLoopback" && target.url.startsWith("wss://")
+                  ? params.localTlsFingerprint
+                  : undefined,
+              method: "status",
+              timeoutMs: Math.min(1000, probeBudgetMs),
+              mode: "backend",
+              clientName: "gateway-client",
+              deviceIdentity: null,
+            }),
+        });
+        const probe = fallbackProbe ?? initialProbe;
         return {
           target,
           probe,
