@@ -15,10 +15,47 @@ export { pluginVersion };
 const FEISHU_USER_AGENT = `openclaw-feishu-builtin/${pluginVersion}/${process.platform}`;
 export { FEISHU_USER_AGENT };
 
-const FEISHU_WS_CONFIG = {
-  PingInterval: 30,
-  PingTimeout: 3,
-} as const;
+export const FEISHU_WS_START_TIMEOUT_MS = 30_000;
+
+const FEISHU_WS_RECONNECT_REQUIRED = Symbol("feishu-ws-reconnect-required");
+const FEISHU_WS_CLIENT_CLOSED = Symbol("feishu-ws-client-closed");
+
+export class FeishuWebSocketReconnectRequiredError extends Error {
+  readonly [FEISHU_WS_RECONNECT_REQUIRED] = true;
+
+  constructor() {
+    super("Feishu WebSocket disconnected; reconnecting through OpenClaw monitor backoff");
+    this.name = "FeishuWebSocketReconnectRequiredError";
+  }
+}
+
+export class FeishuWebSocketClientClosedError extends Error {
+  readonly [FEISHU_WS_CLIENT_CLOSED] = true;
+
+  constructor() {
+    super("Feishu WebSocket client closed");
+    this.name = "FeishuWebSocketClientClosedError";
+  }
+}
+
+export function isFeishuWebSocketReconnectRequiredError(
+  err: unknown,
+): err is FeishuWebSocketReconnectRequiredError {
+  return !!err && typeof err === "object" && FEISHU_WS_RECONNECT_REQUIRED in err;
+}
+
+export function isFeishuWebSocketClientClosedError(
+  err: unknown,
+): err is FeishuWebSocketClientClosedError {
+  return !!err && typeof err === "object" && FEISHU_WS_CLIENT_CLOSED in err;
+}
+
+export type FeishuWebSocketClient = {
+  start(params: Parameters<Lark.WSClient["start"]>[0]): Promise<void>;
+  close(params?: Parameters<Lark.WSClient["close"]>[0]): void;
+  getReconnectInfo(): ReturnType<Lark.WSClient["getReconnectInfo"]>;
+  waitForTerminalError(): Promise<Error>;
+};
 
 /** User-Agent header value for all Feishu API requests. */
 export function getFeishuUserAgent(): string {
@@ -89,6 +126,195 @@ type FeishuHttpInstanceLike = Pick<
 
 async function getWsProxyAgent() {
   return resolveAmbientNodeProxyAgent<Agent>();
+}
+
+type FeishuWsPrivateControlHooks = {
+  handleControlData?: (data: unknown) => unknown;
+};
+
+type PendingWsStart = {
+  resolve: () => void;
+  reject: (err: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+};
+
+type ManagedFeishuWebSocketClient = FeishuWebSocketClient & {
+  handleReady(): void;
+  handleError(err: unknown): void;
+  handleReconnecting(): void;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object";
+}
+
+function isFeishuWsPongWithoutPingInterval(data: unknown): boolean {
+  if (!isRecord(data) || !Array.isArray(data.headers)) {
+    return false;
+  }
+
+  const isPong = data.headers.some((header) => {
+    if (!isRecord(header)) {
+      return false;
+    }
+    return header.key === "type" && header.value === "pong";
+  });
+  if (!isPong || !(data.payload instanceof Uint8Array)) {
+    return false;
+  }
+
+  try {
+    const parsed = JSON.parse(new TextDecoder("utf-8").decode(data.payload)) as unknown;
+    return isRecord(parsed) && !("PingInterval" in parsed);
+  } catch {
+    return false;
+  }
+}
+
+function isFeishuWsPingIntervalError(err: unknown): boolean {
+  if (!(err instanceof Error)) {
+    return false;
+  }
+  return err.message.includes("PingInterval");
+}
+
+function installFeishuWsPingIntervalGuard(rawClient: Lark.WSClient): void {
+  const hooks = rawClient as unknown as FeishuWsPrivateControlHooks;
+  const handleControlData = hooks.handleControlData;
+  if (typeof handleControlData !== "function") {
+    return;
+  }
+
+  hooks.handleControlData = async function guardedHandleControlData(this: unknown, data: unknown) {
+    if (isFeishuWsPongWithoutPingInterval(data)) {
+      return;
+    }
+    try {
+      await handleControlData.call(this, data);
+    } catch (err) {
+      if (isFeishuWsPingIntervalError(err)) {
+        return;
+      }
+      throw err;
+    }
+  };
+}
+
+function normalizeWsError(err: unknown): Error {
+  return err instanceof Error ? err : new Error(String(err));
+}
+
+function createManagedFeishuWSClient(rawClient: Lark.WSClient): ManagedFeishuWebSocketClient {
+  installFeishuWsPingIntervalGuard(rawClient);
+
+  let closed = false;
+  let pendingStart: PendingWsStart | undefined;
+  let terminalSettled = false;
+  let resolveTerminalError!: (err: Error) => void;
+  const terminalErrorPromise = new Promise<Error>((resolve) => {
+    resolveTerminalError = resolve;
+  });
+
+  const signalTerminalError = (err: Error) => {
+    if (terminalSettled) {
+      return;
+    }
+    terminalSettled = true;
+    resolveTerminalError(err);
+  };
+
+  const settleStart = (settle: "resolve" | "reject", err?: Error) => {
+    const pending = pendingStart;
+    if (!pending) {
+      return;
+    }
+    pendingStart = undefined;
+    clearTimeout(pending.timer);
+    if (settle === "resolve") {
+      pending.resolve();
+    } else {
+      pending.reject(err ?? new Error("Feishu WebSocket start failed"));
+    }
+  };
+
+  const closeRawClient = (params?: Parameters<Lark.WSClient["close"]>[0]) => {
+    rawClient.close(params);
+  };
+
+  let reconnectCloseScheduled = false;
+  const scheduleReconnectClose = () => {
+    if (reconnectCloseScheduled) {
+      return;
+    }
+    reconnectCloseScheduled = true;
+    queueMicrotask(() => {
+      reconnectCloseScheduled = false;
+      try {
+        closeRawClient({ force: true });
+      } catch {
+        /* Best-effort cleanup after SDK reconnect handoff */
+      }
+    });
+  };
+
+  return {
+    start(params) {
+      if (closed) {
+        return Promise.reject(new FeishuWebSocketClientClosedError());
+      }
+      if (pendingStart) {
+        return Promise.reject(new Error("Feishu WebSocket client start already in progress"));
+      }
+
+      return new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          const err = new Error(
+            `Feishu WebSocket start timed out after ${FEISHU_WS_START_TIMEOUT_MS}ms`,
+          );
+          settleStart("reject", err);
+          try {
+            closeRawClient({ force: true });
+          } catch {
+            /* Best-effort cleanup after startup timeout */
+          }
+        }, FEISHU_WS_START_TIMEOUT_MS);
+        timer.unref?.();
+        pendingStart = { resolve, reject, timer };
+        try {
+          rawClient.start(params).catch((err: unknown) => {
+            settleStart("reject", normalizeWsError(err));
+          });
+        } catch (err) {
+          settleStart("reject", normalizeWsError(err));
+        }
+      });
+    },
+    close(params) {
+      closed = true;
+      const err = new FeishuWebSocketClientClosedError();
+      settleStart("reject", err);
+      signalTerminalError(err);
+      closeRawClient(params);
+    },
+    getReconnectInfo() {
+      return rawClient.getReconnectInfo();
+    },
+    waitForTerminalError() {
+      return terminalErrorPromise;
+    },
+    handleReady() {
+      settleStart("resolve");
+    },
+    handleError(err) {
+      const normalized = normalizeWsError(err);
+      settleStart("reject", normalized);
+      signalTerminalError(normalized);
+    },
+    handleReconnecting() {
+      signalTerminalError(new FeishuWebSocketReconnectRequiredError());
+      scheduleReconnectClose();
+    },
+  };
 }
 
 // Multi-account client cache
@@ -224,7 +450,9 @@ export function createFeishuClient(creds: FeishuClientCredentials): Lark.Client 
  * Create a Feishu WebSocket client for an account.
  * Note: WSClient is not cached since each call creates a new connection.
  */
-export async function createFeishuWSClient(account: ResolvedFeishuAccount): Promise<Lark.WSClient> {
+export async function createFeishuWSClient(
+  account: ResolvedFeishuAccount,
+): Promise<FeishuWebSocketClient> {
   const { accountId, appId, appSecret, domain } = account;
 
   if (!appId || !appSecret) {
@@ -232,16 +460,26 @@ export async function createFeishuWSClient(account: ResolvedFeishuAccount): Prom
   }
 
   const agent = await getWsProxyAgent();
-  return new feishuClientSdk.WSClient({
+  let managedClient: ManagedFeishuWebSocketClient | undefined;
+  const rawClient = new feishuClientSdk.WSClient({
     appId,
     appSecret,
     domain: resolveDomain(domain),
     loggerLevel: feishuClientSdk.LoggerLevel.info,
-    wsConfig: FEISHU_WS_CONFIG,
+    autoReconnect: true,
+    onReady: () => {
+      managedClient?.handleReady();
+    },
+    onError: (err) => {
+      managedClient?.handleError(err);
+    },
+    onReconnecting: () => {
+      managedClient?.handleReconnecting();
+    },
     ...(agent ? { agent } : {}),
-  } as ConstructorParameters<typeof feishuClientSdk.WSClient>[0] & {
-    wsConfig: typeof FEISHU_WS_CONFIG;
   });
+  managedClient = createManagedFeishuWSClient(rawClient);
+  return managedClient;
 }
 
 /**

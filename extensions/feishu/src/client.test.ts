@@ -1,4 +1,5 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import type { Mock } from "vitest";
 import { FeishuConfigSchema } from "./config-schema.js";
 import type { ResolvedFeishuAccount } from "./types.js";
 
@@ -7,14 +8,34 @@ type CreateFeishuWSClient = typeof import("./client.js").createFeishuWSClient;
 type ClearClientCache = typeof import("./client.js").clearClientCache;
 type SetFeishuClientRuntimeForTest = typeof import("./client.js").setFeishuClientRuntimeForTest;
 
+type AsyncControlHandler = (data: unknown) => Promise<void>;
+
+type MockRawWsClient = {
+  start: Mock<(params: unknown) => Promise<void>>;
+  close: Mock<(params?: unknown) => void>;
+  getReconnectInfo: Mock<() => { lastConnectTime: number; nextConnectTime: number }>;
+  handleControlData: AsyncControlHandler;
+  originalHandleControlData: Mock<AsyncControlHandler>;
+};
+
 const clientCtorMock = vi.hoisted(() =>
   vi.fn(function clientCtor() {
     return { connected: true };
   }),
 );
+const rawWsClients = vi.hoisted((): MockRawWsClient[] => []);
 const wsClientCtorMock = vi.hoisted(() =>
   vi.fn(function wsClientCtor() {
-    return { connected: true };
+    const originalHandleControlData: Mock<AsyncControlHandler> = vi.fn(async () => {});
+    const client: MockRawWsClient = {
+      start: vi.fn(async () => {}),
+      close: vi.fn(),
+      getReconnectInfo: vi.fn(() => ({ lastConnectTime: 0, nextConnectTime: 0 })),
+      handleControlData: originalHandleControlData,
+      originalHandleControlData,
+    };
+    rawWsClients.push(client);
+    return client;
   }),
 );
 const proxyAgentCtorMock = vi.hoisted(() =>
@@ -51,6 +72,7 @@ let setFeishuClientRuntimeForTest: SetFeishuClientRuntimeForTest;
 let FEISHU_HTTP_TIMEOUT_MS: number;
 let FEISHU_HTTP_TIMEOUT_MAX_MS: number;
 let FEISHU_HTTP_TIMEOUT_ENV_VAR: string;
+let FEISHU_WS_START_TIMEOUT_MS: number;
 
 let priorProxyEnv: Partial<Record<ProxyEnvKey, string | undefined>> = {};
 let priorFeishuTimeoutEnv: string | undefined;
@@ -119,9 +141,31 @@ function readCallOptions(
   return isRecord(call) ? call : {};
 }
 
-function firstWsClientOptions(): { agent?: unknown; wsConfig?: unknown } {
+function firstWsClientOptions(): {
+  agent?: unknown;
+  autoReconnect?: unknown;
+  wsConfig?: unknown;
+  onReady?: () => void;
+  onError?: (err: Error) => void;
+  onReconnecting?: () => void;
+} {
   const options = readCallOptions(wsClientCtorMock, 0);
-  return { agent: options.agent, wsConfig: options.wsConfig };
+  return {
+    agent: options.agent,
+    autoReconnect: options.autoReconnect,
+    wsConfig: options.wsConfig,
+    onReady: options.onReady as (() => void) | undefined,
+    onError: options.onError as ((err: Error) => void) | undefined,
+    onReconnecting: options.onReconnecting as (() => void) | undefined,
+  };
+}
+
+function firstRawWsClient(): MockRawWsClient {
+  const client = rawWsClients[0];
+  if (!client) {
+    throw new Error("expected Lark.WSClient mock to be constructed");
+  }
+  return client;
 }
 
 beforeAll(async () => {
@@ -146,6 +190,7 @@ beforeAll(async () => {
     FEISHU_HTTP_TIMEOUT_MS,
     FEISHU_HTTP_TIMEOUT_MAX_MS,
     FEISHU_HTTP_TIMEOUT_ENV_VAR,
+    FEISHU_WS_START_TIMEOUT_MS,
   } = await import("./client.js"));
 });
 
@@ -158,6 +203,7 @@ beforeEach(() => {
     delete process.env[key];
   }
   vi.clearAllMocks();
+  rawWsClients.length = 0;
   clearClientCache();
   setFeishuClientRuntimeForTest({
     sdk: {
@@ -176,6 +222,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   for (const key of proxyEnvKeys) {
     const value = priorProxyEnv[key];
     if (value === undefined) {
@@ -345,14 +392,88 @@ describe("createFeishuClient HTTP timeout", () => {
 });
 
 describe("createFeishuWSClient proxy handling", () => {
-  it("passes heartbeat wsConfig defaults to Lark.WSClient", async () => {
+  it("uses Lark WSClient callbacks instead of unsupported wsConfig heartbeat overrides", async () => {
     await createFeishuWSClient(baseAccount);
 
     const options = firstWsClientOptions();
-    expect(options.wsConfig).toEqual({
-      PingInterval: 30,
-      PingTimeout: 3,
+    expect(options.autoReconnect).toBe(true);
+    expect(options.wsConfig).toBeUndefined();
+    expect(options.onReady).toEqual(expect.any(Function));
+    expect(options.onError).toEqual(expect.any(Function));
+    expect(options.onReconnecting).toEqual(expect.any(Function));
+  });
+
+  it("resolves start only after the pinned SDK onReady callback fires", async () => {
+    const client = await createFeishuWSClient(baseAccount);
+    const options = firstWsClientOptions();
+
+    let resolved = false;
+    const start = client.start({ eventDispatcher: {} as never }).then(() => {
+      resolved = true;
     });
+    await Promise.resolve();
+
+    expect(firstRawWsClient().start).toHaveBeenCalledTimes(1);
+    expect(resolved).toBe(false);
+
+    options.onReady?.();
+    await start;
+
+    expect(resolved).toBe(true);
+  });
+
+  it("closes the raw SDK client when startup waits outlive onReady", async () => {
+    vi.useFakeTimers();
+    const client = await createFeishuWSClient(baseAccount);
+    const rawClient = firstRawWsClient();
+
+    const start = client.start({ eventDispatcher: {} as never });
+    const startExpectation = expect(start).rejects.toThrow(
+      `Feishu WebSocket start timed out after ${FEISHU_WS_START_TIMEOUT_MS}ms`,
+    );
+    await vi.advanceTimersByTimeAsync(FEISHU_WS_START_TIMEOUT_MS);
+
+    await startExpectation;
+    expect(rawClient.close).toHaveBeenCalledWith({ force: true });
+  });
+
+  it("guards missing PingInterval pong frames on the client instance only", async () => {
+    await createFeishuWSClient(baseAccount);
+    const rawClient = firstRawWsClient();
+    const frame = {
+      headers: [{ key: "type", value: "pong" }],
+      payload: new TextEncoder().encode(JSON.stringify({ ReconnectCount: 1 })),
+    };
+
+    await rawClient.handleControlData(frame);
+
+    expect(rawClient.originalHandleControlData).not.toHaveBeenCalled();
+    expect(Object.prototype.hasOwnProperty.call(rawClient, "handleControlData")).toBe(true);
+  });
+
+  it("still propagates non-PingInterval control handler failures", async () => {
+    await createFeishuWSClient(baseAccount);
+    const rawClient = firstRawWsClient();
+    rawClient.originalHandleControlData.mockRejectedValueOnce(new Error("other control error"));
+
+    await expect(rawClient.handleControlData({ headers: [] })).rejects.toThrow(
+      "other control error",
+    );
+  });
+
+  it("hands SDK reconnects back to the monitor and clears SDK reconnect timers", async () => {
+    const client = await createFeishuWSClient(baseAccount);
+    const rawClient = firstRawWsClient();
+    const options = firstWsClientOptions();
+    const terminalError = client.waitForTerminalError();
+
+    options.onReconnecting?.();
+    await Promise.resolve();
+
+    await expect(terminalError).resolves.toMatchObject({
+      message: expect.stringContaining("reconnecting through OpenClaw monitor backoff"),
+    });
+    expect(rawClient.close).toHaveBeenCalledWith({ force: true });
   });
 
   it("does not set a ws proxy agent when proxy env is absent", async () => {

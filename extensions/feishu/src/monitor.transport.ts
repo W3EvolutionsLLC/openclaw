@@ -1,8 +1,13 @@
 import crypto from "node:crypto";
 import * as http from "node:http";
 import * as Lark from "@larksuiteoapi/node-sdk";
-import { waitForAbortableDelay } from "./async.js";
-import { createFeishuWSClient } from "./client.js";
+import { raceWithTimeoutAndAbort, waitForAbortableDelay } from "./async.js";
+import {
+  createFeishuWSClient,
+  isFeishuWebSocketClientClosedError,
+  isFeishuWebSocketReconnectRequiredError,
+  type FeishuWebSocketClient,
+} from "./client.js";
 import {
   applyBasicWebhookRequestGuards,
   type RuntimeEnv,
@@ -30,8 +35,11 @@ export type MonitorTransportParams = {
   eventDispatcher: Lark.EventDispatcher;
 };
 
-const FEISHU_WS_RECONNECT_INITIAL_DELAY_MS = 1_000;
-const FEISHU_WS_RECONNECT_MAX_DELAY_MS = 30_000;
+const FEISHU_WS_START_RETRY_INITIAL_DELAY_MS = 1_000;
+const FEISHU_WS_START_RETRY_MAX_DELAY_MS = 30_000;
+const FEISHU_WS_RECONNECT_INITIAL_DELAY_MS = 120_000;
+const FEISHU_WS_RECONNECT_MAX_DELAY_MS = 15 * 60_000;
+const FEISHU_WS_RECONNECT_JITTER_RATIO = 0.2;
 const FEISHU_WS_LOG_ERROR_MAX_LENGTH = 500;
 
 function isFeishuWebhookPayload(value: unknown): value is Record<string, unknown> {
@@ -87,11 +95,20 @@ function respondText(res: http.ServerResponse, statusCode: number, body: string)
   res.end(body);
 }
 
-function getFeishuWsReconnectDelayMs(attempt: number): number {
+function getFeishuWsStartRetryDelayMs(attempt: number): number {
   return Math.min(
+    FEISHU_WS_START_RETRY_INITIAL_DELAY_MS * 2 ** Math.max(0, attempt - 1),
+    FEISHU_WS_START_RETRY_MAX_DELAY_MS,
+  );
+}
+
+function getFeishuWsReconnectDelayMs(attempt: number): number {
+  const baseDelay = Math.min(
     FEISHU_WS_RECONNECT_INITIAL_DELAY_MS * 2 ** Math.max(0, attempt - 1),
     FEISHU_WS_RECONNECT_MAX_DELAY_MS,
   );
+  const jitter = 1 + (Math.random() - 0.5) * FEISHU_WS_RECONNECT_JITTER_RATIO * 2;
+  return Math.round(Math.min(baseDelay * jitter, FEISHU_WS_RECONNECT_MAX_DELAY_MS));
 }
 
 function formatFeishuWsErrorForLog(err: unknown): string {
@@ -122,7 +139,7 @@ function formatFeishuWsErrorForLog(err: unknown): string {
 
 function cleanupFeishuWsClient(params: {
   accountId: string;
-  wsClient?: Lark.WSClient;
+  wsClient?: FeishuWebSocketClient;
   error: (message: string) => void;
 }): void {
   const { accountId, wsClient, error } = params;
@@ -140,26 +157,6 @@ function cleanupFeishuWsClient(params: {
   botNames.delete(accountId);
 }
 
-function waitForFeishuWsAbort(abortSignal?: AbortSignal): Promise<void> {
-  if (abortSignal?.aborted) {
-    return Promise.resolve();
-  }
-  return new Promise((resolve) => {
-    if (!abortSignal) {
-      // No external lifecycle owner was provided, so keep the SDK-managed connection alive.
-      return;
-    }
-    const handleAbort = () => {
-      abortSignal.removeEventListener("abort", handleAbort);
-      resolve();
-    };
-    abortSignal.addEventListener("abort", handleAbort, { once: true });
-    if (abortSignal.aborted) {
-      handleAbort();
-    }
-  });
-}
-
 export async function monitorWebSocket({
   account,
   accountId,
@@ -170,13 +167,15 @@ export async function monitorWebSocket({
   const log = runtime?.log ?? console.log;
   const error = runtime?.error ?? console.error;
 
-  let attempt = 0;
+  let startupAttempt = 0;
+  let reconnectAttempt = 0;
+  let recoveringFromDisconnect = false;
   while (true) {
     if (abortSignal?.aborted) {
       break;
     }
 
-    let wsClient: Lark.WSClient | undefined;
+    let wsClient: FeishuWebSocketClient | undefined;
     try {
       log(`feishu[${accountId}]: starting WebSocket connection...`);
       wsClient = await createFeishuWSClient(account);
@@ -185,23 +184,53 @@ export async function monitorWebSocket({
         break;
       }
       wsClients.set(accountId, wsClient);
-      await wsClient.start({ eventDispatcher });
-      attempt = 0;
+      const startResult = await raceWithTimeoutAndAbort(wsClient.start({ eventDispatcher }), {
+        abortSignal,
+      });
+      if (startResult.status === "aborted") {
+        cleanupFeishuWsClient({ accountId, wsClient, error });
+        break;
+      }
+      if (startResult.status !== "resolved") {
+        throw new Error("Feishu WebSocket start did not complete");
+      }
+      startupAttempt = 0;
+      reconnectAttempt = 0;
+      recoveringFromDisconnect = false;
       log(`feishu[${accountId}]: WebSocket client started`);
-      await waitForFeishuWsAbort(abortSignal);
-      log(`feishu[${accountId}]: abort signal received, stopping`);
+      const terminalResult = await raceWithTimeoutAndAbort(wsClient.waitForTerminalError(), {
+        abortSignal,
+      });
+      if (terminalResult.status === "aborted") {
+        log(`feishu[${accountId}]: abort signal received, stopping`);
+        cleanupFeishuWsClient({ accountId, wsClient, error });
+        return;
+      }
+      if (terminalResult.status === "resolved") {
+        throw terminalResult.value;
+      }
       cleanupFeishuWsClient({ accountId, wsClient, error });
       return;
     } catch (err) {
       cleanupFeishuWsClient({ accountId, wsClient, error });
-      if (abortSignal?.aborted) {
+      if (abortSignal?.aborted || isFeishuWebSocketClientClosedError(err)) {
         break;
       }
 
-      attempt += 1;
-      const delayMs = getFeishuWsReconnectDelayMs(attempt);
+      const isReconnectFailure =
+        recoveringFromDisconnect || isFeishuWebSocketReconnectRequiredError(err);
+      if (isReconnectFailure) {
+        reconnectAttempt += 1;
+        recoveringFromDisconnect = true;
+      } else {
+        startupAttempt += 1;
+      }
+      const delayMs = isReconnectFailure
+        ? getFeishuWsReconnectDelayMs(reconnectAttempt)
+        : getFeishuWsStartRetryDelayMs(startupAttempt);
+      const failureLabel = isReconnectFailure ? "WebSocket disconnected" : "WebSocket start failed";
       error(
-        `feishu[${accountId}]: WebSocket start failed, retrying in ${delayMs}ms: ${formatFeishuWsErrorForLog(err)}`,
+        `feishu[${accountId}]: ${failureLabel}, retrying in ${delayMs}ms: ${formatFeishuWsErrorForLog(err)}`,
       );
       const shouldRetry = await waitForAbortableDelay(delayMs, abortSignal);
       if (!shouldRetry) {

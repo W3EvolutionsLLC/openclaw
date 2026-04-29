@@ -1,5 +1,5 @@
 import * as http from "node:http";
-import type * as Lark from "@larksuiteoapi/node-sdk";
+import type { FeishuWebSocketClient } from "./client.js";
 import {
   createFixedWindowRateLimiter,
   createWebhookAnomalyTracker,
@@ -8,7 +8,7 @@ import {
   WEBHOOK_RATE_LIMIT_DEFAULTS as WEBHOOK_RATE_LIMIT_DEFAULTS_FROM_SDK,
 } from "./monitor-state-runtime-api.js";
 
-export const wsClients = new Map<string, Lark.WSClient>();
+export const wsClients = new Map<string, FeishuWebSocketClient>();
 export const httpServers = new Map<string, http.Server>();
 export const botOpenIds = new Map<string, string>();
 export const botNames = new Map<string, string>();
@@ -104,7 +104,7 @@ const feishuWebhookAnomalyTracker = createWebhookAnomalyTracker({
   logEvery: feishuWebhookAnomalyDefaults.logEvery,
 });
 
-function closeWsClient(client: Lark.WSClient | undefined): void {
+function closeWsClient(client: FeishuWebSocketClient | undefined): void {
   if (!client) {
     return;
   }
