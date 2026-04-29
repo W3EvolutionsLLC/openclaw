@@ -342,7 +342,7 @@ describe("loadPluginManifestRegistry", () => {
     );
   });
 
-  it("lets config-loaded plugins replace bundled duplicates without cross-origin warnings", () => {
+  it("warns when config-loaded plugins replace bundled distinct-root duplicates", () => {
     const bundledDir = makeTempDir();
     const configDir = makeTempDir();
     const manifest = { id: "config-shadow", configSchema: { type: "object" } };
@@ -362,12 +362,15 @@ describe("loadPluginManifestRegistry", () => {
       }),
     ]);
 
-    expect(countDuplicateWarnings(registry)).toBe(0);
+    expect(countDuplicateWarnings(registry)).toBe(1);
     expect(registry.plugins).toHaveLength(1);
     expect(registry.plugins[0]?.origin).toBe("config");
+    const warning = registry.diagnostics.find((diag) => diag.pluginId === "config-shadow");
+    expect(warning?.source).toBe(path.join(bundledDir, "index.ts"));
+    expect(warning?.message).toContain(path.join(configDir, "index.ts"));
   });
 
-  it("keeps explicit installed globals as the effective duplicate winner without cross-origin warnings", () => {
+  it("warns while keeping explicit installed globals as the effective duplicate winner", () => {
     const bundledDir = makeTempDir();
     const globalDir = makeTempDir();
     const manifest = { id: "zalouser", configSchema: { type: "object" } };
@@ -396,12 +399,16 @@ describe("loadPluginManifestRegistry", () => {
       ],
     });
 
-    expect(countDuplicateWarnings(registry)).toBe(0);
+    expect(countDuplicateWarnings(registry)).toBe(1);
     expect(registry.plugins).toHaveLength(1);
     expect(registry.plugins[0]?.origin).toBe("global");
+    expectRegistryDiagnosticContains(
+      registry,
+      "bundled plugin will be overridden by global plugin",
+    );
   });
 
-  it("suppresses duplicate warnings when the installed global is discovered before bundled", () => {
+  it("warns when the installed global is discovered before bundled", () => {
     const bundledDir = makeTempDir();
     const globalDir = makeTempDir();
     const manifest = { id: "zalouser", configSchema: { type: "object" } };
@@ -430,9 +437,13 @@ describe("loadPluginManifestRegistry", () => {
       ],
     });
 
-    expect(countDuplicateWarnings(registry)).toBe(0);
+    expect(countDuplicateWarnings(registry)).toBe(1);
     expect(registry.plugins).toHaveLength(1);
     expect(registry.plugins[0]?.origin).toBe("global");
+    expectRegistryDiagnosticContains(
+      registry,
+      "bundled plugin will be overridden by global plugin",
+    );
   });
 
   it("preserves provider auth env metadata from plugin manifests", () => {
@@ -1478,24 +1489,26 @@ describe("loadPluginManifestRegistry", () => {
 
   it.each([
     {
-      name: "keeps bundled plugins as the duplicate winner for auto-discovered globals",
+      name: "reports bundled plugins as the duplicate winner for auto-discovered globals",
       registry: () =>
         createDuplicateCandidateRegistry({
           pluginId: "feishu",
           duplicateOrigin: "global",
         }),
+      expectedMessage: "global plugin will be overridden by bundled plugin",
     },
     {
-      name: "keeps bundled plugins as the duplicate winner for workspace duplicates",
+      name: "reports bundled plugins as the duplicate winner for workspace duplicates",
       registry: () =>
         createDuplicateCandidateRegistry({
           pluginId: "shadowed",
           duplicateOrigin: "workspace",
         }),
+      expectedMessage: "workspace plugin will be overridden by bundled plugin",
     },
-  ] as const)("$name", ({ registry: buildRegistry }) => {
+  ] as const)("$name", ({ registry: buildRegistry, expectedMessage }) => {
     const registry = buildRegistry();
-    expect(countDuplicateWarnings(registry)).toBe(0);
+    expectRegistryDiagnosticContains(registry, expectedMessage);
     expect(registry.plugins).toHaveLength(1);
     expect(registry.plugins[0]?.origin).toBe("bundled");
   });

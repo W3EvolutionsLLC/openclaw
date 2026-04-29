@@ -818,10 +818,20 @@ export function loadPluginManifestRegistry(
         installRecords: getInstallRecords(),
       });
       const candidateWins = candidateRank < existingRank;
+      const winnerCandidate = candidateWins ? candidate : existing.candidate;
+      const overriddenCandidate = candidateWins ? existing.candidate : candidate;
       if (candidateWins) {
         records[existing.recordIndex] = record;
         seenIds.set(manifest.id, { candidate, recordIndex: existing.recordIndex });
         pushManifestCompatibilityDiagnostics({ record, diagnostics });
+      }
+      if (winnerCandidate.origin !== overriddenCandidate.origin) {
+        diagnostics.push({
+          level: "warn",
+          pluginId: manifest.id,
+          source: overriddenCandidate.source,
+          message: `duplicate plugin id detected; ${overriddenCandidate.origin} plugin will be overridden by ${winnerCandidate.origin} plugin (${winnerCandidate.source})`,
+        });
       }
       continue;
     }
