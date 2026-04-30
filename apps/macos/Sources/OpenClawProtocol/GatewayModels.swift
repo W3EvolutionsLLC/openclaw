@@ -29,6 +29,7 @@ public struct ConnectParams: Codable, Sendable {
     public let caps: [String]?
     public let commands: [String]?
     public let permissions: [String: AnyCodable]?
+    public let mcpservers: [NodeMcpServerDescriptor]?
     public let pathenv: String?
     public let role: String?
     public let scopes: [String]?
@@ -44,6 +45,7 @@ public struct ConnectParams: Codable, Sendable {
         caps: [String]?,
         commands: [String]?,
         permissions: [String: AnyCodable]?,
+        mcpservers: [NodeMcpServerDescriptor]?,
         pathenv: String?,
         role: String?,
         scopes: [String]?,
@@ -58,6 +60,7 @@ public struct ConnectParams: Codable, Sendable {
         self.caps = caps
         self.commands = commands
         self.permissions = permissions
+        self.mcpservers = mcpservers
         self.pathenv = pathenv
         self.role = role
         self.scopes = scopes
@@ -74,6 +77,7 @@ public struct ConnectParams: Codable, Sendable {
         case caps
         case commands
         case permissions
+        case mcpservers = "mcpServers"
         case pathenv = "pathEnv"
         case role
         case scopes
@@ -833,6 +837,7 @@ public struct NodePairRequestParams: Codable, Sendable {
     public let modelidentifier: String?
     public let caps: [String]?
     public let commands: [String]?
+    public let mcpservers: [NodeMcpServerDescriptor]?
     public let remoteip: String?
     public let silent: Bool?
 
@@ -847,6 +852,7 @@ public struct NodePairRequestParams: Codable, Sendable {
         modelidentifier: String?,
         caps: [String]?,
         commands: [String]?,
+        mcpservers: [NodeMcpServerDescriptor]?,
         remoteip: String?,
         silent: Bool?)
     {
@@ -860,6 +866,7 @@ public struct NodePairRequestParams: Codable, Sendable {
         self.modelidentifier = modelidentifier
         self.caps = caps
         self.commands = commands
+        self.mcpservers = mcpservers
         self.remoteip = remoteip
         self.silent = silent
     }
@@ -875,6 +882,7 @@ public struct NodePairRequestParams: Codable, Sendable {
         case modelidentifier = "modelIdentifier"
         case caps
         case commands
+        case mcpservers = "mcpServers"
         case remoteip = "remoteIp"
         case silent
     }
@@ -1099,6 +1107,220 @@ public struct NodeEventResult: Codable, Sendable {
         case event
         case handled
         case reason
+    }
+}
+
+public struct NodeMcpServerDescriptor: Codable, Sendable {
+    public let id: String
+    public let displayname: String?
+    public let provider: String?
+    public let transport: String?
+    public let source: String?
+    public let status: String?
+    public let requiredpermissions: [String]?
+    public let metadata: [String: AnyCodable]?
+
+    public init(
+        id: String,
+        displayname: String?,
+        provider: String?,
+        transport: String?,
+        source: String?,
+        status: String?,
+        requiredpermissions: [String]?,
+        metadata: [String: AnyCodable]?)
+    {
+        self.id = id
+        self.displayname = displayname
+        self.provider = provider
+        self.transport = transport
+        self.source = source
+        self.status = status
+        self.requiredpermissions = requiredpermissions
+        self.metadata = metadata
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case displayname = "displayName"
+        case provider
+        case transport
+        case source
+        case status
+        case requiredpermissions = "requiredPermissions"
+        case metadata
+    }
+}
+
+public struct NodeMcpSessionOpenEvent: Codable, Sendable {
+    public let sessionid: String
+    public let nodeid: String
+    public let serverid: String
+    public let timeoutms: Int?
+
+    public init(
+        sessionid: String,
+        nodeid: String,
+        serverid: String,
+        timeoutms: Int?)
+    {
+        self.sessionid = sessionid
+        self.nodeid = nodeid
+        self.serverid = serverid
+        self.timeoutms = timeoutms
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case sessionid = "sessionId"
+        case nodeid = "nodeId"
+        case serverid = "serverId"
+        case timeoutms = "timeoutMs"
+    }
+}
+
+public struct NodeMcpSessionOpenResultParams: Codable, Sendable {
+    public let sessionid: String
+    public let nodeid: String
+    public let serverid: String
+    public let ok: Bool
+    public let pid: Int?
+    public let error: [String: AnyCodable]?
+
+    public init(
+        sessionid: String,
+        nodeid: String,
+        serverid: String,
+        ok: Bool,
+        pid: Int?,
+        error: [String: AnyCodable]?)
+    {
+        self.sessionid = sessionid
+        self.nodeid = nodeid
+        self.serverid = serverid
+        self.ok = ok
+        self.pid = pid
+        self.error = error
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case sessionid = "sessionId"
+        case nodeid = "nodeId"
+        case serverid = "serverId"
+        case ok
+        case pid
+        case error
+    }
+}
+
+public struct NodeMcpSessionInputEvent: Codable, Sendable {
+    public let sessionid: String
+    public let nodeid: String
+    public let seq: Int
+    public let database64: String
+
+    public init(
+        sessionid: String,
+        nodeid: String,
+        seq: Int,
+        database64: String)
+    {
+        self.sessionid = sessionid
+        self.nodeid = nodeid
+        self.seq = seq
+        self.database64 = database64
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case sessionid = "sessionId"
+        case nodeid = "nodeId"
+        case seq
+        case database64 = "dataBase64"
+    }
+}
+
+public struct NodeMcpSessionOutputParams: Codable, Sendable {
+    public let sessionid: String
+    public let nodeid: String
+    public let seq: Int
+    public let stream: String
+    public let database64: String
+
+    public init(
+        sessionid: String,
+        nodeid: String,
+        seq: Int,
+        stream: String,
+        database64: String)
+    {
+        self.sessionid = sessionid
+        self.nodeid = nodeid
+        self.seq = seq
+        self.stream = stream
+        self.database64 = database64
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case sessionid = "sessionId"
+        case nodeid = "nodeId"
+        case seq
+        case stream
+        case database64 = "dataBase64"
+    }
+}
+
+public struct NodeMcpSessionCloseEvent: Codable, Sendable {
+    public let sessionid: String
+    public let nodeid: String
+    public let reason: String?
+
+    public init(
+        sessionid: String,
+        nodeid: String,
+        reason: String?)
+    {
+        self.sessionid = sessionid
+        self.nodeid = nodeid
+        self.reason = reason
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case sessionid = "sessionId"
+        case nodeid = "nodeId"
+        case reason
+    }
+}
+
+public struct NodeMcpSessionClosedParams: Codable, Sendable {
+    public let sessionid: String
+    public let nodeid: String
+    public let ok: Bool
+    public let exitcode: AnyCodable?
+    public let signal: AnyCodable?
+    public let error: [String: AnyCodable]?
+
+    public init(
+        sessionid: String,
+        nodeid: String,
+        ok: Bool,
+        exitcode: AnyCodable?,
+        signal: AnyCodable?,
+        error: [String: AnyCodable]?)
+    {
+        self.sessionid = sessionid
+        self.nodeid = nodeid
+        self.ok = ok
+        self.exitcode = exitcode
+        self.signal = signal
+        self.error = error
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case sessionid = "sessionId"
+        case nodeid = "nodeId"
+        case ok
+        case exitcode = "exitCode"
+        case signal
+        case error
     }
 }
 

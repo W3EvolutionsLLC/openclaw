@@ -31,6 +31,9 @@ export const CLI_DEFAULT_OPERATOR_SCOPES: OperatorScope[] = [
 
 const NODE_ROLE_METHODS = new Set([
   "node.invoke.result",
+  "node.mcp.session.open.result",
+  "node.mcp.session.output",
+  "node.mcp.session.closed",
   "node.event",
   "node.pending.drain",
   "node.canvas.capability.refresh",

@@ -1282,6 +1282,7 @@ export function attachGatewayWsMessageHandler(params: {
             });
           }
           connectParams.commands = reconciliation.effectiveCommands;
+          connectParams.mcpServers = reconciliation.effectiveMcpServers;
         }
 
         const shouldTrackPresence = !isGatewayCliClient(connectParams.client);

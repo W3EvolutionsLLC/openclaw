@@ -1,5 +1,35 @@
 import { randomUUID } from "node:crypto";
+import {
+  normalizeNodeMcpServerDescriptors,
+  type NodeMcpServerDescriptor,
+} from "../shared/node-mcp-types.js";
 import type { GatewayWsClient } from "./server/ws-types.js";
+
+export type NodeMcpOutputChunk = {
+  sessionId: string;
+  nodeId: string;
+  seq: number;
+  stream: "stdout" | "stderr";
+  dataBase64: string;
+};
+
+export type NodeMcpClosedResult = {
+  sessionId: string;
+  nodeId: string;
+  ok: boolean;
+  exitCode?: number | null;
+  signal?: string | null;
+  error?: { code?: string; message?: string } | null;
+};
+
+export type NodeMcpOpenResult = {
+  sessionId: string;
+  nodeId: string;
+  serverId: string;
+  ok: boolean;
+  pid?: number;
+  error?: { code?: string; message?: string } | null;
+};
 
 export type NodeSession = {
   nodeId: string;
@@ -17,6 +47,7 @@ export type NodeSession = {
   remoteIp?: string;
   caps: string[];
   commands: string[];
+  mcpServers?: NodeMcpServerDescriptor[];
   permissions?: Record<string, boolean>;
   pathEnv?: string;
   connectedAtMs: number;
@@ -30,6 +61,20 @@ type PendingInvoke = {
   timer: ReturnType<typeof setTimeout>;
 };
 
+type PendingMcpOpen = {
+  nodeId: string;
+  serverId: string;
+  resolve: (value: NodeMcpOpenResult) => void;
+  timer: ReturnType<typeof setTimeout>;
+};
+
+type ActiveMcpSession = {
+  nodeId: string;
+  serverId: string;
+  onOutput?: (chunk: NodeMcpOutputChunk) => void;
+  onClosed?: (result: NodeMcpClosedResult) => void;
+};
+
 export type NodeInvokeResult = {
   ok: boolean;
   payload?: unknown;
@@ -41,6 +86,8 @@ export class NodeRegistry {
   private nodesById = new Map<string, NodeSession>();
   private nodesByConn = new Map<string, string>();
   private pendingInvokes = new Map<string, PendingInvoke>();
+  private pendingMcpOpens = new Map<string, PendingMcpOpen>();
+  private activeMcpSessions = new Map<string, ActiveMcpSession>();
 
   register(client: GatewayWsClient, opts: { remoteIp?: string | undefined }) {
     const connect = client.connect;
@@ -57,6 +104,9 @@ export class NodeRegistry {
       typeof (connect as { pathEnv?: string }).pathEnv === "string"
         ? (connect as { pathEnv?: string }).pathEnv
         : undefined;
+    const mcpServers = normalizeNodeMcpServerDescriptors(
+      (connect as { mcpServers?: unknown }).mcpServers,
+    );
     const session: NodeSession = {
       nodeId,
       connId: client.connId,
@@ -73,6 +123,7 @@ export class NodeRegistry {
       remoteIp: opts.remoteIp,
       caps,
       commands,
+      mcpServers,
       permissions,
       pathEnv,
       connectedAtMs: Date.now(),
@@ -96,6 +147,32 @@ export class NodeRegistry {
       clearTimeout(pending.timer);
       pending.reject(new Error(`node disconnected (${pending.command})`));
       this.pendingInvokes.delete(id);
+    }
+    for (const [sessionId, pending] of this.pendingMcpOpens.entries()) {
+      if (pending.nodeId !== nodeId) {
+        continue;
+      }
+      clearTimeout(pending.timer);
+      pending.resolve({
+        sessionId,
+        nodeId,
+        serverId: pending.serverId,
+        ok: false,
+        error: { code: "NODE_DISCONNECTED", message: "node disconnected" },
+      });
+      this.pendingMcpOpens.delete(sessionId);
+    }
+    for (const [sessionId, session] of this.activeMcpSessions.entries()) {
+      if (session.nodeId !== nodeId) {
+        continue;
+      }
+      this.activeMcpSessions.delete(sessionId);
+      session.onClosed?.({
+        sessionId,
+        nodeId,
+        ok: false,
+        error: { code: "NODE_DISCONNECTED", message: "node disconnected" },
+      });
     }
     return nodeId;
   }
@@ -190,6 +267,166 @@ export class NodeRegistry {
       return false;
     }
     return this.sendEventToSession(node, event, payload);
+  }
+
+  async openMcpSession(params: {
+    nodeId: string;
+    serverId: string;
+    sessionId?: string;
+    timeoutMs?: number;
+    onOutput?: (chunk: NodeMcpOutputChunk) => void;
+    onClosed?: (result: NodeMcpClosedResult) => void;
+  }): Promise<NodeMcpOpenResult> {
+    const node = this.nodesById.get(params.nodeId);
+    const sessionId = params.sessionId ?? randomUUID();
+    if (!node) {
+      return {
+        sessionId,
+        nodeId: params.nodeId,
+        serverId: params.serverId,
+        ok: false,
+        error: { code: "NOT_CONNECTED", message: "node not connected" },
+      };
+    }
+    if (!node.caps.includes("mcpHost")) {
+      return {
+        sessionId,
+        nodeId: params.nodeId,
+        serverId: params.serverId,
+        ok: false,
+        error: { code: "MCP_HOST_UNAVAILABLE", message: "node did not advertise mcpHost" },
+      };
+    }
+    const descriptors = node.mcpServers ?? [];
+    const descriptor = descriptors.find((entry) => entry.id === params.serverId);
+    if (!descriptor) {
+      return {
+        sessionId,
+        nodeId: params.nodeId,
+        serverId: params.serverId,
+        ok: false,
+        error: { code: "MCP_SERVER_NOT_DECLARED", message: "node did not advertise MCP server" },
+      };
+    }
+    if (descriptor.status && descriptor.status !== "ready") {
+      return {
+        sessionId,
+        nodeId: params.nodeId,
+        serverId: params.serverId,
+        ok: false,
+        error: {
+          code: "MCP_SERVER_NOT_READY",
+          message: `node MCP server is ${descriptor.status}`,
+        },
+      };
+    }
+    this.activeMcpSessions.set(sessionId, {
+      nodeId: params.nodeId,
+      serverId: params.serverId,
+      onOutput: params.onOutput,
+      onClosed: params.onClosed,
+    });
+    const ok = this.sendEventToSession(node, "node.mcp.session.open", {
+      sessionId,
+      nodeId: params.nodeId,
+      serverId: params.serverId,
+      timeoutMs: params.timeoutMs,
+    });
+    if (!ok) {
+      this.activeMcpSessions.delete(sessionId);
+      return {
+        sessionId,
+        nodeId: params.nodeId,
+        serverId: params.serverId,
+        ok: false,
+        error: { code: "UNAVAILABLE", message: "failed to send MCP session open to node" },
+      };
+    }
+    const timeoutMs = typeof params.timeoutMs === "number" ? params.timeoutMs : 30_000;
+    return await new Promise<NodeMcpOpenResult>((resolve) => {
+      const timer = setTimeout(() => {
+        this.pendingMcpOpens.delete(sessionId);
+        this.activeMcpSessions.delete(sessionId);
+        resolve({
+          sessionId,
+          nodeId: params.nodeId,
+          serverId: params.serverId,
+          ok: false,
+          error: { code: "TIMEOUT", message: "node MCP session open timed out" },
+        });
+      }, timeoutMs);
+      this.pendingMcpOpens.set(sessionId, {
+        nodeId: params.nodeId,
+        serverId: params.serverId,
+        resolve,
+        timer,
+      });
+    });
+  }
+
+  handleMcpSessionOpenResult(params: NodeMcpOpenResult): boolean {
+    const pending = this.pendingMcpOpens.get(params.sessionId);
+    if (!pending) {
+      return false;
+    }
+    if (pending.nodeId !== params.nodeId || pending.serverId !== params.serverId) {
+      return false;
+    }
+    clearTimeout(pending.timer);
+    this.pendingMcpOpens.delete(params.sessionId);
+    if (!params.ok) {
+      this.activeMcpSessions.delete(params.sessionId);
+    }
+    pending.resolve({
+      sessionId: params.sessionId,
+      nodeId: params.nodeId,
+      serverId: params.serverId,
+      ok: params.ok,
+      pid: params.pid,
+      error: params.error ?? null,
+    });
+    return true;
+  }
+
+  sendMcpInput(params: {
+    sessionId: string;
+    nodeId: string;
+    seq: number;
+    dataBase64: string;
+  }): boolean {
+    const active = this.activeMcpSessions.get(params.sessionId);
+    if (!active || active.nodeId !== params.nodeId) {
+      return false;
+    }
+    return this.sendEvent(params.nodeId, "node.mcp.session.input", params);
+  }
+
+  closeMcpSession(params: { sessionId: string; nodeId: string; reason?: string }): boolean {
+    const active = this.activeMcpSessions.get(params.sessionId);
+    if (!active || active.nodeId !== params.nodeId) {
+      return false;
+    }
+    this.activeMcpSessions.delete(params.sessionId);
+    return this.sendEvent(params.nodeId, "node.mcp.session.close", params);
+  }
+
+  handleMcpSessionOutput(params: NodeMcpOutputChunk): boolean {
+    const active = this.activeMcpSessions.get(params.sessionId);
+    if (!active || active.nodeId !== params.nodeId) {
+      return false;
+    }
+    active.onOutput?.(params);
+    return true;
+  }
+
+  handleMcpSessionClosed(params: NodeMcpClosedResult): boolean {
+    const active = this.activeMcpSessions.get(params.sessionId);
+    if (!active || active.nodeId !== params.nodeId) {
+      return false;
+    }
+    this.activeMcpSessions.delete(params.sessionId);
+    active.onClosed?.(params);
+    return true;
   }
 
   private sendEventInternal(node: NodeSession, event: string, payload: unknown): boolean {

@@ -42,6 +42,9 @@ import {
   validateNodeEventParams,
   validateNodeInvokeParams,
   validateNodeListParams,
+  validateNodeMcpSessionClosedParams,
+  validateNodeMcpSessionOpenResultParams,
+  validateNodeMcpSessionOutputParams,
   validateNodePendingAckParams,
   validateNodePairApproveParams,
   validateNodePairListParams,
@@ -544,6 +547,7 @@ export const nodeHandlers: GatewayRequestHandlers = {
         modelIdentifier: p.modelIdentifier,
         caps: p.caps,
         commands: p.commands,
+        mcpServers: p.mcpServers,
         permissions: p.permissions,
         remoteIp: p.remoteIp,
         silent: p.silent,
@@ -1166,6 +1170,94 @@ export const nodeHandlers: GatewayRequestHandlers = {
     });
   },
   "node.invoke.result": handleNodeInvokeResult,
+  "node.mcp.session.open.result": async ({ params, respond, context, client }) => {
+    if (!validateNodeMcpSessionOpenResultParams(params)) {
+      respondInvalidParams({
+        respond,
+        method: "node.mcp.session.open.result",
+        validator: validateNodeMcpSessionOpenResultParams,
+      });
+      return;
+    }
+    const p = params as {
+      sessionId: string;
+      nodeId: string;
+      serverId: string;
+      ok: boolean;
+      pid?: number;
+      error?: { code?: string; message?: string } | null;
+    };
+    const callerNodeId = client?.connect?.device?.id ?? client?.connect?.client?.id;
+    if (callerNodeId && callerNodeId !== p.nodeId) {
+      respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "nodeId mismatch"));
+      return;
+    }
+    const handled = context.nodeRegistry.handleMcpSessionOpenResult({
+      sessionId: p.sessionId,
+      nodeId: p.nodeId,
+      serverId: p.serverId,
+      ok: p.ok,
+      pid: p.pid,
+      error: p.error ?? null,
+    });
+    respond(true, { ok: true, ignored: !handled }, undefined);
+  },
+  "node.mcp.session.output": async ({ params, respond, context, client }) => {
+    if (!validateNodeMcpSessionOutputParams(params)) {
+      respondInvalidParams({
+        respond,
+        method: "node.mcp.session.output",
+        validator: validateNodeMcpSessionOutputParams,
+      });
+      return;
+    }
+    const p = params as {
+      sessionId: string;
+      nodeId: string;
+      seq: number;
+      stream: "stdout" | "stderr";
+      dataBase64: string;
+    };
+    const callerNodeId = client?.connect?.device?.id ?? client?.connect?.client?.id;
+    if (callerNodeId && callerNodeId !== p.nodeId) {
+      respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "nodeId mismatch"));
+      return;
+    }
+    const handled = context.nodeRegistry.handleMcpSessionOutput(p);
+    respond(true, { ok: true, ignored: !handled }, undefined);
+  },
+  "node.mcp.session.closed": async ({ params, respond, context, client }) => {
+    if (!validateNodeMcpSessionClosedParams(params)) {
+      respondInvalidParams({
+        respond,
+        method: "node.mcp.session.closed",
+        validator: validateNodeMcpSessionClosedParams,
+      });
+      return;
+    }
+    const p = params as {
+      sessionId: string;
+      nodeId: string;
+      ok: boolean;
+      exitCode?: number | null;
+      signal?: string | null;
+      error?: { code?: string; message?: string } | null;
+    };
+    const callerNodeId = client?.connect?.device?.id ?? client?.connect?.client?.id;
+    if (callerNodeId && callerNodeId !== p.nodeId) {
+      respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "nodeId mismatch"));
+      return;
+    }
+    const handled = context.nodeRegistry.handleMcpSessionClosed({
+      sessionId: p.sessionId,
+      nodeId: p.nodeId,
+      ok: p.ok,
+      exitCode: p.exitCode,
+      signal: p.signal,
+      error: p.error ?? null,
+    });
+    respond(true, { ok: true, ignored: !handled }, undefined);
+  },
   "node.event": async ({ params, respond, context, client }) => {
     if (!validateNodeEventParams(params)) {
       respondInvalidParams({

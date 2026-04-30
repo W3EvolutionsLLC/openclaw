@@ -1,3 +1,7 @@
+import {
+  NodeMcpClientTransport,
+  type NodeMcpClientTransportOptions,
+} from "./node-mcp-client-transport.js";
 import { NodeRegistry } from "./node-registry.js";
 import {
   createSessionEventSubscriberRegistry,
@@ -27,6 +31,8 @@ export function createGatewayNodeSessionRuntime(params: {
     params.broadcast("voicewake.changed", { triggers }, { dropIfSlow: true });
   };
   const hasMobileNodeConnected = () => hasConnectedMobileNode(nodeRegistry);
+  const createNodeMcpClientTransport = (options: NodeMcpClientTransportOptions) =>
+    new NodeMcpClientTransport(nodeRegistry, options);
 
   return {
     nodeRegistry,
@@ -39,6 +45,7 @@ export function createGatewayNodeSessionRuntime(params: {
     nodeUnsubscribe: nodeSubscriptions.unsubscribe,
     nodeUnsubscribeAll: nodeSubscriptions.unsubscribeAll,
     broadcastVoiceWakeChanged,
+    createNodeMcpClientTransport,
     hasMobileNodeConnected,
   };
 }

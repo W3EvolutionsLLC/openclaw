@@ -5,6 +5,10 @@ import {
   formatValidationErrors,
   validateModelsListParams,
   validateNodeEventResult,
+  validateNodeMcpServerDescriptor,
+  validateNodeMcpSessionInputEvent,
+  validateNodeMcpSessionOpenResultParams,
+  validateNodeMcpSessionOutputParams,
   validateNodePresenceAlivePayload,
   validateTalkConfigResult,
   validateTalkRealtimeSessionParams,
@@ -228,6 +232,59 @@ describe("validateNodeEventResult", () => {
         event: "node.presence.alive",
         handled: true,
         reason: "persisted",
+      }),
+    ).toBe(true);
+  });
+});
+
+describe("node MCP protocol validators", () => {
+  it("accepts declared node-hosted MCP servers", () => {
+    expect(
+      validateNodeMcpServerDescriptor({
+        id: "computer-use",
+        displayName: "Computer Use",
+        provider: "openclaw",
+        transport: "stdio",
+        status: "missing_permissions",
+        requiredPermissions: ["accessibility", "screenRecording"],
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects unknown node-hosted MCP server statuses", () => {
+    expect(
+      validateNodeMcpServerDescriptor({
+        id: "computer-use",
+        status: "maybe",
+      }),
+    ).toBe(false);
+  });
+
+  it("accepts MCP session lifecycle frames", () => {
+    expect(
+      validateNodeMcpSessionOpenResultParams({
+        sessionId: "session-1",
+        nodeId: "mac-node",
+        serverId: "computer-use",
+        ok: true,
+        pid: 123,
+      }),
+    ).toBe(true);
+    expect(
+      validateNodeMcpSessionInputEvent({
+        sessionId: "session-1",
+        nodeId: "mac-node",
+        seq: 0,
+        dataBase64: "e30K",
+      }),
+    ).toBe(true);
+    expect(
+      validateNodeMcpSessionOutputParams({
+        sessionId: "session-1",
+        nodeId: "mac-node",
+        seq: 0,
+        stream: "stdout",
+        dataBase64: "e30K",
       }),
     ).toBe(true);
   });

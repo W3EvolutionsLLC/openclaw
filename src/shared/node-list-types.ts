@@ -1,3 +1,5 @@
+import type { NodeMcpServerDescriptor } from "./node-mcp-types.js";
+
 export type NodeListNode = {
   nodeId: string;
   displayName?: string;
@@ -13,6 +15,7 @@ export type NodeListNode = {
   pathEnv?: string;
   caps?: string[];
   commands?: string[];
+  mcpServers?: NodeMcpServerDescriptor[];
   permissions?: Record<string, boolean>;
   paired?: boolean;
   connected?: boolean;
@@ -33,6 +36,7 @@ export type PendingRequest = {
   remoteIp?: string;
   ts: number;
   commands?: string[];
+  mcpServers?: NodeMcpServerDescriptor[];
   requiredApproveScopes?: Array<"operator.pairing" | "operator.write" | "operator.admin">;
 };
 
@@ -46,6 +50,7 @@ export type PairedNode = {
   uiVersion?: string;
   remoteIp?: string;
   permissions?: Record<string, boolean>;
+  mcpServers?: NodeMcpServerDescriptor[];
   createdAtMs?: number;
   approvedAtMs?: number;
   lastConnectedAtMs?: number;

@@ -58,6 +58,13 @@ The macOS app presents itself as a node. Common commands:
 
 The node reports a `permissions` map so agents can decide what’s allowed.
 
+For permission-sensitive MCP tools such as Computer Use, the intended model is
+for the Mac app to advertise an `mcpHost` capability with named `mcpServers`.
+The Gateway may open one of those named servers and proxy MCP stdio bytes over
+the node WebSocket, but the Mac app owns the executable mapping, signing checks,
+TCC prompts, and child-process lifetime. This keeps CLI-hatched and remote
+Gateways working while preserving the app as the macOS permission boundary.
+
 Node service + app IPC:
 
 - When the headless node host service is running (remote mode), it connects to the Gateway WS as a node.

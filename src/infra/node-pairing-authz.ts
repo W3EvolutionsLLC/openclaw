@@ -6,11 +6,16 @@ export const OPERATOR_PAIRING_SCOPE: NodeApprovalScope = "operator.pairing";
 export const OPERATOR_WRITE_SCOPE: NodeApprovalScope = "operator.write";
 export const OPERATOR_ADMIN_SCOPE: NodeApprovalScope = "operator.admin";
 
-export function resolveNodePairApprovalScopes(commands: unknown): NodeApprovalScope[] {
+export function resolveNodePairApprovalScopes(
+  commands: unknown,
+  opts?: { mcpServers?: unknown },
+): NodeApprovalScope[] {
   const normalized = Array.isArray(commands)
     ? commands.filter((command): command is string => typeof command === "string")
     : [];
+  const hasMcpServers = Array.isArray(opts?.mcpServers) && opts.mcpServers.length > 0;
   if (
+    hasMcpServers ||
     normalized.some((command) => NODE_SYSTEM_RUN_COMMANDS.some((allowed) => allowed === command))
   ) {
     return [OPERATOR_PAIRING_SCOPE, OPERATOR_ADMIN_SCOPE];

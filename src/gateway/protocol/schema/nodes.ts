@@ -1,4 +1,5 @@
 import { Type } from "typebox";
+import { NODE_MCP_SERVER_STATUSES } from "../../../shared/node-mcp-types.js";
 import { NonEmptyString } from "./primitives.js";
 
 const NodePendingWorkTypeSchema = Type.String({
@@ -44,6 +45,20 @@ export const NodeEventResultSchema = Type.Object(
   { additionalProperties: false },
 );
 
+export const NodeMcpServerDescriptorSchema = Type.Object(
+  {
+    id: NonEmptyString,
+    displayName: Type.Optional(NonEmptyString),
+    provider: Type.Optional(NonEmptyString),
+    transport: Type.Optional(Type.Literal("stdio")),
+    source: Type.Optional(NonEmptyString),
+    status: Type.Optional(Type.String({ enum: [...NODE_MCP_SERVER_STATUSES] })),
+    requiredPermissions: Type.Optional(Type.Array(NonEmptyString)),
+    metadata: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+  },
+  { additionalProperties: false },
+);
+
 export const NodePairRequestParamsSchema = Type.Object(
   {
     nodeId: NonEmptyString,
@@ -56,6 +71,7 @@ export const NodePairRequestParamsSchema = Type.Object(
     modelIdentifier: Type.Optional(NonEmptyString),
     caps: Type.Optional(Type.Array(NonEmptyString)),
     commands: Type.Optional(Type.Array(NonEmptyString)),
+    mcpServers: Type.Optional(Type.Array(NodeMcpServerDescriptorSchema)),
     remoteIp: Type.Optional(NonEmptyString),
     silent: Type.Optional(Type.Boolean()),
   },
@@ -201,6 +217,78 @@ export const NodeInvokeRequestEventSchema = Type.Object(
     paramsJSON: Type.Optional(Type.String()),
     timeoutMs: Type.Optional(Type.Integer({ minimum: 0 })),
     idempotencyKey: Type.Optional(NonEmptyString),
+  },
+  { additionalProperties: false },
+);
+
+const NodeMcpSessionErrorSchema = Type.Object(
+  {
+    code: Type.Optional(NonEmptyString),
+    message: Type.Optional(NonEmptyString),
+  },
+  { additionalProperties: false },
+);
+
+export const NodeMcpSessionOpenEventSchema = Type.Object(
+  {
+    sessionId: NonEmptyString,
+    nodeId: NonEmptyString,
+    serverId: NonEmptyString,
+    timeoutMs: Type.Optional(Type.Integer({ minimum: 0 })),
+  },
+  { additionalProperties: false },
+);
+
+export const NodeMcpSessionOpenResultParamsSchema = Type.Object(
+  {
+    sessionId: NonEmptyString,
+    nodeId: NonEmptyString,
+    serverId: NonEmptyString,
+    ok: Type.Boolean(),
+    pid: Type.Optional(Type.Integer({ minimum: 0 })),
+    error: Type.Optional(NodeMcpSessionErrorSchema),
+  },
+  { additionalProperties: false },
+);
+
+export const NodeMcpSessionInputEventSchema = Type.Object(
+  {
+    sessionId: NonEmptyString,
+    nodeId: NonEmptyString,
+    seq: Type.Integer({ minimum: 0 }),
+    dataBase64: NonEmptyString,
+  },
+  { additionalProperties: false },
+);
+
+export const NodeMcpSessionOutputParamsSchema = Type.Object(
+  {
+    sessionId: NonEmptyString,
+    nodeId: NonEmptyString,
+    seq: Type.Integer({ minimum: 0 }),
+    stream: Type.String({ enum: ["stdout", "stderr"] }),
+    dataBase64: NonEmptyString,
+  },
+  { additionalProperties: false },
+);
+
+export const NodeMcpSessionCloseEventSchema = Type.Object(
+  {
+    sessionId: NonEmptyString,
+    nodeId: NonEmptyString,
+    reason: Type.Optional(NonEmptyString),
+  },
+  { additionalProperties: false },
+);
+
+export const NodeMcpSessionClosedParamsSchema = Type.Object(
+  {
+    sessionId: NonEmptyString,
+    nodeId: NonEmptyString,
+    ok: Type.Boolean(),
+    exitCode: Type.Optional(Type.Union([Type.Integer(), Type.Null()])),
+    signal: Type.Optional(Type.Union([NonEmptyString, Type.Null()])),
+    error: Type.Optional(NodeMcpSessionErrorSchema),
   },
   { additionalProperties: false },
 );

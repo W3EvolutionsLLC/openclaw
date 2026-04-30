@@ -179,6 +179,20 @@ import {
   NodeEventParamsSchema,
   type NodeEventResult,
   NodeEventResultSchema,
+  type NodeMcpServerDescriptor,
+  NodeMcpServerDescriptorSchema,
+  type NodeMcpSessionClosedParams,
+  NodeMcpSessionClosedParamsSchema,
+  type NodeMcpSessionCloseEvent,
+  NodeMcpSessionCloseEventSchema,
+  type NodeMcpSessionInputEvent,
+  NodeMcpSessionInputEventSchema,
+  type NodeMcpSessionOpenEvent,
+  NodeMcpSessionOpenEventSchema,
+  type NodeMcpSessionOpenResultParams,
+  NodeMcpSessionOpenResultParamsSchema,
+  type NodeMcpSessionOutputParams,
+  NodeMcpSessionOutputParamsSchema,
   type NodePendingDrainParams,
   NodePendingDrainParamsSchema,
   type NodePendingDrainResult,
@@ -395,6 +409,27 @@ export const validateNodeInvokeResultParams = ajv.compile<NodeInvokeResultParams
 );
 export const validateNodeEventParams = ajv.compile<NodeEventParams>(NodeEventParamsSchema);
 export const validateNodeEventResult = ajv.compile<NodeEventResult>(NodeEventResultSchema);
+export const validateNodeMcpServerDescriptor = ajv.compile<NodeMcpServerDescriptor>(
+  NodeMcpServerDescriptorSchema,
+);
+export const validateNodeMcpSessionOpenEvent = ajv.compile<NodeMcpSessionOpenEvent>(
+  NodeMcpSessionOpenEventSchema,
+);
+export const validateNodeMcpSessionOpenResultParams = ajv.compile<NodeMcpSessionOpenResultParams>(
+  NodeMcpSessionOpenResultParamsSchema,
+);
+export const validateNodeMcpSessionInputEvent = ajv.compile<NodeMcpSessionInputEvent>(
+  NodeMcpSessionInputEventSchema,
+);
+export const validateNodeMcpSessionOutputParams = ajv.compile<NodeMcpSessionOutputParams>(
+  NodeMcpSessionOutputParamsSchema,
+);
+export const validateNodeMcpSessionCloseEvent = ajv.compile<NodeMcpSessionCloseEvent>(
+  NodeMcpSessionCloseEventSchema,
+);
+export const validateNodeMcpSessionClosedParams = ajv.compile<NodeMcpSessionClosedParams>(
+  NodeMcpSessionClosedParamsSchema,
+);
 export const validateNodePresenceAlivePayload = ajv.compile<NodePresenceAlivePayload>(
   NodePresenceAlivePayloadSchema,
 );

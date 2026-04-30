@@ -252,9 +252,20 @@ Nodes declare capability claims at connect time:
 
 - `caps`: high-level capability categories.
 - `commands`: command allowlist for invoke.
+- `mcpServers`: named node-hosted MCP servers the node is willing to run.
 - `permissions`: granular toggles (e.g. `screen.record`, `camera.capture`).
 
 The Gateway treats these as **claims** and enforces server-side allowlists.
+Nodes that advertise MCP servers should also include the `mcpHost` cap. Adding
+a new node-hosted MCP server is treated as a privileged surface and requires
+node pairing approval.
+
+Node-hosted MCP sessions use a long-lived stream instead of `node.invoke`.
+The Gateway opens a named server with `node.mcp.session.open`, sends MCP stdio
+bytes with `node.mcp.session.input`, receives stdout/stderr chunks through
+`node.mcp.session.output`, and closes with `node.mcp.session.close` /
+`node.mcp.session.closed`. The Gateway only sends the named `serverId`; the node
+owns the executable path, bundle checks, permissions, and process lifecycle.
 
 ## Presence
 
@@ -424,6 +435,7 @@ enumeration of `src/gateway/server-methods/*.ts`.
     - `node.rename` updates a paired node label.
     - `node.invoke` forwards a command to a connected node.
     - `node.invoke.result` returns the result for an invoke request.
+    - `node.mcp.session.open`, `node.mcp.session.input`, `node.mcp.session.close`, `node.mcp.session.open.result`, `node.mcp.session.output`, and `node.mcp.session.closed` carry node-hosted MCP stdio streams.
     - `node.event` carries node-originated events back into the gateway.
     - `node.canvas.capability.refresh` refreshes scoped canvas-capability tokens.
     - `node.pending.pull` and `node.pending.ack` are the connected-node queue APIs.

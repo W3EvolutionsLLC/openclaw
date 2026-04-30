@@ -1,6 +1,7 @@
 import { hasEffectivePairedDeviceRole, type PairedDevice } from "../infra/device-pairing.js";
 import type { NodePairingPairedNode } from "../infra/node-pairing.js";
 import type { NodeListNode } from "../shared/node-list-types.js";
+import { normalizeNodeMcpServerDescriptors } from "../shared/node-mcp-types.js";
 import { normalizeLowercaseStringOrEmpty } from "../shared/string-coerce.js";
 import type { NodeSession } from "./node-registry.js";
 
@@ -28,6 +29,7 @@ export type KnownNodeApprovedSource = {
   modelIdentifier?: string;
   caps: string[];
   commands: string[];
+  mcpServers?: NonNullable<NodeListNode["mcpServers"]>;
   permissions?: Record<string, boolean>;
   approvedAtMs?: number;
   lastConnectedAtMs?: number;
@@ -90,6 +92,7 @@ function buildApprovedNodeSource(entry: NodePairingPairedNode): KnownNodeApprove
     modelIdentifier: entry.modelIdentifier,
     caps: entry.caps ?? [],
     commands: entry.commands ?? [],
+    mcpServers: normalizeNodeMcpServerDescriptors(entry.mcpServers),
     permissions: entry.permissions,
     approvedAtMs: entry.approvedAtMs,
     lastConnectedAtMs: entry.lastConnectedAtMs,
@@ -149,6 +152,7 @@ function buildEffectiveKnownNode(entry: {
     commands: live
       ? uniqueSortedStrings(live.commands)
       : uniqueSortedStrings(nodePairing?.commands),
+    mcpServers: live?.mcpServers ?? nodePairing?.mcpServers,
     pathEnv: live?.pathEnv,
     permissions: live?.permissions ?? nodePairing?.permissions,
     connectedAtMs: live?.connectedAtMs,

@@ -1,4 +1,8 @@
 import { randomUUID } from "node:crypto";
+import {
+  normalizeNodeMcpServerDescriptors,
+  type NodeMcpServerDescriptor,
+} from "../shared/node-mcp-types.js";
 import { resolveMissingRequestedScope } from "../shared/operator-scope-compat.js";
 import { normalizeArrayBackedTrimmedStringList } from "../shared/string-normalization.js";
 import { type NodeApprovalScope, resolveNodePairApprovalScopes } from "./node-pairing-authz.js";
@@ -25,6 +29,7 @@ export type NodeDeclaredSurface = {
   modelIdentifier?: string;
   caps?: string[];
   commands?: string[];
+  mcpServers?: NodeMcpServerDescriptor[];
   permissions?: Record<string, boolean>;
   remoteIp?: string;
 };
@@ -86,6 +91,7 @@ function buildPendingNodePairingRequest(params: {
     modelIdentifier: params.req.modelIdentifier,
     caps: normalizeArrayBackedTrimmedStringList(params.req.caps),
     commands: normalizeArrayBackedTrimmedStringList(params.req.commands),
+    mcpServers: normalizeNodeMcpServerDescriptors(params.req.mcpServers),
     permissions: params.req.permissions,
     remoteIp: params.req.remoteIp,
     silent: params.req.silent,
@@ -108,6 +114,7 @@ function refreshPendingNodePairingRequest(
     modelIdentifier: incoming.modelIdentifier ?? existing.modelIdentifier,
     caps: normalizeArrayBackedTrimmedStringList(incoming.caps) ?? existing.caps,
     commands: normalizeArrayBackedTrimmedStringList(incoming.commands) ?? existing.commands,
+    mcpServers: normalizeNodeMcpServerDescriptors(incoming.mcpServers) ?? existing.mcpServers,
     permissions: incoming.permissions ?? existing.permissions,
     remoteIp: incoming.remoteIp ?? existing.remoteIp,
     // Preserve interactive visibility if either request needs attention.
@@ -120,7 +127,7 @@ function resolveNodeApprovalRequiredScopes(
   pending: NodePairingPendingRequest,
 ): NodeApprovalScope[] {
   const commands = Array.isArray(pending.commands) ? pending.commands : [];
-  return resolveNodePairApprovalScopes(commands);
+  return resolveNodePairApprovalScopes(commands, { mcpServers: pending.mcpServers });
 }
 
 function toPendingNodePairingEntry(pending: NodePairingPendingRequest): NodePairingPendingEntry {
@@ -258,6 +265,7 @@ export async function approveNodePairing(
       modelIdentifier: pending.modelIdentifier,
       caps: pending.caps,
       commands: pending.commands,
+      mcpServers: pending.mcpServers,
       permissions: pending.permissions,
       remoteIp: pending.remoteIp,
       createdAtMs: existing?.createdAtMs ?? now,
@@ -345,6 +353,7 @@ export async function updatePairedNodeMetadata(
       remoteIp: patch.remoteIp ?? existing.remoteIp,
       caps: patch.caps ?? existing.caps,
       commands: patch.commands ?? existing.commands,
+      mcpServers: patch.mcpServers ?? existing.mcpServers,
       bins: patch.bins ?? existing.bins,
       permissions: patch.permissions ?? existing.permissions,
       lastConnectedAtMs: patch.lastConnectedAtMs ?? existing.lastConnectedAtMs,

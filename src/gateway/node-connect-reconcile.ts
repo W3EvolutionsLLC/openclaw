@@ -5,6 +5,11 @@ import type {
   NodePairingRequestInput,
 } from "../infra/node-pairing.js";
 import {
+  normalizeNodeMcpServerDescriptors,
+  normalizeNodeMcpServerIds,
+  type NodeMcpServerDescriptor,
+} from "../shared/node-mcp-types.js";
+import {
   normalizeDeclaredNodeCommands,
   resolveNodeCommandAllowlist,
 } from "./node-command-policy.js";
@@ -19,6 +24,7 @@ type PendingNodePairingResult = {
 export type NodeConnectPairingReconcileResult = {
   nodeId: string;
   effectiveCommands: string[];
+  effectiveMcpServers?: NodeMcpServerDescriptor[];
   pendingPairing?: PendingNodePairingResult;
 };
 
@@ -47,6 +53,7 @@ function buildNodePairingRequestInput(params: {
     modelIdentifier: params.connectParams.client.modelIdentifier,
     caps: params.connectParams.caps,
     commands: params.commands,
+    mcpServers: normalizeNodeMcpServerDescriptors(params.connectParams.mcpServers),
     remoteIp: params.remoteIp,
   };
 }
@@ -69,6 +76,7 @@ export async function reconcileNodePairingOnConnect(params: {
       : [],
     allowlist,
   });
+  const declaredMcpServers = normalizeNodeMcpServerDescriptors(params.connectParams.mcpServers);
 
   if (!params.pairedNode) {
     const pendingPairing = await params.requestPairing(
@@ -82,6 +90,7 @@ export async function reconcileNodePairingOnConnect(params: {
     return {
       nodeId,
       effectiveCommands: declared,
+      effectiveMcpServers: undefined,
       pendingPairing,
     };
   }
@@ -91,8 +100,16 @@ export async function reconcileNodePairingOnConnect(params: {
     allowlist,
   });
   const hasCommandUpgrade = declared.some((command) => !approvedCommands.includes(command));
+  const approvedMcpServerIds = normalizeNodeMcpServerIds(params.pairedNode.mcpServers);
+  const declaredMcpServerIds = normalizeNodeMcpServerIds(declaredMcpServers);
+  const hasMcpServerUpgrade = declaredMcpServerIds.some(
+    (serverId) => !approvedMcpServerIds.includes(serverId),
+  );
+  const effectiveMcpServers = declaredMcpServers?.filter((descriptor) =>
+    approvedMcpServerIds.includes(descriptor.id),
+  );
 
-  if (hasCommandUpgrade) {
+  if (hasCommandUpgrade || hasMcpServerUpgrade) {
     const pendingPairing = await params.requestPairing(
       buildNodePairingRequestInput({
         nodeId,
@@ -104,6 +121,7 @@ export async function reconcileNodePairingOnConnect(params: {
     return {
       nodeId,
       effectiveCommands: approvedCommands,
+      effectiveMcpServers,
       pendingPairing,
     };
   }
@@ -111,5 +129,6 @@ export async function reconcileNodePairingOnConnect(params: {
   return {
     nodeId,
     effectiveCommands: declared,
+    effectiveMcpServers: declaredMcpServers,
   };
 }

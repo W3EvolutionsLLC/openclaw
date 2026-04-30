@@ -238,6 +238,27 @@ describe("node pairing tokens", () => {
       });
       await expect(getPairedNode("node-1", baseDir)).resolves.toBeNull();
 
+      const mcpHostRequest = await requestNodePairing(
+        {
+          nodeId: "node-mcp",
+          platform: "darwin",
+          mcpServers: [{ id: "computer-use", displayName: "Computer Use" }],
+        },
+        baseDir,
+      );
+
+      await expect(
+        approveNodePairing(
+          mcpHostRequest.request.requestId,
+          { callerScopes: ["operator.pairing"] },
+          baseDir,
+        ),
+      ).resolves.toEqual({
+        status: "forbidden",
+        missingScope: "operator.admin",
+      });
+      await expect(getPairedNode("node-mcp", baseDir)).resolves.toBeNull();
+
       const commandlessRequest = await requestNodePairing(
         {
           nodeId: "node-2",
