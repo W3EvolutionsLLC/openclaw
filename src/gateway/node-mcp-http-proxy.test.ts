@@ -67,6 +67,7 @@ function sendNodeMcpRequest(params: {
   nodeId?: string;
   serverId?: string;
   body: unknown;
+  signal?: AbortSignal;
 }) {
   const nodeId = encodeURIComponent(params.nodeId ?? "mac-node");
   const serverId = encodeURIComponent(params.serverId ?? "computer-use");
@@ -77,6 +78,7 @@ function sendNodeMcpRequest(params: {
       "content-type": "application/json",
     },
     body: JSON.stringify(params.body),
+    signal: params.signal,
   });
 }
 
@@ -157,6 +159,58 @@ describe("node MCP loopback proxy", () => {
         serverInfo: { name: "mock-computer-use" },
       },
     });
+  });
+
+  it("closes node MCP startup when the HTTP request aborts before open resolves", async () => {
+    const registry = new NodeRegistry();
+    const { client, sent } = createNodeClient({
+      mcpServers: [{ id: "computer-use", displayName: "Computer Use", status: "ready" }],
+    });
+    registry.register(client, {});
+    const server = await startMcpLoopbackServer(0, {
+      createNodeMcpClientTransport: (options) => new NodeMcpClientTransport(registry, options),
+    });
+    const runtime = getActiveMcpLoopbackRuntime();
+    expect(runtime).toBeTruthy();
+    const controller = new AbortController();
+
+    const responsePromise = sendNodeMcpRequest({
+      port: server.port,
+      token: resolveMcpLoopbackBearerToken(runtime!, true),
+      body: { jsonrpc: "2.0", id: 1, method: "initialize", params: {} },
+      signal: controller.signal,
+    });
+
+    await vi.waitFor(() => {
+      expect(sent.some((entry) => entry.event === "node.mcp.session.open")).toBe(true);
+    });
+    const openPayload = sent.find((entry) => entry.event === "node.mcp.session.open")?.payload as {
+      sessionId?: string;
+    };
+    expect(openPayload.sessionId).toBeTruthy();
+
+    controller.abort();
+
+    await expect(responsePromise).rejects.toThrow();
+    await vi.waitFor(() => {
+      expect(sent.at(-1)).toEqual({
+        event: "node.mcp.session.close",
+        payload: {
+          sessionId: openPayload.sessionId,
+          nodeId: "mac-node",
+          reason: "client_close",
+        },
+      });
+    });
+    expect(
+      registry.handleMcpSessionOpenResult({
+        sessionId: openPayload.sessionId!,
+        nodeId: "mac-node",
+        serverId: "computer-use",
+        ok: true,
+        pid: 42,
+      }),
+    ).toBe(false);
   });
 
   it("requires the owner loopback token for node-hosted MCP servers", async () => {

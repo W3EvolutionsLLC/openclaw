@@ -69,6 +69,21 @@ function responseKey(id: string | number): string {
   return JSON.stringify(id);
 }
 
+function requestAbortedError(): Error {
+  return new Error("node MCP HTTP request aborted");
+}
+
+function errorResponsesForMessages(
+  messages: JsonRpcRequest[],
+  code: number,
+  message: string,
+): Array<ReturnType<typeof jsonRpcError>> {
+  const responses = messages
+    .filter(messageHasId)
+    .map((request) => jsonRpcError(request.id, code, message));
+  return responses.length > 0 ? responses : [jsonRpcError(null, code, message)];
+}
+
 function parseNodeMcpLoopbackPath(pathname: string): NodeMcpLoopbackTarget | null {
   if (!pathname.startsWith(NODE_MCP_LOOPBACK_PREFIX)) {
     return null;
@@ -112,14 +127,18 @@ class NodeMcpProxySession {
     messages: JsonRpcRequest[],
     signal?: AbortSignal,
   ): Promise<Array<JsonRpcResponse | ReturnType<typeof jsonRpcError>>> {
+    if (signal?.aborted) {
+      return errorResponsesForMessages(messages, -32000, requestAbortedError().message);
+    }
     try {
-      await this.ensureStarted();
+      await this.ensureStarted(signal);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const responses = messages
-        .filter(messageHasId)
-        .map((request) => jsonRpcError(request.id, -32000, message));
-      return responses.length > 0 ? responses : [jsonRpcError(null, -32000, message)];
+      return errorResponsesForMessages(messages, -32000, message);
+    }
+    if (signal?.aborted) {
+      await this.close();
+      return errorResponsesForMessages(messages, -32000, requestAbortedError().message);
     }
 
     let waiters: Array<{
@@ -179,12 +198,12 @@ class NodeMcpProxySession {
     this.transport = undefined;
   }
 
-  private async ensureStarted(): Promise<void> {
+  private async ensureStarted(signal?: AbortSignal): Promise<void> {
     if (this.closed) {
       throw new Error("node MCP loopback proxy is closed");
     }
     if (this.transport) {
-      await this.startPromise;
+      await this.waitForStart(signal, false);
       return;
     }
     const transport = this.createTransport({
@@ -203,13 +222,61 @@ class NodeMcpProxySession {
       this.startPromise = undefined;
       throw error;
     });
-    await this.startPromise;
+    await this.waitForStart(signal, true);
+  }
+
+  private async waitForStart(
+    signal: AbortSignal | undefined,
+    closeOnAbort: boolean,
+  ): Promise<void> {
+    const startPromise = this.startPromise;
+    if (!startPromise) {
+      return;
+    }
+    if (!signal) {
+      await startPromise;
+      return;
+    }
+
+    const abortStartup = async (): Promise<never> => {
+      if (closeOnAbort) {
+        await this.close().catch(() => undefined);
+        await startPromise.catch(() => undefined);
+      }
+      throw requestAbortedError();
+    };
+    if (signal.aborted) {
+      await abortStartup();
+    }
+
+    let abortListener: (() => void) | undefined;
+    const abortPromise = new Promise<"aborted">((resolve) => {
+      abortListener = () => resolve("aborted");
+      signal.addEventListener("abort", abortListener, { once: true });
+    });
+
+    try {
+      const result = await Promise.race([
+        startPromise.then(() => "started" as const),
+        abortPromise,
+      ]);
+      if (result === "aborted") {
+        await abortStartup();
+      }
+    } finally {
+      if (abortListener) {
+        signal.removeEventListener("abort", abortListener);
+      }
+    }
   }
 
   private waitForResponse(id: string | number, signal?: AbortSignal): Promise<JsonRpcResponse> {
     const key = responseKey(id);
     if (this.pending.has(key)) {
       return Promise.reject(new Error(`duplicate pending JSON-RPC id ${key}`));
+    }
+    if (signal?.aborted) {
+      return Promise.reject(requestAbortedError());
     }
     return new Promise<JsonRpcResponse>((resolve, reject) => {
       const cleanup = () => {
