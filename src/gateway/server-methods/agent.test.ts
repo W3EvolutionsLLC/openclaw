@@ -153,6 +153,10 @@ const makeContext = (): GatewayRequestContext =>
     agentRunSeq: new Map(),
     broadcast: vi.fn(),
     nodeSendToSession: vi.fn(),
+    nodeRegistry: {
+      listConnected: () => [],
+    },
+    createNodeMcpClientTransport: vi.fn(),
     logGateway: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
     broadcastToConnIds: vi.fn(),
     getSessionEventSubscriberConnIds: () => new Set(),

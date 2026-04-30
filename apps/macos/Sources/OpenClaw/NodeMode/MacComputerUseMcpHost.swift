@@ -7,7 +7,7 @@ import OSLog
 private let computerUseServerId = "computer-use"
 private let computerUseRequiredPermissions = [Capability.accessibility.rawValue, Capability.screenRecording.rawValue]
 
-private struct MacMcpLaunchConfig: Sendable {
+private struct MacMcpLaunchConfig {
     var command: URL
     var args: [String]
     var cwd: URL?
@@ -47,7 +47,7 @@ actor MacComputerUseMcpHost {
     nonisolated static func computerUseDescriptor(permissions: [String: Bool]) -> NodeMcpServerDescriptor {
         let hasRequiredPermissions = computerUseRequiredPermissions.allSatisfy { permissions[$0] == true }
         let launch = Self.resolveComputerUseLaunchConfig()
-        let status: String = if !hasRequiredPermissions {
+        let status = if !hasRequiredPermissions {
             "missing_permissions"
         } else if launch == nil {
             "missing_backend"
@@ -228,7 +228,8 @@ actor MacComputerUseMcpHost {
                 source: "env")
         }
 
-        let pluginDir = URL(fileURLWithPath: "/Applications/Codex.app/Contents/Resources/plugins/openai-bundled/plugins/computer-use")
+        let pluginDir = URL(
+            fileURLWithPath: "/Applications/Codex.app/Contents/Resources/plugins/openai-bundled/plugins/computer-use")
         let manifestURL = pluginDir.appendingPathComponent(".mcp.json")
         guard
             let data = try? Data(contentsOf: manifestURL),
@@ -237,8 +238,8 @@ actor MacComputerUseMcpHost {
         else {
             return nil
         }
-        let cwd = resolvePath(server.cwd ?? ".", relativeTo: pluginDir)
-        let command = resolvePath(server.command, relativeTo: cwd)
+        let cwd = Self.resolvePath(server.cwd ?? ".", relativeTo: pluginDir)
+        let command = Self.resolvePath(server.command, relativeTo: cwd)
         return MacMcpLaunchConfig(
             command: command,
             args: server.args ?? [],
