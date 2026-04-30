@@ -348,6 +348,11 @@ export class NodeRegistry {
       const timer = setTimeout(() => {
         this.pendingMcpOpens.delete(sessionId);
         this.activeMcpSessions.delete(sessionId);
+        this.sendEvent(params.nodeId, "node.mcp.session.close", {
+          sessionId,
+          nodeId: params.nodeId,
+          reason: "open_timeout",
+        });
         resolve({
           sessionId,
           nodeId: params.nodeId,

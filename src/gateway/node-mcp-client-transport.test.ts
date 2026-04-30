@@ -224,6 +224,64 @@ describe("NodeMcpClientTransport", () => {
     ).toBe(false);
   });
 
+  it("closes node sessions when open times out after launch was requested", async () => {
+    vi.useFakeTimers();
+    try {
+      const registry = new NodeRegistry();
+      const { client, sent } = createNodeClient({
+        mcpServers: [{ id: "computer-use", status: "ready" }],
+      });
+      registry.register(client, {});
+
+      const opened = registry.openMcpSession({
+        nodeId: "mac-node",
+        serverId: "computer-use",
+        sessionId: "session-timeout",
+        timeoutMs: 1000,
+      });
+
+      expect(sent).toEqual([
+        {
+          event: "node.mcp.session.open",
+          payload: {
+            sessionId: "session-timeout",
+            nodeId: "mac-node",
+            serverId: "computer-use",
+            timeoutMs: 1000,
+          },
+        },
+      ]);
+
+      await vi.advanceTimersByTimeAsync(1000);
+
+      await expect(opened).resolves.toMatchObject({
+        sessionId: "session-timeout",
+        nodeId: "mac-node",
+        serverId: "computer-use",
+        ok: false,
+        error: { code: "TIMEOUT" },
+      });
+      expect(sent.at(-1)).toEqual({
+        event: "node.mcp.session.close",
+        payload: {
+          sessionId: "session-timeout",
+          nodeId: "mac-node",
+          reason: "open_timeout",
+        },
+      });
+      expect(
+        registry.handleMcpSessionOpenResult({
+          sessionId: "session-timeout",
+          nodeId: "mac-node",
+          serverId: "computer-use",
+          ok: true,
+        }),
+      ).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("allows permission-missing MCP servers to open through the native host", async () => {
     const registry = new NodeRegistry();
     const { client, sent } = createNodeClient({
