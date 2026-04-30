@@ -1,6 +1,7 @@
 import type { AgentInternalEvent } from "../../agents/internal-events.js";
 import type { SpawnedRunMetadata } from "../../agents/spawned-context.js";
 import type { PromptMode } from "../../agents/system-prompt.types.js";
+import type { AgentThreadMcpServers } from "../../agents/thread-mcp.js";
 import type { ChannelOutboundTargetMode } from "../../channels/plugins/types.public.js";
 import type { PromptImageOrderEntry } from "../../media/prompt-image-order.js";
 import type { InputProvenance } from "../../sessions/input-provenance.js";
@@ -46,6 +47,8 @@ export type AgentCommandOpts = {
   imageOrder?: PromptImageOrderEntry[];
   /** Optional client-provided tools (OpenResponses hosted tools). */
   clientTools?: ClientToolDefinition[];
+  /** Optional MCP servers to expose directly to the selected agent harness for this turn. */
+  threadMcpServers?: AgentThreadMcpServers;
   /** Agent id override (must exist in config). */
   agentId?: string;
   /** Per-run provider override. */

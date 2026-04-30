@@ -37,6 +37,7 @@ describe("createGatewayRequestContext", () => {
       clients: new Set(),
       enforceSharedGatewayAuthGenerationForConfigWrite: vi.fn(),
       nodeRegistry: {} as never,
+      createNodeMcpClientTransport: vi.fn() as never,
       agentRunSeq: new Map(),
       chatAbortControllers: new Map(),
       chatAbortedRuns: new Map(),

@@ -20,6 +20,14 @@ export type NodeMcpServerDescriptor = {
   metadata?: Record<string, unknown>;
 };
 
+export function isNodeMcpServerOpenable(descriptor: NodeMcpServerDescriptor): boolean {
+  return (
+    !descriptor.status ||
+    descriptor.status === "ready" ||
+    descriptor.status === "missing_permissions"
+  );
+}
+
 function nonEmptyTrimmedString(value: unknown): string | undefined {
   if (typeof value !== "string") {
     return undefined;

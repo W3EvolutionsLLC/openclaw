@@ -22,6 +22,11 @@ import {
   validateMcpLoopbackRequest,
 } from "./mcp-http.request.js";
 import { McpLoopbackToolCache } from "./mcp-http.runtime.js";
+import {
+  isNodeMcpLoopbackPath,
+  NodeMcpHttpProxyManager,
+  type NodeMcpTransportFactory,
+} from "./node-mcp-http-proxy.js";
 
 export {
   createMcpLoopbackServerConfig,
@@ -34,8 +39,13 @@ type McpLoopbackServer = {
   close: () => Promise<void>;
 };
 
+export type McpLoopbackServerOptions = {
+  createNodeMcpClientTransport?: NodeMcpTransportFactory;
+};
+
 let activeMcpLoopbackServer: McpLoopbackServer | undefined;
 let activeMcpLoopbackServerPromise: Promise<McpLoopbackServer> | null = null;
+let activeNodeMcpTransportFactory: NodeMcpTransportFactory | undefined;
 
 function shouldLogMcpLoopbackTraffic(): boolean {
   return (
@@ -53,6 +63,30 @@ function logMcpLoopbackTraffic(step: string, details: Record<string, unknown>): 
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function resolveRequestPathname(req: IncomingMessage): string {
+  try {
+    return new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`).pathname;
+  } catch {
+    return "/";
+  }
+}
+
+function writeMcpResponses(
+  res: ServerResponse,
+  parsed: JsonRpcRequest | JsonRpcRequest[],
+  responses: object[],
+): void {
+  if (responses.length === 0) {
+    res.writeHead(202);
+    res.end();
+    return;
+  }
+
+  const payload = Array.isArray(parsed) ? JSON.stringify(responses) : JSON.stringify(responses[0]);
+  res.writeHead(200, { "Content-Type": "application/json" });
+  res.end(payload);
 }
 
 function createRequestAbortSignal(req: IncomingMessage, res: ServerResponse) {
@@ -86,13 +120,20 @@ function createRequestAbortSignal(req: IncomingMessage, res: ServerResponse) {
   };
 }
 
-export async function startMcpLoopbackServer(port = 0): Promise<{
+export async function startMcpLoopbackServer(
+  port = 0,
+  options?: McpLoopbackServerOptions,
+): Promise<{
   port: number;
   close: () => Promise<void>;
 }> {
+  if (options?.createNodeMcpClientTransport) {
+    activeNodeMcpTransportFactory = options.createNodeMcpClientTransport;
+  }
   const ownerToken = crypto.randomBytes(32).toString("hex");
   const nonOwnerToken = crypto.randomBytes(32).toString("hex");
   const toolCache = new McpLoopbackToolCache();
+  const nodeMcpProxy = new NodeMcpHttpProxyManager(() => activeNodeMcpTransportFactory);
 
   const httpServer = createHttpServer((req, res) => {
     const auth = validateMcpLoopbackRequest({ req, res, ownerToken, nonOwnerToken });
@@ -105,6 +146,23 @@ export async function startMcpLoopbackServer(port = 0): Promise<{
       try {
         const body = await readMcpHttpBody(req);
         const parsed: JsonRpcRequest | JsonRpcRequest[] = JSON.parse(body);
+        const messages = Array.isArray(parsed) ? parsed : [parsed];
+        const pathname = resolveRequestPathname(req);
+        if (isNodeMcpLoopbackPath(pathname)) {
+          if (!auth.senderIsOwner) {
+            res.writeHead(403, { "Content-Type": "application/json" });
+            res.end(JSON.stringify(jsonRpcError(null, -32001, "Owner token required")));
+            return;
+          }
+          const responses = await nodeMcpProxy.handle({
+            pathname,
+            messages,
+            signal: requestAbort.signal,
+          });
+          writeMcpResponses(res, parsed, responses);
+          return;
+        }
+
         const cfg = getRuntimeConfig();
         const requestContext = resolveMcpRequestContext(req, cfg, auth);
         const scopedTools = toolCache.resolve({
@@ -115,7 +173,6 @@ export async function startMcpLoopbackServer(port = 0): Promise<{
           senderIsOwner: requestContext.senderIsOwner,
         });
 
-        const messages = Array.isArray(parsed) ? parsed : [parsed];
         logMcpLoopbackTraffic("request", {
           batchSize: messages.length,
           methods: messages.map((message) => message.method),
@@ -152,17 +209,7 @@ export async function startMcpLoopbackServer(port = 0): Promise<{
           }
         }
 
-        if (responses.length === 0) {
-          res.writeHead(202);
-          res.end();
-          return;
-        }
-
-        const payload = Array.isArray(parsed)
-          ? JSON.stringify(responses)
-          : JSON.stringify(responses[0]);
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(payload);
+        writeMcpResponses(res, parsed, responses);
       } catch (error) {
         logWarn(`mcp loopback: request handling failed: ${formatErrorMessage(error)}`);
         logMcpLoopbackTraffic("request-failed", {
@@ -195,14 +242,15 @@ export async function startMcpLoopbackServer(port = 0): Promise<{
 
   const server: McpLoopbackServer = {
     port: address.port,
-    close: () =>
-      new Promise<void>((resolve, reject) => {
+    close: async () => {
+      await new Promise<void>((resolve, reject) => {
         httpServer.close((error) => {
           if (!error) {
             clearActiveMcpLoopbackRuntimeByOwnerToken(ownerToken);
             if (activeMcpLoopbackServer === server) {
               activeMcpLoopbackServer = undefined;
             }
+            activeNodeMcpTransportFactory = undefined;
           }
           if (error) {
             reject(error);
@@ -210,17 +258,25 @@ export async function startMcpLoopbackServer(port = 0): Promise<{
           }
           resolve();
         });
-      }),
+      });
+      await nodeMcpProxy.close();
+    },
   };
   return server;
 }
 
-export async function ensureMcpLoopbackServer(port = 0): Promise<McpLoopbackServer> {
+export async function ensureMcpLoopbackServer(
+  port = 0,
+  options?: McpLoopbackServerOptions,
+): Promise<McpLoopbackServer> {
+  if (options?.createNodeMcpClientTransport) {
+    activeNodeMcpTransportFactory = options.createNodeMcpClientTransport;
+  }
   if (activeMcpLoopbackServer) {
     return activeMcpLoopbackServer;
   }
   if (!activeMcpLoopbackServerPromise) {
-    activeMcpLoopbackServerPromise = startMcpLoopbackServer(port)
+    activeMcpLoopbackServerPromise = startMcpLoopbackServer(port, options)
       .then((server) => {
         activeMcpLoopbackServer = server;
         return server;

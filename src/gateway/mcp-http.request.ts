@@ -82,7 +82,7 @@ export function validateMcpLoopbackRequest(params: {
     return null;
   }
 
-  if (url.pathname !== "/mcp") {
+  if (url.pathname !== "/mcp" && !url.pathname.startsWith("/mcp/node/")) {
     logMcpLoopbackHttp("reject", {
       reason: "not_found",
       method: params.req.method ?? "",

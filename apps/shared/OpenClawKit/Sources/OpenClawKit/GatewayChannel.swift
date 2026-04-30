@@ -82,6 +82,7 @@ public struct GatewayConnectOptions: Sendable {
     public var caps: [String]
     public var commands: [String]
     public var permissions: [String: Bool]
+    public var mcpServers: [NodeMcpServerDescriptor]
     public var clientId: String
     public var clientMode: String
     public var clientDisplayName: String?
@@ -96,6 +97,7 @@ public struct GatewayConnectOptions: Sendable {
         caps: [String],
         commands: [String],
         permissions: [String: Bool],
+        mcpServers: [NodeMcpServerDescriptor] = [],
         clientId: String,
         clientMode: String,
         clientDisplayName: String?,
@@ -106,6 +108,7 @@ public struct GatewayConnectOptions: Sendable {
         self.caps = caps
         self.commands = commands
         self.permissions = permissions
+        self.mcpServers = mcpServers
         self.clientId = clientId
         self.clientMode = clientMode
         self.clientDisplayName = clientDisplayName
@@ -420,6 +423,9 @@ public actor GatewayChannelActor {
         if !options.permissions.isEmpty {
             params["permissions"] = ProtoAnyCodable(options.permissions)
         }
+        if !options.mcpServers.isEmpty {
+            params["mcpServers"] = ProtoAnyCodable(options.mcpServers.map(Self.encodeMcpServerDescriptor))
+        }
         let includeDeviceIdentity = options.includeDeviceIdentity
         let identity = includeDeviceIdentity ? DeviceIdentityStore.loadOrCreate() : nil
         let selectedAuth = self.selectConnectAuth(
@@ -497,6 +503,34 @@ public actor GatewayChannelActor {
             }
             throw error
         }
+    }
+
+    private static func encodeMcpServerDescriptor(_ descriptor: NodeMcpServerDescriptor) -> [String: Any] {
+        var encoded: [String: Any] = [
+            "id": descriptor.id,
+        ]
+        if let displayname = descriptor.displayname {
+            encoded["displayName"] = displayname
+        }
+        if let provider = descriptor.provider {
+            encoded["provider"] = provider
+        }
+        if let transport = descriptor.transport {
+            encoded["transport"] = transport
+        }
+        if let source = descriptor.source {
+            encoded["source"] = source
+        }
+        if let status = descriptor.status {
+            encoded["status"] = status
+        }
+        if let requiredpermissions = descriptor.requiredpermissions {
+            encoded["requiredPermissions"] = requiredpermissions
+        }
+        if let metadata = descriptor.metadata {
+            encoded["metadata"] = metadata
+        }
+        return encoded
     }
 
     private func selectConnectAuth(

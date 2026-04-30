@@ -70,6 +70,9 @@ public actor GatewayNodeSession {
     private var onConnected: (@Sendable () async -> Void)?
     private var onDisconnected: (@Sendable (String) async -> Void)?
     private var onInvoke: (@Sendable (BridgeInvokeRequest) async -> BridgeInvokeResponse)?
+    private var onMcpSessionOpen: (@Sendable (NodeMcpSessionOpenEvent) async -> Void)?
+    private var onMcpSessionInput: (@Sendable (NodeMcpSessionInputEvent) async -> Void)?
+    private var onMcpSessionClose: (@Sendable (NodeMcpSessionCloseEvent) async -> Void)?
     private var hasEverConnected = false
     private var hasNotifiedConnected = false
     private var snapshotReceived = false
@@ -167,6 +170,20 @@ public actor GatewayNodeSession {
         let scopes = sorted(options.scopes)
         let caps = sorted(options.caps)
         let commands = sorted(options.commands)
+        let mcpServers = options.mcpServers
+            .map { descriptor in
+                [
+                    descriptor.id,
+                    descriptor.displayname ?? "",
+                    descriptor.provider ?? "",
+                    descriptor.transport ?? "",
+                    descriptor.source ?? "",
+                    descriptor.status ?? "",
+                    (descriptor.requiredpermissions ?? []).sorted().joined(separator: ","),
+                ].joined(separator: ":")
+            }
+            .sorted()
+            .joined(separator: ",")
         let clientId = options.clientId.trimmingCharacters(in: .whitespacesAndNewlines)
         let clientMode = options.clientMode.trimmingCharacters(in: .whitespacesAndNewlines)
         let clientDisplayName = (options.clientDisplayName ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -184,6 +201,7 @@ public actor GatewayNodeSession {
             scopes,
             caps,
             commands,
+            mcpServers,
             clientId,
             clientMode,
             clientDisplayName,
@@ -201,7 +219,10 @@ public actor GatewayNodeSession {
         sessionBox: WebSocketSessionBox?,
         onConnected: @escaping @Sendable () async -> Void,
         onDisconnected: @escaping @Sendable (String) async -> Void,
-        onInvoke: @escaping @Sendable (BridgeInvokeRequest) async -> BridgeInvokeResponse) async throws
+        onInvoke: @escaping @Sendable (BridgeInvokeRequest) async -> BridgeInvokeResponse,
+        onMcpSessionOpen: (@Sendable (NodeMcpSessionOpenEvent) async -> Void)? = nil,
+        onMcpSessionInput: (@Sendable (NodeMcpSessionInputEvent) async -> Void)? = nil,
+        onMcpSessionClose: (@Sendable (NodeMcpSessionCloseEvent) async -> Void)? = nil) async throws
     {
         let nextOptionsKey = self.connectOptionsKey(connectOptions)
         let shouldReconnect = self.activeURL != url ||
@@ -215,6 +236,9 @@ public actor GatewayNodeSession {
         self.onConnected = onConnected
         self.onDisconnected = onDisconnected
         self.onInvoke = onInvoke
+        self.onMcpSessionOpen = onMcpSessionOpen
+        self.onMcpSessionInput = onMcpSessionInput
+        self.onMcpSessionClose = onMcpSessionClose
 
         if shouldReconnect {
             self.resetConnectionState()
@@ -438,11 +462,25 @@ public actor GatewayNodeSession {
 
     private func handleEvent(_ evt: EventFrame) async {
         self.broadcastServerEvent(evt)
-        guard evt.event == "node.invoke.request" else { return }
+        switch evt.event {
+        case "node.invoke.request":
+            await self.handleInvokeEvent(evt)
+        case "node.mcp.session.open":
+            await self.handleMcpSessionOpenEvent(evt)
+        case "node.mcp.session.input":
+            await self.handleMcpSessionInputEvent(evt)
+        case "node.mcp.session.close":
+            await self.handleMcpSessionCloseEvent(evt)
+        default:
+            return
+        }
+    }
+
+    private func handleInvokeEvent(_ evt: EventFrame) async {
         self.logger.info("node invoke request received")
         guard let payload = evt.payload else { return }
         do {
-            let request = try self.decodeInvokeRequest(from: payload)
+            let request = try self.decodePayload(NodeInvokeRequestPayload.self, from: payload)
             let timeoutLabel = request.timeoutMs.map(String.init) ?? "none"
             self.logger.info(
                 "node invoke request decoded id=\(request.id, privacy: .public) command=\(request.command, privacy: .public) timeoutMs=\(timeoutLabel, privacy: .public)")
@@ -464,13 +502,43 @@ public actor GatewayNodeSession {
         }
     }
 
-    private func decodeInvokeRequest(from payload: OpenClawProtocol.AnyCodable) throws -> NodeInvokeRequestPayload {
+    private func handleMcpSessionOpenEvent(_ evt: EventFrame) async {
+        guard let payload = evt.payload else { return }
+        do {
+            let event = try self.decodePayload(NodeMcpSessionOpenEvent.self, from: payload)
+            await self.onMcpSessionOpen?(event)
+        } catch {
+            self.logger.error("node MCP open decode failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    private func handleMcpSessionInputEvent(_ evt: EventFrame) async {
+        guard let payload = evt.payload else { return }
+        do {
+            let event = try self.decodePayload(NodeMcpSessionInputEvent.self, from: payload)
+            await self.onMcpSessionInput?(event)
+        } catch {
+            self.logger.error("node MCP input decode failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    private func handleMcpSessionCloseEvent(_ evt: EventFrame) async {
+        guard let payload = evt.payload else { return }
+        do {
+            let event = try self.decodePayload(NodeMcpSessionCloseEvent.self, from: payload)
+            await self.onMcpSessionClose?(event)
+        } catch {
+            self.logger.error("node MCP close decode failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    private func decodePayload<T: Decodable>(_ type: T.Type, from payload: OpenClawProtocol.AnyCodable) throws -> T {
         do {
             let data = try self.encoder.encode(payload)
-            return try self.decoder.decode(NodeInvokeRequestPayload.self, from: data)
+            return try self.decoder.decode(T.self, from: data)
         } catch {
             if let raw = payload.value as? String, let data = raw.data(using: .utf8) {
-                return try self.decoder.decode(NodeInvokeRequestPayload.self, from: data)
+                return try self.decoder.decode(T.self, from: data)
             }
             throw error
         }
@@ -499,6 +567,66 @@ public actor GatewayNodeSession {
         } catch {
             self.logger.error(
                 "node invoke result failed id=\(request.id, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    public func sendMcpSessionOpenResult(_ result: NodeMcpSessionOpenResultParams) async {
+        guard let channel = self.channel else { return }
+        var params: [String: AnyCodable] = [
+            "sessionId": AnyCodable(result.sessionid),
+            "nodeId": AnyCodable(result.nodeid),
+            "serverId": AnyCodable(result.serverid),
+            "ok": AnyCodable(result.ok),
+        ]
+        if let pid = result.pid {
+            params["pid"] = AnyCodable(pid)
+        }
+        if let error = result.error {
+            params["error"] = AnyCodable(error)
+        }
+        do {
+            try await channel.send(method: "node.mcp.session.open.result", params: params)
+        } catch {
+            self.logger.error("node MCP open result failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    public func sendMcpSessionOutput(_ output: NodeMcpSessionOutputParams) async {
+        guard let channel = self.channel else { return }
+        let params: [String: AnyCodable] = [
+            "sessionId": AnyCodable(output.sessionid),
+            "nodeId": AnyCodable(output.nodeid),
+            "seq": AnyCodable(output.seq),
+            "stream": AnyCodable(output.stream),
+            "dataBase64": AnyCodable(output.database64),
+        ]
+        do {
+            try await channel.send(method: "node.mcp.session.output", params: params)
+        } catch {
+            self.logger.error("node MCP output failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    public func sendMcpSessionClosed(_ closed: NodeMcpSessionClosedParams) async {
+        guard let channel = self.channel else { return }
+        var params: [String: AnyCodable] = [
+            "sessionId": AnyCodable(closed.sessionid),
+            "nodeId": AnyCodable(closed.nodeid),
+            "ok": AnyCodable(closed.ok),
+        ]
+        if let exitcode = closed.exitcode {
+            params["exitCode"] = exitcode
+        }
+        if let signal = closed.signal {
+            params["signal"] = signal
+        }
+        if let error = closed.error {
+            params["error"] = AnyCodable(error)
+        }
+        do {
+            try await channel.send(method: "node.mcp.session.closed", params: params)
+        } catch {
+            self.logger.error("node MCP closed failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 

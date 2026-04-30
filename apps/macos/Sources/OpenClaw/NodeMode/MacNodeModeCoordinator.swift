@@ -1,5 +1,6 @@
 import Foundation
 import OpenClawKit
+import OpenClawProtocol
 import OSLog
 
 @MainActor
@@ -10,6 +11,7 @@ final class MacNodeModeCoordinator {
     private var task: Task<Void, Never>?
     private let runtime = MacNodeRuntime()
     private let session = GatewayNodeSession()
+    private let mcpHost = MacComputerUseMcpHost()
 
     func start() {
         guard self.task == nil else { return }
@@ -63,12 +65,16 @@ final class MacNodeModeCoordinator {
                 let caps = self.currentCaps()
                 let commands = self.currentCommands(caps: caps)
                 let permissions = await self.currentPermissions()
+                let mcpServers = Self.resolvedMcpServers(permissions: permissions)
+                let mcpHost = self.mcpHost
+                let nodeSession = self.session
                 let connectOptions = GatewayConnectOptions(
                     role: "node",
                     scopes: [],
                     caps: caps,
                     commands: commands,
                     permissions: permissions,
+                    mcpServers: mcpServers,
                     clientId: "openclaw-macos",
                     clientMode: "node",
                     clientDisplayName: InstanceIdentity.displayName)
@@ -104,6 +110,15 @@ final class MacNodeModeCoordinator {
                                 error: OpenClawNodeError(code: .unavailable, message: "UNAVAILABLE: node not ready"))
                         }
                         return await self.runtime.handleInvoke(req)
+                    },
+                    onMcpSessionOpen: { event in
+                        await mcpHost.open(event, gateway: nodeSession)
+                    },
+                    onMcpSessionInput: { event in
+                        await mcpHost.input(event)
+                    },
+                    onMcpSessionClose: { event in
+                        await mcpHost.close(event)
                     })
 
                 retryDelay = 1_000_000_000
@@ -122,7 +137,11 @@ final class MacNodeModeCoordinator {
         locationMode: OpenClawLocationMode,
         connectionMode: AppState.ConnectionMode) -> [String]
     {
-        var caps: [String] = [OpenClawCapability.canvas.rawValue, OpenClawCapability.screen.rawValue]
+        var caps: [String] = [
+            OpenClawCapability.canvas.rawValue,
+            OpenClawCapability.screen.rawValue,
+            OpenClawCapability.mcpHost.rawValue,
+        ]
         if browserControlEnabled, connectionMode == .local {
             caps.append(OpenClawCapability.browser.rawValue)
         }
@@ -147,6 +166,10 @@ final class MacNodeModeCoordinator {
     private func currentPermissions() async -> [String: Bool] {
         let statuses = await PermissionManager.status()
         return Dictionary(uniqueKeysWithValues: statuses.map { ($0.key.rawValue, $0.value) })
+    }
+
+    nonisolated static func resolvedMcpServers(permissions: [String: Bool]) -> [NodeMcpServerDescriptor] {
+        [MacComputerUseMcpHost.computerUseDescriptor(permissions: permissions)]
     }
 
     nonisolated static func resolvedCommands(caps: [String]) -> [String] {

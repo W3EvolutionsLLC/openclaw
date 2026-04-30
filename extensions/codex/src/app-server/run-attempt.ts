@@ -75,6 +75,7 @@ import {
   buildTurnStartParams,
   startOrResumeThread,
 } from "./thread-lifecycle.js";
+import { buildCodexThreadMcpConfig, mergeCodexThreadConfigs } from "./thread-mcp-config.js";
 import {
   createCodexTrajectoryRecorder,
   normalizeCodexTrajectoryError,
@@ -403,6 +404,10 @@ export async function runCodexAppServerAttempt(
       : options.nativeHookRelay?.enabled === false
         ? buildCodexNativeHookRelayDisabledConfig()
         : undefined;
+    const threadConfig = mergeCodexThreadConfigs(
+      nativeHookRelayConfig,
+      buildCodexThreadMcpConfig(params.threadMcpServers),
+    );
     ({ client, thread } = await withCodexStartupTimeout({
       timeoutMs: params.timeoutMs,
       timeoutFloorMs: options.startupTimeoutFloorMs,
@@ -422,7 +427,7 @@ export async function runCodexAppServerAttempt(
           dynamicTools: toolBridge.specs,
           appServer,
           developerInstructions: promptBuild.developerInstructions,
-          config: nativeHookRelayConfig,
+          config: threadConfig,
         });
         return { client: startupClient, thread: startupThread };
       },

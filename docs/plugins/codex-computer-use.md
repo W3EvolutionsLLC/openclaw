@@ -11,10 +11,14 @@ read_when:
 
 Computer Use is a Codex-native MCP plugin for local desktop control. OpenClaw
 does not vendor the desktop app, execute desktop actions itself, or bypass
-Codex permissions. The bundled `codex` plugin only prepares Codex app-server:
-it enables Codex plugin support, finds or installs the configured Codex
-Computer Use plugin, checks that the `computer-use` MCP server is available, and
-then lets Codex own the native MCP tool calls during Codex-mode turns.
+Codex permissions. OpenClaw prepares the Codex app-server plugin, then prefers a
+native OpenClaw.app node host for the permission-sensitive MCP process on macOS.
+
+In the happy path, Codex app-server still runs inside the Gateway, but the
+`computer-use` MCP server is launched by OpenClaw.app. Codex sees a normal HTTP
+MCP server for the thread, while the Gateway routes those MCP frames over the
+paired node connection to the Mac app. That keeps the permission-sensitive
+process under a GUI app lineage instead of a `launchd` Gateway lineage.
 
 Use this page when OpenClaw is already using the native Codex harness. For the
 runtime setup itself, see [Codex harness](/plugins/codex-harness).
@@ -24,8 +28,14 @@ runtime setup itself, see [Codex harness](/plugins/codex-harness).
 OpenClaw.app's Peekaboo integration is separate from Codex Computer Use. The
 macOS app can host a PeekabooBridge socket so the `peekaboo` CLI can reuse the
 app's local Accessibility and Screen Recording grants for Peekaboo's own
-automation tools. That bridge does not install or proxy Codex Computer Use, and
-Codex Computer Use does not call through the PeekabooBridge socket.
+automation tools. Codex Computer Use does not call through the PeekabooBridge
+socket.
+
+For Codex Computer Use, OpenClaw.app connects to the Gateway as a native node
+and advertises an MCP host capability. When that node reports a `computer-use`
+server, owner-initiated Codex turns get a per-thread MCP override that points to
+the Gateway's authenticated loopback proxy. The proxy opens a node-hosted MCP
+session, and the Mac app starts the configured Computer Use stdio server.
 
 Use [Peekaboo bridge](/platforms/mac/peekaboo) when you want OpenClaw.app to be
 a permission-aware host for Peekaboo CLI automation. Use this page when a
@@ -115,6 +125,12 @@ register the bundled Codex marketplace from
 fails. If setup still cannot make the MCP server available, the turn fails
 before the thread starts.
 
+On macOS, also keep OpenClaw.app running and paired with the Gateway as a node.
+That is the path that gives Computer Use a native GUI host for Accessibility and
+Screen Recording. If OpenClaw.app is not connected, Codex may still see the
+app-server's own MCP configuration, but macOS can deny desktop automation from a
+headless `launchd` Gateway process.
+
 Existing sessions keep their runtime and Codex thread binding. After changing
 `agentRuntime` or Computer Use config, use `/new` or `/reset` in the affected
 chat before testing.
@@ -186,6 +202,13 @@ If you use a nonstandard Codex app path, set `computerUse.marketplacePath` to a
 local marketplace file path or run `/codex computer-use install --source
 <marketplace-source>` once.
 
+The native Mac node host also looks for the bundled Computer Use MCP manifest at
+the standard Codex app path. For local development or nonstandard installs, set
+`OPENCLAW_COMPUTER_USE_MCP_COMMAND` to the stdio MCP executable path and
+optionally set `OPENCLAW_COMPUTER_USE_MCP_ARGS` to a JSON array of arguments.
+When the env override is absent, OpenClaw.app reads the bundled `.mcp.json`
+manifest and launches the declared `computer-use` server.
+
 ## Remote catalog limit
 
 Codex app-server can list and read remote-only catalog entries, but it does not
@@ -245,15 +268,22 @@ when available, and the specific message for the failing setup step.
 
 Computer Use is macOS-specific. The Codex-owned MCP server may need local OS
 permissions before it can inspect or control apps. If OpenClaw says Computer Use
-is installed but the MCP server is unavailable, verify the Codex-side Computer
-Use setup first:
+is installed but the MCP server is unavailable, verify both layers:
 
 - Codex app-server is running on the same host where desktop control should
   happen.
 - The Computer Use plugin is enabled in Codex config.
 - The `computer-use` MCP server appears in Codex app-server MCP status.
-- macOS has granted the required permissions for the desktop-control app.
+- OpenClaw.app is running, connected to the Gateway, and visible in
+  `openclaw nodes status`.
+- macOS has granted the required permissions for the desktop-control app and
+  the native host.
 - The current host session can access the desktop being controlled.
+
+The Mac node can advertise `computer-use` before permissions are fully granted.
+The Gateway still routes owner-requested MCP startup through that node so the
+native host can surface the permission flow or return a specific MCP startup
+error from the right process lineage.
 
 OpenClaw intentionally fails closed when `computerUse.enabled` is true. A
 Codex-mode turn should not silently proceed without the native desktop tools

@@ -735,6 +735,51 @@ describe("runCodexAppServerAttempt", () => {
     expect(nativeHookRelayTesting.getNativeHookRelayRegistrationForTests(relayId)).toBeUndefined();
   });
 
+  it("passes node-hosted MCP servers through Codex thread config", async () => {
+    const sessionFile = path.join(tempDir, "session.jsonl");
+    const workspaceDir = path.join(tempDir, "workspace");
+    const params = createParams(sessionFile, workspaceDir);
+    params.threadMcpServers = {
+      "computer-use": {
+        transport: "http",
+        url: "http://127.0.0.1:49152/mcp/node/mac-node/computer-use",
+        headers: { Authorization: "Bearer owner-token" },
+        startupTimeoutSec: 30,
+        toolTimeoutSec: 120,
+        defaultToolsApprovalMode: "approve",
+      },
+    };
+    const harness = createStartedThreadHarness();
+
+    const run = runCodexAppServerAttempt(params, {
+      nativeHookRelay: {
+        enabled: true,
+        events: ["pre_tool_use"],
+      },
+    });
+    await harness.waitForMethod("turn/start");
+    await harness.completeTurn({ threadId: "thread-1", turnId: "turn-1" });
+    await run;
+
+    const startRequest = harness.requests.find((request) => request.method === "thread/start");
+    expect(startRequest?.params).toEqual(
+      expect.objectContaining({
+        config: expect.objectContaining({
+          "features.codex_hooks": true,
+          mcp_servers: {
+            "computer-use": {
+              url: "http://127.0.0.1:49152/mcp/node/mac-node/computer-use",
+              http_headers: { Authorization: "Bearer owner-token" },
+              startup_timeout_sec: 30,
+              tool_timeout_sec: 120,
+              default_tools_approval_mode: "approve",
+            },
+          },
+        }),
+      }),
+    );
+  });
+
   it("reuses the Codex native hook relay id across runs for the same session", async () => {
     const sessionFile = path.join(tempDir, "session.jsonl");
     const workspaceDir = path.join(tempDir, "workspace");

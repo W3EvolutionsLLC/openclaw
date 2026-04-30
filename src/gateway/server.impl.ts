@@ -794,6 +794,7 @@ export async function startGatewayServer(
     nodeUnsubscribe,
     nodeUnsubscribeAll,
     broadcastVoiceWakeChanged,
+    createNodeMcpClientTransport,
     hasMobileNodeConnected,
   } = createGatewayNodeSessionRuntime({ broadcast });
   applyGatewayLaneConcurrency(cfgAtStart);
@@ -1007,6 +1008,7 @@ export async function startGatewayServer(
         });
       },
       nodeRegistry,
+      createNodeMcpClientTransport,
       agentRunSeq,
       chatAbortControllers,
       chatAbortedRuns: chatRunState.abortedRuns,

@@ -224,7 +224,7 @@ describe("NodeMcpClientTransport", () => {
     ).toBe(false);
   });
 
-  it("rejects advertised MCP servers that are not ready", async () => {
+  it("allows permission-missing MCP servers to open through the native host", async () => {
     const registry = new NodeRegistry();
     const { client, sent } = createNodeClient({
       mcpServers: [{ id: "computer-use", status: "missing_permissions" }],
@@ -235,10 +235,43 @@ describe("NodeMcpClientTransport", () => {
       nodeId: "mac-node",
       serverId: "computer-use",
       sessionId: "session-not-ready",
+      openTimeoutMs: 1000,
+    });
+
+    const start = transport.start();
+    expect(sent).toEqual([
+      {
+        event: "node.mcp.session.open",
+        payload: expect.objectContaining({
+          sessionId: "session-not-ready",
+          serverId: "computer-use",
+        }),
+      },
+    ]);
+    registry.handleMcpSessionOpenResult({
+      sessionId: "session-not-ready",
+      nodeId: "mac-node",
+      serverId: "computer-use",
+      ok: true,
+    });
+    await expect(start).resolves.toBeUndefined();
+  });
+
+  it("rejects advertised MCP servers with a non-openable status", async () => {
+    const registry = new NodeRegistry();
+    const { client, sent } = createNodeClient({
+      mcpServers: [{ id: "computer-use", status: "missing_backend" }],
+    });
+    registry.register(client, {});
+
+    const transport = new NodeMcpClientTransport(registry, {
+      nodeId: "mac-node",
+      serverId: "computer-use",
+      sessionId: "session-not-ready",
       openTimeoutMs: 1,
     });
 
-    await expect(transport.start()).rejects.toThrow("node MCP server is missing_permissions");
+    await expect(transport.start()).rejects.toThrow("node MCP server is missing_backend");
     expect(sent).toEqual([]);
   });
 

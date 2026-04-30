@@ -32,6 +32,7 @@ export type GatewayRequestContextParams = {
   clients: Set<GatewayRequestContextClient>;
   enforceSharedGatewayAuthGenerationForConfigWrite: (nextConfig: OpenClawConfig) => void;
   nodeRegistry: GatewayRequestContext["nodeRegistry"];
+  createNodeMcpClientTransport: GatewayRequestContext["createNodeMcpClientTransport"];
   agentRunSeq: GatewayRequestContext["agentRunSeq"];
   chatAbortControllers: GatewayRequestContext["chatAbortControllers"];
   chatAbortedRuns: GatewayRequestContext["chatAbortedRuns"];
@@ -127,6 +128,7 @@ export function createGatewayRequestContext(
     enforceSharedGatewayAuthGenerationForConfigWrite:
       params.enforceSharedGatewayAuthGenerationForConfigWrite,
     nodeRegistry: params.nodeRegistry,
+    createNodeMcpClientTransport: params.createNodeMcpClientTransport,
     agentRunSeq: params.agentRunSeq,
     chatAbortControllers: params.chatAbortControllers,
     chatAbortedRuns: params.chatAbortedRuns,

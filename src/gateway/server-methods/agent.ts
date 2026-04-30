@@ -97,6 +97,7 @@ import {
 } from "../chat-attachments.js";
 import { resolveAssistantAvatarUrl } from "../control-ui-shared.js";
 import { ADMIN_SCOPE } from "../method-scopes.js";
+import { resolveNodeHostedThreadMcpServers } from "../node-mcp-thread-config.js";
 import { GATEWAY_CLIENT_CAPS, hasGatewayClientCap } from "../protocol/client-info.js";
 import {
   ErrorCodes,
@@ -1303,12 +1304,17 @@ export const agentHandlers: GatewayRequestHandlers = {
           (!resolvedSessionKey || resolveAgentIdFromSessionKey(resolvedSessionKey) === agentId)
             ? agentId
             : undefined;
+        const threadMcpServers = await resolveNodeHostedThreadMcpServers({
+          context,
+          senderIsOwner,
+        });
 
         dispatchAgentRunFromGateway({
           ingressOpts: {
             message,
             images,
             imageOrder,
+            threadMcpServers,
             agentId: ingressAgentId,
             provider: providerOverride,
             model: modelOverride,

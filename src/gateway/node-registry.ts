@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  isNodeMcpServerOpenable,
   normalizeNodeMcpServerDescriptors,
   type NodeMcpServerDescriptor,
 } from "../shared/node-mcp-types.js";
@@ -308,7 +309,7 @@ export class NodeRegistry {
         error: { code: "MCP_SERVER_NOT_DECLARED", message: "node did not advertise MCP server" },
       };
     }
-    if (descriptor.status && descriptor.status !== "ready") {
+    if (!isNodeMcpServerOpenable(descriptor)) {
       return {
         sessionId,
         nodeId: params.nodeId,
