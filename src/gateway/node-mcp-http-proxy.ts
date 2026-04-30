@@ -27,6 +27,15 @@ type NodeMcpLoopbackTarget = {
   serverId: string;
 };
 
+type NodeMcpTransportCallbacks = Pick<Transport, "onmessage" | "onerror" | "onclose">;
+
+function setNodeMcpTransportCallbacks(
+  transport: Transport,
+  callbacks: NodeMcpTransportCallbacks,
+): void {
+  Object.assign(transport, callbacks);
+}
+
 function hasOwn(value: object, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(value, key);
 }
@@ -183,12 +192,11 @@ class NodeMcpProxySession {
       serverId: this.target.serverId,
       openTimeoutMs: 30_000,
     });
-    // oxlint-disable-next-line unicorn/prefer-add-event-listener -- MCP Transport exposes callback properties, not EventTarget.
-    transport.onmessage = (message) => this.handleMessage(message);
-    // oxlint-disable-next-line unicorn/prefer-add-event-listener -- MCP Transport exposes callback properties, not EventTarget.
-    transport.onerror = (error) => this.handleTransportClosed(error);
-    // oxlint-disable-next-line unicorn/prefer-add-event-listener -- MCP Transport exposes callback properties, not EventTarget.
-    transport.onclose = () => this.handleTransportClosed();
+    setNodeMcpTransportCallbacks(transport, {
+      onmessage: (message) => this.handleMessage(message),
+      onerror: (error) => this.handleTransportClosed(error),
+      onclose: () => this.handleTransportClosed(),
+    });
     this.transport = transport;
     this.startPromise = transport.start().catch((error) => {
       this.transport = undefined;
