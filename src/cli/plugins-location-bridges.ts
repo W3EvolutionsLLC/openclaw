@@ -23,6 +23,7 @@ function buildBridgeFromPersistedBundledRecord(
     pluginId: record.pluginId,
     preferredSource: "npm",
     npmSpec,
+    ...(record.packageVersion ? { packageVersion: record.packageVersion } : {}),
     ...(record.enabledByDefault ? { enabledByDefault: true } : {}),
     ...(manifest?.channels.length ? { channelIds: manifest.channels } : {}),
   };
