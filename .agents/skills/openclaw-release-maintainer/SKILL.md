@@ -47,6 +47,13 @@ Use this skill for release and publish-time workflow. Keep ordinary development 
   recreate the tag and prerelease at the fixed commit so npm prerelease versions
   stay contiguous. If a published prerelease needs a fix, commit the fix on the
   release branch and increment to the next matching `-alpha.N` or `-beta.N`.
+- After a beta is published, distinguish validation-only fixes from product
+  fixes. Test, docs, workflow, release-script, changelog, or agent-skill fixes
+  that do not change the `openclaw` package runtime can be committed and
+  validated without cutting a new beta. Any fix that changes shipped OpenClaw
+  runtime, package contents, install/update behavior, public API, or user-facing
+  behavior after the beta was published usually requires a new `-beta.N` before
+  treating release validation as evidence for the published package.
 - For a beta release train, run the fast local preflight first, publish the
   beta to npm `beta`, then run the expensive published-package roster focused
   on install/update/Docker/Parallels/NPM Telegram. If anything fails, fix it on
