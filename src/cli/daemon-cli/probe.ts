@@ -1,5 +1,5 @@
-import type { OpenClawConfig } from "../../config/types.js";
 import { applyLocalStatusRpcFallback } from "../../commands/gateway-status/local-status-rpc-fallback.js";
+import type { OpenClawConfig } from "../../config/types.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import { createLazyImportLoader } from "../../shared/lazy-promise.js";
 import { withProgress } from "../progress.js";

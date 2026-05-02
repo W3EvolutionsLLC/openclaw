@@ -248,6 +248,10 @@ describe("resolveGatewayProbeSnapshot", () => {
       gatewayMode: "local",
       remoteUrlMissing: false,
     });
+    mocks.resolveGatewayProbeAuthResolution.mockResolvedValue({
+      auth: {},
+      warning: undefined,
+    });
     mocks.probeGateway.mockResolvedValue({
       ok: false,
       url: "ws://127.0.0.1:18789",
@@ -290,6 +294,10 @@ describe("resolveGatewayProbeSnapshot", () => {
       mode: "local",
       gatewayMode: "local",
       remoteUrlMissing: false,
+    });
+    mocks.resolveGatewayProbeAuthResolution.mockResolvedValue({
+      auth: {},
+      warning: undefined,
     });
     mocks.probeGateway.mockResolvedValue({
       ok: false,
