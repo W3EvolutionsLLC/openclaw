@@ -325,6 +325,7 @@ Docs: https://docs.openclaw.ai
 - Agents/status: resolve `session_status(sessionKey="current")` for sparse channel-plugin sessions after literal current lookups miss, so Scope, Slack, Discord, and other plugin-driven agents avoid retrying through `Unknown sessionKey: current`. Fixes #74141. (#72306) Thanks @bittoby.
 - Cron: retry recurring wake-now main-session jobs through temporary heartbeat busy skips before recording success, so queued cron events no longer appear as ok ghost runs while the main lane is still busy. Fixes #75964. (#76083) Thanks @kshetrajna12 and @xuruiray.
 - Providers/Google: keep Gemini thinking-signature-only stream chunks active during reasoning, so Gemini 3.1 Pro Preview replies no longer hit idle timeouts before visible text. Fixes #76071. (#76080) Thanks @marcoschierhorn and @zhangguiping-xydt.
+- CLI/skills: show per-agent model and command visibility in `openclaw skills check --agent`, and let doctor report or disable unavailable skills allowed for the default agent. (#75983) Thanks @mbelinky.
 
 - Agents/tools: skip unavailable media generation and PDF tool factories from the live reply path when Gateway metadata and the active auth store prove no configured provider can back them, while keeping explicit config and auth-backed providers on the normal factory path. Thanks @shakkernerd.
 - Agents/runtime: reuse the Gateway metadata startup plan when ensuring reply runtime plugins are loaded, so live agent turns do not broad-load plugin runtimes after the Gateway already scoped startup activation. Thanks @shakkernerd.
