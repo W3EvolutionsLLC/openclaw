@@ -68,6 +68,7 @@ Docs: https://docs.openclaw.ai
 
 - Agents/OpenAI: default GPT-5 API-key sessions to the SSE Responses transport unless WebSocket is explicitly selected, restoring replies in fresh Control UI and WebChat beta installs where the auto WebSocket path connected but produced no model events.
 - Agents/sessions: preserve terminal lifecycle state when final run metadata persists from a stale in-memory snapshot, preventing sessions from staying stuck as running after completed or timed-out turns.
+- Gateway/CLI: make `openclaw gateway start` repair stale managed service definitions that point at old OpenClaw versions, missing binaries, or temporary installer paths before starting.
 - Updates/plugins: keep packaged upgrades and beta external plugin installs on stable runtime aliases and matching prerelease npm specs, avoiding stale WebChat runtime chunks and old Twitch packages after upgrading from 2026.4.29.
 - Codex/app-server: resolve managed binaries from bundled `dist` chunks and from the `@openai/codex` package bin when installs do not provide a nearby `.bin/codex` shim, avoiding false missing-binary startup failures.
 - Status: show the `openai-codex` OAuth profile for `openai/gpt-*` sessions running through the native Codex runtime instead of reporting auth as unknown. (#76197) Thanks @mbelinky.
