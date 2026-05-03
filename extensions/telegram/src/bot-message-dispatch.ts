@@ -485,7 +485,10 @@ export const dispatchTelegramMessage = async ({
     if (previous === normalized) {
       return;
     }
-    previewToolProgressLines = [...previewToolProgressLines, normalized].slice(-8);
+    previewToolProgressLines.push(normalized);
+    if (previewToolProgressLines.length > 8) {
+      previewToolProgressLines.splice(0, previewToolProgressLines.length - 8);
+    }
     const previewText = [
       "Working…",
       ...previewToolProgressLines.map((entry) => `• ${formatProgressAsMarkdownCode(entry)}`),
