@@ -225,9 +225,12 @@ export async function deliverSlackSlashReplies(params: {
       chunkMode === "newline"
         ? chunkMarkdownTextWithMode(combined, chunkLimit, chunkMode)
         : [combined];
-    const chunks = markdownChunks.flatMap((markdown) =>
-      markdownToSlackMrkdwnChunks(markdown, chunkLimit, { tableMode: params.tableMode }),
-    );
+    const chunks: string[] = [];
+    for (const markdown of markdownChunks) {
+      chunks.push(
+        ...markdownToSlackMrkdwnChunks(markdown, chunkLimit, { tableMode: params.tableMode }),
+      );
+    }
     if (!chunks.length && combined) {
       chunks.push(combined);
     }

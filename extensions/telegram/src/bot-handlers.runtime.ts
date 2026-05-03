@@ -262,7 +262,10 @@ export const registerTelegramHandlers = ({
         .map((entry) => getTelegramTextParts(entry.msg).text)
         .filter(Boolean)
         .join("\n");
-      const combinedMedia = entries.flatMap((entry) => entry.allMedia);
+      const combinedMedia: (typeof entries)[number]["allMedia"] = [];
+      for (const entry of entries) {
+        combinedMedia.push(...entry.allMedia);
+      }
       if (!combinedText.trim() && combinedMedia.length === 0) {
         return;
       }
