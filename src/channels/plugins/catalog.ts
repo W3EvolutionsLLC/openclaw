@@ -95,11 +95,16 @@ function splitEnvPaths(value: string): string[] {
   if (!trimmed) {
     return [];
   }
-  return trimmed
-    .split(/[;,]/g)
-    .flatMap((chunk) => chunk.split(path.delimiter))
-    .map((entry) => entry.trim())
-    .filter(Boolean);
+  const paths: string[] = [];
+  for (const chunk of trimmed.split(/[;,]/g)) {
+    for (const entry of chunk.split(path.delimiter)) {
+      const normalized = entry.trim();
+      if (normalized) {
+        paths.push(normalized);
+      }
+    }
+  }
+  return paths;
 }
 
 function resolveDefaultCatalogPaths(env: NodeJS.ProcessEnv): string[] {
