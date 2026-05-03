@@ -10,7 +10,7 @@ Docs: https://docs.openclaw.ai
 
 ### Changes
 
-- Channels/performance: trim Telegram, Slack, Discord, Mattermost, and agent-turn hot paths by skipping non-forum Telegram topic-cache setup, caching Slack stream recipient team lookups, parallelizing Slack media hydration, reducing config/command normalization allocation chains, avoiding queue head churn during dispatch, and replacing reply payload, compaction, tool-prep, and channel formatter array churn with single-pass loops. Thanks @vincentkoc.
+- Channels/performance: trim Telegram, Slack, Discord, Mattermost, plugin control-plane, and agent-turn hot paths by skipping non-forum Telegram topic-cache setup, caching Slack stream recipient team lookups, parallelizing Slack media hydration, reducing config/command/plugin normalization allocation chains, avoiding queue head churn during dispatch, and replacing reply payload, compaction, tool-prep, setup, and channel formatter array churn with single-pass loops. Thanks @vincentkoc.
 - Tools/BTW: add `/side` as a text and native slash-command alias for `/btw` side questions.
 - Agents/tools: skip optional media and PDF tool factories when the effective tool denylist already blocks them, avoiding unnecessary hot-path setup for tools that will be filtered out before model use. (#76773) Thanks @dorukardahan.
 - Discord/status: let explicit reaction tool calls opt into tracking subsequent tool progress on the reacted message with `trackToolCalls: true`, and use the shared tool display emoji table for status reactions.
