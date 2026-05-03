@@ -650,6 +650,16 @@ describe("scripts/lib/docker-e2e-plan", () => {
     });
   });
 
+  it("drops retired bundled channel dependency lanes from manual selections", () => {
+    const selectedLaneNames = parseLaneSelection(
+      "plugins-offline bundled-channel-deps bundled-channel-deps-compat plugin-update",
+    );
+    const plan = planFor({ selectedLaneNames });
+
+    expect(selectedLaneNames).toEqual(["plugins-offline", "plugin-update"]);
+    expect(plan.lanes.map((lane) => lane.name)).toEqual(["plugins-offline", "plugin-update"]);
+  });
+
   it("rejects unknown selected lanes with the available lane names", () => {
     expect(() => planFor({ selectedLaneNames: ["missing-lane"] })).toThrow(
       /OPENCLAW_DOCKER_ALL_LANES unknown lane\(s\): missing-lane/u,
