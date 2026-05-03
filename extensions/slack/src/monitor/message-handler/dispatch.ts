@@ -101,7 +101,13 @@ const UNICODE_TO_SLACK: Record<string, string> = {
 };
 
 function toSlackEmojiName(emoji: string): string {
-  const trimmed = emoji.trim().replace(/^:+|:+$/g, "");
+  let trimmed = emoji.trim();
+  while (trimmed.startsWith(":")) {
+    trimmed = trimmed.slice(1);
+  }
+  while (trimmed.endsWith(":")) {
+    trimmed = trimmed.slice(0, -1);
+  }
   return UNICODE_TO_SLACK[trimmed] ?? trimmed;
 }
 
@@ -911,7 +917,10 @@ export async function dispatchPreparedSlackMessage(prepared: PreparedSlackMessag
     if (previous === escaped) {
       return;
     }
-    previewToolProgressLines = [...previewToolProgressLines, escaped].slice(-8);
+    previewToolProgressLines.push(escaped);
+    if (previewToolProgressLines.length > 8) {
+      previewToolProgressLines.splice(0, previewToolProgressLines.length - 8);
+    }
     draftStream.update(
       ["Working…", ...previewToolProgressLines.map((entry) => `• ${entry}`)].join("\n"),
     );
