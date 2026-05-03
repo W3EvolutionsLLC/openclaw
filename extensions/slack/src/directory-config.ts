@@ -31,7 +31,7 @@ export const listSlackDirectoryPeersFromConfig = createResolvedDirectoryEntriesL
   kind: "user",
   resolveAccount: (cfg, accountId) => resolveSlackDirectoryConfigAccount(cfg, accountId),
   resolveSources: (account) => {
-    const channelUsers: string[] = [];
+    const channelUsers: Array<string | number> = [];
     for (const channel of Object.values(account.config.channels ?? {})) {
       channelUsers.push(...(channel.users ?? []));
     }
