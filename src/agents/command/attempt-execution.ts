@@ -23,6 +23,7 @@ import { FailoverError } from "../failover-error.js";
 import { resolveAgentHarnessPolicy } from "../harness/selection.js";
 import { isCliRuntimeAlias, resolveCliRuntimeExecutionProvider } from "../model-runtime-aliases.js";
 import { isCliProvider } from "../model-selection.js";
+import type { RunEmbeddedPiAgentParams } from "../pi-embedded-runner/run/params.js";
 import { runEmbeddedPiAgent, type EmbeddedPiRunResult } from "../pi-embedded.js";
 import { buildAgentRuntimeAuthPlan } from "../runtime-plan/auth.js";
 import {
@@ -31,6 +32,10 @@ import {
 } from "../session-write-lock.js";
 import { buildWorkspaceSkillSnapshot } from "../skills.js";
 import { buildUsageWithNoCost } from "../stream-message-shared.js";
+import {
+  runEmbeddedPiAgentInWorker,
+  shouldRunEmbeddedPiAgentInWorker,
+} from "../worker-runtime/embedded-pi-agent.js";
 import {
   buildClaudeCliFallbackContextPrelude,
   claudeCliSessionTranscriptHasContent,
@@ -583,7 +588,7 @@ export function runAgentAttempt(params: {
     });
   }
 
-  return runEmbeddedPiAgent({
+  const embeddedRunParams: RunEmbeddedPiAgentParams = {
     sessionId: params.sessionId,
     sessionKey: params.sessionKey,
     agentId: params.sessionAgentId,
@@ -640,7 +645,13 @@ export function runAgentAttempt(params: {
     onUserMessagePersisted: params.onUserMessagePersisted,
     bootstrapPromptWarningSignaturesSeen,
     bootstrapPromptWarningSignature,
-  });
+  };
+
+  if (shouldRunEmbeddedPiAgentInWorker()) {
+    return runEmbeddedPiAgentInWorker(embeddedRunParams);
+  }
+
+  return runEmbeddedPiAgent(embeddedRunParams);
 }
 
 function resolveSessionPinnedAgentHarnessId(params: {

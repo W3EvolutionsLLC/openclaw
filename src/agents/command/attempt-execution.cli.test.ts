@@ -11,7 +11,9 @@ import { persistCliTurnTranscript, runAgentAttempt } from "./attempt-execution.j
 
 const runCliAgentMock = vi.hoisted(() => vi.fn());
 const runEmbeddedPiAgentMock = vi.hoisted(() => vi.fn());
+const runEmbeddedPiAgentInWorkerMock = vi.hoisted(() => vi.fn());
 const ORIGINAL_HOME = process.env.HOME;
+const ORIGINAL_AGENT_WORKER_EXPERIMENT = process.env.OPENCLAW_AGENT_WORKER_EXPERIMENT;
 
 vi.mock("../cli-runner.js", () => ({
   runCliAgent: runCliAgentMock,
@@ -31,6 +33,11 @@ vi.mock("../provider-auth-aliases.js", () => ({
 
 vi.mock("../pi-embedded.js", () => ({
   runEmbeddedPiAgent: runEmbeddedPiAgentMock,
+}));
+
+vi.mock("../worker-runtime/embedded-pi-agent.js", () => ({
+  runEmbeddedPiAgentInWorker: runEmbeddedPiAgentInWorkerMock,
+  shouldRunEmbeddedPiAgentInWorker: () => process.env.OPENCLAW_AGENT_WORKER_EXPERIMENT === "1",
 }));
 
 function makeCliResult(text: string): EmbeddedPiRunResult {
@@ -100,6 +107,7 @@ describe("CLI attempt execution", () => {
     storePath = path.join(tmpDir, "sessions.json");
     runCliAgentMock.mockReset();
     runEmbeddedPiAgentMock.mockReset();
+    runEmbeddedPiAgentInWorkerMock.mockReset();
   });
 
   afterEach(async () => {
@@ -107,6 +115,11 @@ describe("CLI attempt execution", () => {
       delete process.env.HOME;
     } else {
       process.env.HOME = ORIGINAL_HOME;
+    }
+    if (ORIGINAL_AGENT_WORKER_EXPERIMENT === undefined) {
+      delete process.env.OPENCLAW_AGENT_WORKER_EXPERIMENT;
+    } else {
+      process.env.OPENCLAW_AGENT_WORKER_EXPERIMENT = ORIGINAL_AGENT_WORKER_EXPERIMENT;
     }
     await fs.rm(tmpDir, { recursive: true, force: true });
   });
@@ -870,6 +883,65 @@ describe("CLI attempt execution", () => {
       }),
     );
     expect(runEmbeddedPiAgentMock).not.toHaveBeenCalled();
+  });
+
+  it("runs embedded attempts in a worker only when the experiment is enabled", async () => {
+    process.env.OPENCLAW_AGENT_WORKER_EXPERIMENT = "1";
+    runEmbeddedPiAgentInWorkerMock.mockResolvedValueOnce({
+      payloads: [{ text: "worker response" }],
+      meta: {
+        durationMs: 3,
+        finalAssistantVisibleText: "worker response",
+        agentMeta: {
+          sessionId: "session-worker",
+          provider: "openai",
+          model: "gpt-5.5",
+        },
+        executionTrace: {
+          winnerProvider: "openai",
+          winnerModel: "gpt-5.5",
+          fallbackUsed: false,
+          runner: "embedded",
+        },
+      },
+    } satisfies EmbeddedPiRunResult);
+
+    await runAgentAttempt({
+      providerOverride: "openai",
+      originalProvider: "openai",
+      modelOverride: "gpt-5.5",
+      cfg: {} as OpenClawConfig,
+      sessionEntry: undefined,
+      sessionId: "session-worker",
+      sessionKey: "agent:main:worker",
+      sessionAgentId: "main",
+      sessionFile: path.join(tmpDir, "session-worker.jsonl"),
+      workspaceDir: tmpDir,
+      body: "use worker",
+      isFallbackRetry: false,
+      resolvedThinkLevel: "medium",
+      timeoutMs: 1_000,
+      runId: "run-worker",
+      opts: { senderIsOwner: false } as Parameters<typeof runAgentAttempt>[0]["opts"],
+      runContext: {} as Parameters<typeof runAgentAttempt>[0]["runContext"],
+      spawnedBy: undefined,
+      messageChannel: undefined,
+      skillsSnapshot: undefined,
+      resolvedVerboseLevel: undefined,
+      agentDir: tmpDir,
+      onAgentEvent: vi.fn(),
+      authProfileProvider: "openai",
+      sessionHasHistory: false,
+    });
+
+    expect(runEmbeddedPiAgentInWorkerMock).toHaveBeenCalledOnce();
+    expect(runEmbeddedPiAgentMock).not.toHaveBeenCalled();
+    expect(runEmbeddedPiAgentInWorkerMock.mock.calls[0]?.[0]).toMatchObject({
+      sessionId: "session-worker",
+      sessionKey: "agent:main:worker",
+      workspaceDir: tmpDir,
+      prompt: "use worker",
+    });
   });
 });
 
