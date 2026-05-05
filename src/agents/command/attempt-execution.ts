@@ -33,10 +33,6 @@ import {
 import { buildWorkspaceSkillSnapshot } from "../skills.js";
 import { buildUsageWithNoCost } from "../stream-message-shared.js";
 import {
-  runEmbeddedPiAgentInWorker,
-  shouldRunEmbeddedPiAgentInWorker,
-} from "../worker-runtime/embedded-pi-agent.js";
-import {
   buildClaudeCliFallbackContextPrelude,
   claudeCliSessionTranscriptHasContent,
   resolveFallbackRetryPrompt,
@@ -350,7 +346,7 @@ export async function persistCliTurnTranscript(params: {
   });
 }
 
-export function runAgentAttempt(params: {
+export type RunAgentAttemptParams = {
   providerOverride: string;
   modelOverride: string;
   originalProvider: string;
@@ -387,7 +383,9 @@ export function runAgentAttempt(params: {
   sessionHasHistory?: boolean;
   suppressPromptPersistenceOnRetry?: boolean;
   onUserMessagePersisted?: (message: Extract<AgentMessage, { role: "user" }>) => void;
-}) {
+};
+
+export function runAgentAttempt(params: RunAgentAttemptParams) {
   const isRawModelRun = params.opts.modelRun === true || params.opts.promptMode === "none";
   const claudeCliFallbackPrelude =
     !isRawModelRun &&
@@ -646,10 +644,6 @@ export function runAgentAttempt(params: {
     bootstrapPromptWarningSignaturesSeen,
     bootstrapPromptWarningSignature,
   };
-
-  if (shouldRunEmbeddedPiAgentInWorker()) {
-    return runEmbeddedPiAgentInWorker(embeddedRunParams);
-  }
 
   return runEmbeddedPiAgent(embeddedRunParams);
 }

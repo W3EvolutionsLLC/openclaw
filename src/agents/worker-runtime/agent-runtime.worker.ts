@@ -1,9 +1,9 @@
 import { parentPort } from "node:worker_threads";
-import { runEmbeddedPiAgent } from "../pi-embedded.js";
+import { runAgentAttempt } from "../command/attempt-execution.js";
 import type {
   AgentWorkerToParentMessage,
   ParentToAgentWorkerMessage,
-} from "./embedded-pi-agent.types.js";
+} from "./agent-runtime.types.js";
 
 function serializeWorkerError(error: unknown): AgentWorkerToParentMessage {
   if (error instanceof Error) {
@@ -42,11 +42,11 @@ parentPort?.on("message", (message: ParentToAgentWorkerMessage) => {
   }
 
   abortController = new AbortController();
-  void runEmbeddedPiAgent({
+  void runAgentAttempt({
     ...message.params,
-    abortSignal: abortController.signal,
-    onExecutionStarted: () => {
-      post({ type: "executionStarted" });
+    opts: {
+      ...message.params.opts,
+      abortSignal: abortController.signal,
     },
     onAgentEvent: (event) => {
       post({ type: "agentEvent", event });

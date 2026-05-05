@@ -2,12 +2,13 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { RunEmbeddedPiAgentParams } from "../pi-embedded-runner/run/params.js";
+import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import type { RunAgentAttemptParams } from "../command/attempt-execution.js";
 import {
   AgentWorkerUnsupportedParamsError,
-  runEmbeddedPiAgentInWorker,
-  shouldRunEmbeddedPiAgentInWorker,
-} from "./embedded-pi-agent.js";
+  runAgentAttemptInWorker,
+  shouldRunAgentAttemptInWorker,
+} from "./agent-runtime.js";
 
 function createFixtureWorkerUrl(): URL {
   const source = `
@@ -30,7 +31,6 @@ function createFixtureWorkerUrl(): URL {
       }
 
       runStarted = true;
-      post({ type: "executionStarted" });
       post({
         type: "agentEvent",
         event: {
@@ -41,28 +41,28 @@ function createFixtureWorkerUrl(): URL {
       });
       post({
         type: "userMessagePersisted",
-        message: { role: "user", content: [{ type: "text", text: message.params.prompt }] }
+        message: { role: "user", content: [{ type: "text", text: message.params.body }] }
       });
 
-      if (message.params.prompt === "throw") {
+      if (message.params.body === "throw") {
         post({ type: "error", error: { name: "FixtureError", message: "fixture failed", code: "FIXTURE" } });
         return;
       }
-      if (message.params.prompt === "wait") {
+      if (message.params.body === "wait") {
         return;
       }
 
       post({
         type: "result",
         result: {
-          payloads: [{ text: "worker:" + message.params.prompt }],
+          payloads: [{ text: "worker:" + message.params.body }],
           meta: {
             durationMs: 1,
-            finalAssistantVisibleText: "worker:" + message.params.prompt,
+            finalAssistantVisibleText: "worker:" + message.params.body,
             agentMeta: {
               sessionId: message.params.sessionId,
-              provider: message.params.provider ?? "fixture",
-              model: message.params.model ?? "fixture-model"
+              provider: message.params.providerOverride ?? "fixture",
+              model: message.params.modelOverride ?? "fixture-model"
             },
             executionTrace: { runner: "embedded" }
           }
@@ -73,52 +73,83 @@ function createFixtureWorkerUrl(): URL {
   return new URL(`data:text/javascript,${encodeURIComponent(source)}`);
 }
 
-async function makeWorkerParams(prompt: string): Promise<RunEmbeddedPiAgentParams> {
+async function makeWorkerParams(body: string): Promise<RunAgentAttemptParams> {
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-agent-worker-"));
   tmpDirs.push(tmpDir);
   return {
+    providerOverride: "openai",
+    originalProvider: "openai",
+    modelOverride: "gpt-5.5",
+    cfg: {} as OpenClawConfig,
+    sessionEntry: undefined,
     sessionId: "session-worker-test",
     sessionKey: "agent:main:worker-test",
-    agentId: "main",
+    sessionAgentId: "main",
     sessionFile: path.join(tmpDir, "session.jsonl"),
     workspaceDir: tmpDir,
-    agentDir: tmpDir,
-    prompt,
-    provider: "openai",
-    model: "gpt-5.5",
+    body,
+    isFallbackRetry: false,
+    resolvedThinkLevel: "medium",
     timeoutMs: 1_000,
     runId: "run-worker-test",
+    opts: { message: body, senderIsOwner: false },
+    runContext: {} as RunAgentAttemptParams["runContext"],
+    spawnedBy: undefined,
+    messageChannel: undefined,
+    skillsSnapshot: undefined,
+    resolvedVerboseLevel: undefined,
+    agentDir: tmpDir,
+    onAgentEvent: vi.fn(),
+    authProfileProvider: "openai",
+    sessionHasHistory: false,
   };
 }
 
 const tmpDirs: string[] = [];
 
-describe("embedded PI agent worker bridge", () => {
+describe("agent runtime worker bridge", () => {
   afterEach(async () => {
     await Promise.all(tmpDirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
   });
 
-  it("recognizes explicit opt-in environment values", () => {
-    expect(shouldRunEmbeddedPiAgentInWorker({ OPENCLAW_AGENT_WORKER_EXPERIMENT: "1" })).toBe(true);
-    expect(shouldRunEmbeddedPiAgentInWorker({ OPENCLAW_AGENT_WORKER_EXPERIMENT: "true" })).toBe(
-      true,
-    );
-    expect(shouldRunEmbeddedPiAgentInWorker({ OPENCLAW_AGENT_WORKER_EXPERIMENT: "yes" })).toBe(
-      true,
-    );
-    expect(shouldRunEmbeddedPiAgentInWorker({ OPENCLAW_AGENT_WORKER_EXPERIMENT: "0" })).toBe(false);
+  it("recognizes config and explicit environment overrides", () => {
+    expect(
+      shouldRunAgentAttemptInWorker({
+        config: {
+          agents: { defaults: { experimental: { runtimeIsolation: { mode: "worker" } } } },
+        } as OpenClawConfig,
+        env: {},
+      }),
+    ).toBe(true);
+    expect(
+      shouldRunAgentAttemptInWorker({
+        config: {
+          agents: { defaults: { experimental: { runtimeIsolation: { mode: "worker" } } } },
+        } as OpenClawConfig,
+        env: { OPENCLAW_AGENT_RUNTIME_WORKER: "0" },
+      }),
+    ).toBe(false);
+    expect(
+      shouldRunAgentAttemptInWorker({
+        config: {} as OpenClawConfig,
+        env: { OPENCLAW_AGENT_RUNTIME_WORKER: "yes" },
+      }),
+    ).toBe(true);
+    expect(
+      shouldRunAgentAttemptInWorker({
+        config: {} as OpenClawConfig,
+        env: { OPENCLAW_AGENT_WORKER_EXPERIMENT: "1" },
+      }),
+    ).toBe(true);
   });
 
-  it("runs through a real worker and proxies supported callbacks", async () => {
-    const params = await makeWorkerParams("hello");
-    const onExecutionStarted = vi.fn();
+  it("runs an agent attempt through a real worker and proxies supported callbacks", async () => {
     const onAgentEvent = vi.fn();
     const onUserMessagePersisted = vi.fn();
 
-    const result = await runEmbeddedPiAgentInWorker(
+    const result = await runAgentAttemptInWorker(
       {
-        ...params,
-        onExecutionStarted,
+        ...(await makeWorkerParams("hello")),
         onAgentEvent,
         onUserMessagePersisted,
       },
@@ -131,7 +162,6 @@ describe("embedded PI agent worker bridge", () => {
       provider: "openai",
       model: "gpt-5.5",
     });
-    expect(onExecutionStarted).toHaveBeenCalledOnce();
     expect(onAgentEvent).toHaveBeenCalledWith({
       stream: "lifecycle",
       sessionKey: "agent:main:worker-test",
@@ -145,7 +175,7 @@ describe("embedded PI agent worker bridge", () => {
 
   it("propagates structured worker errors", async () => {
     await expect(
-      runEmbeddedPiAgentInWorker(await makeWorkerParams("throw"), {
+      runAgentAttemptInWorker(await makeWorkerParams("throw"), {
         workerUrl: createFixtureWorkerUrl(),
         execArgv: [],
         usePermissions: false,
@@ -159,10 +189,10 @@ describe("embedded PI agent worker bridge", () => {
 
   it("forwards aborts into the worker", async () => {
     const controller = new AbortController();
-    const promise = runEmbeddedPiAgentInWorker(
+    const promise = runAgentAttemptInWorker(
       {
         ...(await makeWorkerParams("wait")),
-        abortSignal: controller.signal,
+        opts: { message: "wait", senderIsOwner: false, abortSignal: controller.signal },
       },
       { workerUrl: createFixtureWorkerUrl(), execArgv: [], usePermissions: false },
     );
@@ -175,12 +205,16 @@ describe("embedded PI agent worker bridge", () => {
     });
   });
 
-  it("rejects unsupported streaming callbacks before spawning a worker", async () => {
+  it("rejects invalid abort signal params before spawning a worker", async () => {
     await expect(
-      runEmbeddedPiAgentInWorker(
+      runAgentAttemptInWorker(
         {
           ...(await makeWorkerParams("hello")),
-          onPartialReply: () => {},
+          opts: {
+            message: "hello",
+            senderIsOwner: false,
+            abortSignal: "bad" as unknown as AbortSignal,
+          },
         },
         { workerUrl: createFixtureWorkerUrl(), execArgv: [], usePermissions: false },
       ),

@@ -92,6 +92,20 @@ export type AgentContextLimitsConfig = {
   postCompactionMaxChars?: number;
 };
 
+export type AgentRuntimeIsolationExperimentalConfig = {
+  /**
+   * Run each agent attempt inside an isolated Node worker thread. Experimental
+   * preview only; currently isolates the in-repo runtime boundary, while CLI
+   * harnesses may still spawn their own child processes.
+   */
+  mode?: "off" | "worker";
+  /**
+   * Add Node permission flags to the worker process. This is stricter and more
+   * runtime-sensitive than worker isolation itself.
+   */
+  permissions?: boolean;
+};
+
 export type CliBackendConfig = {
   /** CLI command to execute (absolute path or on PATH). */
   command: string;
@@ -258,6 +272,11 @@ export type AgentDefaultsConfig = {
      * model backends. Experimental preview only.
      */
     localModelLean?: boolean;
+    /**
+     * Run agent attempts through an isolated Node worker runtime. Experimental
+     * preview only.
+     */
+    runtimeIsolation?: AgentRuntimeIsolationExperimentalConfig;
   };
   /**
    * Agent-visible bootstrap truncation warning mode:
