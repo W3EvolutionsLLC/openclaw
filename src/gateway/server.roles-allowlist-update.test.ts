@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, test, vi } from "vitest";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 import { WebSocket } from "ws";
 import type { DeviceIdentity } from "../infra/device-identity.js";
 import { loadOrCreateDeviceIdentity } from "../infra/device-identity.js";
@@ -29,10 +29,18 @@ vi.mock("../infra/update-runner.js", () => ({
 
 import { runGatewayUpdate } from "../infra/update-runner.js";
 import { connectGatewayClient } from "./test-helpers.e2e.js";
-import { installGatewayTestHooks, onceMessage, rpcReq } from "./test-helpers.js";
+import {
+  installGatewayTestCanvasNodeInvokePolicy,
+  installGatewayTestHooks,
+  onceMessage,
+  rpcReq,
+} from "./test-helpers.js";
 import { installConnectedControlUiServerSuite } from "./test-with-server.js";
 
 installGatewayTestHooks({ scope: "suite" });
+beforeEach(() => {
+  installGatewayTestCanvasNodeInvokePolicy();
+});
 const FAST_WAIT_OPTS = { timeout: 1_000, interval: 2 } as const;
 
 let ws: WebSocket;
