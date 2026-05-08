@@ -11,6 +11,7 @@ import {
 import { createMSTeamsConversationStoreFs } from "./conversation-store-fs.js";
 import type { MSTeamsConversationStore } from "./conversation-store.js";
 import { formatUnknownError } from "./errors.js";
+import { runMSTeamsFeedbackInvokeHandler } from "./feedback-invoke.js";
 import { runMSTeamsFileConsentInvokeHandler } from "./file-consent-invoke.js";
 import { registerMSTeamsHandlers, type MSTeamsActivityHandler } from "./monitor-handler.js";
 import type { MSTeamsMessageHandlerDeps } from "./monitor-handler.types.js";
@@ -451,6 +452,18 @@ export async function monitorMSTeamsProvider(
     await runMSTeamsSigninInvokeHandler(adaptSdkContext(ctx, app), handlerDeps);
   });
 
+  // Feedback (thumbs up/down) on AI-generated messages. Teams delivers
+  // this as a `message/submitAction` invoke; the typed-route registration
+  // gives us a clean InvokeResponse shape (the SDK wraps a void return
+  // into 200) and removes the broken `sendActivity({ type: "invokeResponse" })`
+  // ack. The handler returns `false` if the value didn't actually look like
+  // feedback — we currently consume those silently to keep the invoke
+  // catch-all skip simple; if a non-feedback `message/submitAction` shape
+  // ever shows up we'd revisit.
+  app.on("message.submit", async (ctx) => {
+    await runMSTeamsFeedbackInvokeHandler(adaptSdkContext(ctx, app), handlerDeps);
+  });
+
   // Catch all inbound activities from the SDK and delegate to our existing
   // handler dispatch system. The SDK has already validated JWT and parsed the
   // activity by this point.
@@ -467,6 +480,9 @@ export async function monitorMSTeamsProvider(
           return;
         }
         if (activity?.name === "signin/tokenExchange" || activity?.name === "signin/verifyState") {
+          return;
+        }
+        if (activity?.name === "message/submitAction") {
           return;
         }
       }

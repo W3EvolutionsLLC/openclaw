@@ -84,6 +84,9 @@ type SigninTokenExchangeCtx =
 type SigninVerifyStateCtx = import("@microsoft/teams.apps/dist/contexts/index.js").IActivityContext<
   import("@microsoft/teams.api/dist/activities/invoke/sign-in/verify-state.js").ISignInVerifyStateInvokeActivity
 >;
+type MessageSubmitCtx = import("@microsoft/teams.apps/dist/contexts/index.js").IActivityContext<
+  import("@microsoft/teams.api/dist/activities/invoke/message/submit-action.js").IMessageSubmitActionInvokeActivity
+>;
 
 type MSTeamsAppOn = {
   // Adaptive card actions (Action.Execute Universal Action Model). Typed
@@ -111,6 +114,10 @@ type MSTeamsAppOn = {
     name: "signin.verify-state",
     cb: (ctx: SigninVerifyStateCtx) => void | Promise<void>,
   ): MSTeamsApp;
+  // Feedback (thumbs up/down) on AI-generated messages — Teams delivers
+  // this as a `message/submitAction` invoke with `actionName === "feedback"`.
+  // Typed return is `InvokeResponse | void`, so a void-returning cb works.
+  (name: "message.submit", cb: (ctx: MessageSubmitCtx) => void | Promise<void>): MSTeamsApp;
   // Activity catch-all. Default void return — used as our dispatch into
   // the BotBuilder-shaped handler.
   (name: "activity", cb: (ctx: ActivityCtx) => void | Promise<void>): MSTeamsApp;
@@ -123,6 +130,7 @@ type MSTeamsAppOn = {
       | "file.consent.decline"
       | "signin.token-exchange"
       | "signin.verify-state"
+      | "message.submit"
       | "activity"
     >,
   >(
