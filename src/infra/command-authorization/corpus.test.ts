@@ -1,0 +1,205 @@
+import { describe, expect, it } from "vitest";
+import { planCommandForAuthorization } from "./plan.js";
+
+describe("command authorization planner corpus", () => {
+  it("marks tokenized argv commands as reusable trust candidates", () => {
+    const plan = planCommandForAuthorization({
+      dialect: "argv",
+      argv: ["git", "status", "--short"],
+    });
+
+    expect(plan.kind).toBe("analyzable");
+    if (plan.kind !== "analyzable") {
+      throw new Error(`expected analyzable plan, got ${plan.kind}`);
+    }
+    expect(plan.dialect).toBe("argv");
+    expect(plan.tree).toEqual({ kind: "unit", unitId: "unit-0" });
+    expect(plan.units).toEqual([
+      expect.objectContaining({
+        id: "unit-0",
+        argv: ["git", "status", "--short"],
+        relationship: "simple",
+        allowlistEligible: true,
+        allowAlwaysEligible: true,
+        promptOnlyReasons: [],
+        blockReasons: [],
+      }),
+    ]);
+  });
+
+  it("marks simple POSIX commands as reusable trust candidates", () => {
+    const plan = planCommandForAuthorization({
+      dialect: "posix-shell",
+      command: "ls /tmp",
+    });
+
+    expect(plan.kind).toBe("analyzable");
+    if (plan.kind !== "analyzable") {
+      throw new Error(`expected analyzable plan, got ${plan.kind}`);
+    }
+    expect(plan.dialect).toBe("posix-shell");
+    expect(plan.tree).toEqual({ kind: "unit", unitId: "unit-0" });
+    expect(plan.units[0]).toEqual(
+      expect.objectContaining({
+        raw: "ls /tmp",
+        argv: ["ls", "/tmp"],
+        relationship: "simple",
+        allowlistEligible: true,
+        allowAlwaysEligible: true,
+      }),
+    );
+  });
+
+  it("preserves simple POSIX pipelines as reusable command trees", () => {
+    const plan = planCommandForAuthorization({
+      dialect: "posix-shell",
+      command: "ls /tmp | grep log",
+    });
+
+    expect(plan.kind).toBe("analyzable");
+    if (plan.kind !== "analyzable") {
+      throw new Error(`expected analyzable plan, got ${plan.kind}`);
+    }
+    expect(plan.tree).toEqual({
+      kind: "pipeline",
+      children: [
+        { kind: "unit", unitId: "unit-0" },
+        { kind: "unit", unitId: "unit-1" },
+      ],
+    });
+    expect(plan.units.map((unit) => unit.argv)).toEqual([
+      ["ls", "/tmp"],
+      ["grep", "log"],
+    ]);
+    expect(plan.units.every((unit) => unit.relationship === "pipeline")).toBe(true);
+    expect(plan.units.every((unit) => unit.allowAlwaysEligible)).toBe(true);
+  });
+
+  it.each([
+    {
+      name: "and conditionals",
+      command: "pnpm test && pnpm build",
+      operators: ["&&"],
+      relationships: ["simple", "and-conditional"],
+    },
+    {
+      name: "or conditionals",
+      command: "test -f package.json || echo missing",
+      operators: ["||"],
+      relationships: ["simple", "or-conditional"],
+    },
+    {
+      name: "sequences",
+      command: "echo one; echo two",
+      operators: [";"],
+      relationships: ["simple", "sequence"],
+    },
+  ])("preserves POSIX $name tree shape", ({ command, operators, relationships }) => {
+    const plan = planCommandForAuthorization({
+      dialect: "posix-shell",
+      command,
+    });
+
+    expect(plan.kind).toBe("analyzable");
+    if (plan.kind !== "analyzable") {
+      throw new Error(`expected analyzable plan, got ${plan.kind}`);
+    }
+    expect(plan.tree).toEqual({
+      kind: "chain",
+      operators,
+      children: [
+        { kind: "unit", unitId: "unit-0" },
+        { kind: "unit", unitId: "unit-1" },
+      ],
+    });
+    expect(plan.units.map((unit) => unit.relationship)).toEqual(relationships);
+    expect(plan.units.every((unit) => unit.allowlistEligible)).toBe(true);
+    expect(plan.units.every((unit) => unit.allowAlwaysEligible)).toBe(true);
+  });
+
+  it("makes interpreter inline eval prompt-only instead of reusable trust", () => {
+    const plan = planCommandForAuthorization({
+      dialect: "posix-shell",
+      command: "python -c 'print(\"hi\")'",
+    });
+
+    expect(plan.kind).toBe("prompt-only");
+    if (plan.kind !== "prompt-only") {
+      throw new Error(`expected prompt-only plan, got ${plan.kind}`);
+    }
+    expect(plan.promptOnlyReasons).toEqual(["interpreter-inline-eval"]);
+    expect(plan.units).toEqual([
+      expect.objectContaining({
+        argv: ["python", "-c", 'print("hi")'],
+        allowlistEligible: false,
+        allowAlwaysEligible: false,
+        promptOnlyReasons: ["interpreter-inline-eval"],
+      }),
+    ]);
+  });
+
+  it("makes command substitution prompt-only and flags dynamic executables", () => {
+    const plan = planCommandForAuthorization({
+      dialect: "posix-shell",
+      command: "$(whoami) --help",
+    });
+
+    expect(plan.kind).toBe("prompt-only");
+    if (plan.kind !== "prompt-only") {
+      throw new Error(`expected prompt-only plan, got ${plan.kind}`);
+    }
+    expect(plan.promptOnlyReasons).toEqual(["command-substitution", "dynamic-executable"]);
+    expect(plan.units[0]).toEqual(
+      expect.objectContaining({
+        argv: [],
+        allowlistEligible: false,
+        allowAlwaysEligible: false,
+        promptOnlyReasons: ["command-substitution", "dynamic-executable"],
+      }),
+    );
+  });
+
+  it("marks malformed shell as unanalyzable", () => {
+    const plan = planCommandForAuthorization({
+      dialect: "posix-shell",
+      command: "echo 'unterminated",
+    });
+
+    expect(plan).toEqual({
+      kind: "unanalyzable",
+      source: "echo 'unterminated",
+      dialect: "posix-shell",
+      reasons: ["malformed-shell"],
+    });
+  });
+
+  it.each([
+    {
+      dialect: "powershell" as const,
+      command: 'pwsh -Command "Get-ChildItem"',
+      reason: "unsupported-powershell-wrapper",
+    },
+    {
+      dialect: "windows-cmd" as const,
+      command: "cmd /c dir",
+      reason: "unsupported-cmd-wrapper",
+    },
+  ])("keeps $dialect commands prompt-only", ({ dialect, command, reason }) => {
+    const plan = planCommandForAuthorization({ dialect, command });
+
+    expect(plan.kind).toBe("prompt-only");
+    if (plan.kind !== "prompt-only") {
+      throw new Error(`expected prompt-only plan, got ${plan.kind}`);
+    }
+    expect(plan.dialect).toBe(dialect);
+    expect(plan.promptOnlyReasons).toEqual([reason]);
+    expect(plan.units[0]).toEqual(
+      expect.objectContaining({
+        relationship: "wrapper-inline",
+        allowlistEligible: false,
+        allowAlwaysEligible: false,
+        promptOnlyReasons: [reason],
+      }),
+    );
+  });
+});
