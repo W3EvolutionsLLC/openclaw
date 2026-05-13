@@ -146,8 +146,9 @@ function resetMusicGenerateMocks() {
 }
 
 function detailsOf(result: { details?: unknown }): Record<string, unknown> {
-  expect(typeof result.details).toBe("object");
-  expect(result.details).not.toBeNull();
+  if (!result.details || typeof result.details !== "object") {
+    throw new Error("expected result details object");
+  }
   return result.details as Record<string, unknown>;
 }
 
@@ -155,30 +156,34 @@ function generateMusicOptions(
   callIndex = musicGenerationRuntimeMocks.generateMusic.mock.calls.length - 1,
 ): Record<string, unknown> {
   const options = musicGenerationRuntimeMocks.generateMusic.mock.calls[callIndex]?.[0];
-  expect(typeof options).toBe("object");
-  expect(options).not.toBeNull();
+  if (!options || typeof options !== "object") {
+    throw new Error(`expected generateMusic options ${callIndex}`);
+  }
   return options as Record<string, unknown>;
 }
 
 function taskProgressCall(callIndex = 0): Record<string, unknown> {
   const call = taskExecutorMocks.recordTaskRunProgressByRunId.mock.calls[callIndex]?.[0];
-  expect(typeof call).toBe("object");
-  expect(call).not.toBeNull();
+  if (!call || typeof call !== "object") {
+    throw new Error(`expected task progress call ${callIndex}`);
+  }
   return call as Record<string, unknown>;
 }
 
 function taskCompleteCall(callIndex = 0): Record<string, unknown> {
   const call = taskExecutorMocks.completeTaskRunByRunId.mock.calls[callIndex]?.[0];
-  expect(typeof call).toBe("object");
-  expect(call).not.toBeNull();
+  if (!call || typeof call !== "object") {
+    throw new Error(`expected task complete call ${callIndex}`);
+  }
   return call as Record<string, unknown>;
 }
 
 function wakeCompletionCall(callIndex = 0): Record<string, unknown> {
   const call =
     musicGenerateBackgroundMocks.wakeMusicGenerationTaskCompletion.mock.calls[callIndex]?.[0];
-  expect(typeof call).toBe("object");
-  expect(call).not.toBeNull();
+  if (!call || typeof call !== "object") {
+    throw new Error(`expected wake completion call ${callIndex}`);
+  }
   return call as Record<string, unknown>;
 }
 
@@ -806,8 +811,11 @@ describe("createMusicGenerateTool", () => {
 
     expect(webMedia.loadWebMedia).toHaveBeenCalledTimes(1);
     const loadCall = vi.mocked(webMedia.loadWebMedia).mock.calls[0];
-    expect(loadCall?.[0]).toBe("http://198.18.0.153/reference.png");
-    const loadOptions = loadCall?.[1] as {
+    if (!loadCall) {
+      throw new Error("expected web media load call");
+    }
+    expect(loadCall[0]).toBe("http://198.18.0.153/reference.png");
+    const loadOptions = loadCall[1] as {
       requestInit?: { signal?: unknown };
       ssrfPolicy?: unknown;
     };

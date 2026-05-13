@@ -64,8 +64,9 @@ type ToolResultWithDetails = {
 const WORKSPACE_ROOT = path.resolve("/workspace");
 
 function requireRecord(value: unknown, label: string): Record<string, unknown> {
-  expect(value, label).toBeTypeOf("object");
-  expect(value, label).not.toBeNull();
+  if (!value || typeof value !== "object") {
+    throw new Error(`expected ${label}`);
+  }
   return value as Record<string, unknown>;
 }
 
@@ -234,10 +235,7 @@ describe("feishu_doc image fetch hardening", () => {
     expect(blockDescendantCreateMock).toHaveBeenCalledTimes(1);
     const call = blockDescendantCreateMock.mock.calls[0]?.[0];
     expect(call?.data.children_id).toEqual(["h1", "t1", "h2"]);
-    for (const block of blocks) {
-      expect(call?.data.descendants).toContainEqual(block);
-    }
-    expect(call?.data.descendants).toHaveLength(3);
+    expect(call?.data.descendants).toEqual(blocks);
 
     expect(result.details.blocks_added).toBe(3);
   });

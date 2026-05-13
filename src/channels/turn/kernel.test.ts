@@ -71,6 +71,14 @@ function createDispatch(
   }) as DispatchReplyWithBufferedBlockDispatcher;
 }
 
+function requireFirstMockCall<T>(mock: { mock: { calls: T[][] } }, label: string): T[] {
+  const call = mock.mock.calls[0];
+  if (!call) {
+    throw new Error(`expected ${label} call`);
+  }
+  return call;
+}
+
 function createDurableSendResult(messageIds: string[]) {
   return {
     status: "sent",
@@ -124,14 +132,22 @@ type TurnLogEvent = {
 };
 
 function latestDurableSendRequest(): DurableSendRequest {
-  const [request] = sendDurableMessageBatch.mock.calls.at(-1) as unknown as [DurableSendRequest];
+  const calls = sendDurableMessageBatch.mock.calls;
+  const call = calls[calls.length - 1] as unknown as [DurableSendRequest] | undefined;
+  if (!call) {
+    throw new Error("expected durable send request");
+  }
+  const [request] = call;
   return request;
 }
 
 function latestDurableSupportRequest(): DurableSupportRequest {
-  const [request] = resolveOutboundDurableFinalDeliverySupport.mock.calls.at(-1) as unknown as [
-    DurableSupportRequest,
-  ];
+  const calls = resolveOutboundDurableFinalDeliverySupport.mock.calls;
+  const call = calls[calls.length - 1] as unknown as [DurableSupportRequest] | undefined;
+  if (!call) {
+    throw new Error("expected durable support request");
+  }
+  const [request] = call;
   return request;
 }
 
@@ -646,7 +662,10 @@ describe("channel turn kernel", () => {
     expect(events).toEqual(["record", "cleanup"]);
     expect(runDispatch).not.toHaveBeenCalled();
     expect(onPreDispatchFailure).toHaveBeenCalledWith(recordError);
-    expect(loggedEvents(log)).toContainEqual({ stage: "record", event: "error" });
+    expect(loggedEvents(log)).toEqual([
+      { stage: "record", event: "start" },
+      { stage: "record", event: "error" },
+    ]);
   });
 
   it("normalizes visible dispatch checks", () => {
@@ -765,7 +784,7 @@ describe("channel turn kernel", () => {
     expect(events).toEqual(["record", "dispatch"]);
     expect(deliver).not.toHaveBeenCalled();
     expect(onFinalize).toHaveBeenCalledTimes(1);
-    const [finalized] = onFinalize.mock.calls[0] as unknown as [unknown];
+    const [finalized] = requireFirstMockCall(onFinalize, "finalize");
     const finalizedResult = finalizeResult(finalized);
     expect(finalizedResult.admission).toEqual({
       kind: "observeOnly",
@@ -844,7 +863,7 @@ describe("channel turn kernel", () => {
     }
     expect(hasFinalChannelTurnDispatch(result.dispatchResult)).toBe(false);
     expect(onFinalize).toHaveBeenCalledTimes(1);
-    const [finalized] = onFinalize.mock.calls[0] as unknown as [unknown];
+    const [finalized] = requireFirstMockCall(onFinalize, "finalize");
     const finalizedResult = finalizeResult(finalized);
     expect(finalizedResult.admission).toEqual({
       kind: "observeOnly",
@@ -886,7 +905,7 @@ describe("channel turn kernel", () => {
     ).rejects.toThrow(dispatchError);
 
     expect(onFinalize).toHaveBeenCalledTimes(1);
-    const [finalized] = onFinalize.mock.calls[0] as unknown as [unknown];
+    const [finalized] = requireFirstMockCall(onFinalize, "finalize");
     const finalizedResult = finalizeResult(finalized);
     expect(finalizedResult.admission).toEqual({ kind: "dispatch" });
     expect(finalizedResult.dispatched).toBe(false);

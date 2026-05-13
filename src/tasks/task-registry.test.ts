@@ -287,6 +287,17 @@ function sentMessageCall(callIndex = 0): Record<string, unknown> {
   return call[0] as Record<string, unknown>;
 }
 
+function firstMockArg(
+  mock: { mock: { calls: readonly unknown[][] } },
+  label: string,
+): Record<string, unknown> {
+  const [call] = mock.mock.calls;
+  if (!call) {
+    throw new Error(`Expected ${label} call`);
+  }
+  return expectRecordFields(call[0], {});
+}
+
 function createInMemoryTaskRegistryStore() {
   const tasks = new Map<string, TaskRecord>();
   const deliveryStates = new Map<string, TaskDeliveryState>();
@@ -1798,10 +1809,10 @@ describe("task-registry", () => {
         cleanupStamped: 0,
         pruned: 0,
       });
-      expect(getTaskById(task.taskId)).toMatchObject({
-        status: "running",
-        taskKind: "codex-native",
-        runId: "codex-thread:child-thread",
+      expect(getTaskById(task.taskId)).toEqual({
+        ...task,
+        createdAt: now - 10 * 60_000,
+        lastEventAt: now - 10 * 60_000,
       });
     });
   });
@@ -2897,7 +2908,7 @@ describe("task-registry", () => {
         taskId: task.taskId,
       });
 
-      const cancelArgs = hoisted.cancelSessionMock.mock.calls[0]?.[0];
+      const cancelArgs = firstMockArg(hoisted.cancelSessionMock, "cancelSession");
       expectRecordFields(cancelArgs, {
         cfg: {},
         sessionKey: "agent:codex:acp:child",
@@ -2950,7 +2961,7 @@ describe("task-registry", () => {
         taskId: task.taskId,
       });
 
-      const killArgs = hoisted.killSubagentRunAdminMock.mock.calls[0]?.[0];
+      const killArgs = firstMockArg(hoisted.killSubagentRunAdminMock, "killSubagentRunAdmin");
       expectRecordFields(killArgs, {
         cfg: {},
         sessionKey: "agent:worker:subagent:child",
@@ -3076,14 +3087,11 @@ describe("task-registry", () => {
         taskId: task.taskId,
       });
 
-      expect(result).toMatchObject({
+      expect(result).toEqual({
         found: true,
         cancelled: false,
         reason: "Task has no cancellable child session.",
-        task: expect.objectContaining({
-          taskId: task.taskId,
-          status: "running",
-        }),
+        task,
       });
       expect(hoisted.killSubagentRunAdminMock).not.toHaveBeenCalled();
     });

@@ -406,6 +406,53 @@ describe("CodexAppServerEventProjector", () => {
     expect(result.toolMediaUrls).toStrictEqual([]);
   });
 
+  it("does not promote repeated tool progress text to the final assistant reply", async () => {
+    const onToolResult = vi.fn();
+    const projector = await createProjector({
+      ...(await createParams()),
+      verboseLevel: "on",
+      onToolResult,
+    });
+
+    await projector.handleNotification(
+      forCurrentTurn("item/started", {
+        item: {
+          type: "commandExecution",
+          id: "cmd-1",
+          command: "pnpm test extensions/codex",
+          cwd: "/workspace",
+          processId: null,
+          source: "agent",
+          status: "inProgress",
+          commandActions: [],
+          aggregatedOutput: null,
+          exitCode: null,
+          durationMs: null,
+        },
+      }),
+    );
+    const toolProgressText = (mockCallArg(onToolResult, 0, 0, "onToolResult") as { text?: string })
+      .text;
+    expect(toolProgressText).toBe("🛠️ `run tests (workspace)`");
+
+    await projector.handleNotification(
+      forCurrentTurn("rawResponseItem/completed", {
+        item: {
+          type: "message",
+          id: "raw-tool-progress",
+          role: "assistant",
+          content: [{ type: "output_text", text: toolProgressText }],
+        },
+      }),
+    );
+    await projector.handleNotification(turnCompleted());
+
+    const result = projector.buildResult(buildEmptyToolTelemetry());
+
+    expect(result.assistantTexts).toEqual([]);
+    expect(result.lastAssistant).toBeUndefined();
+  });
+
   it("does not fail a completed reply after a retryable app-server error notification", async () => {
     const projector = await createProjector();
 
@@ -1411,7 +1458,7 @@ describe("CodexAppServerEventProjector", () => {
       }),
     );
 
-    const text = onToolResult.mock.calls[0]?.[0]?.text;
+    const text = (mockCallArg(onToolResult, 0, 0, "onToolResult") as { text?: string }).text;
     expect(text).toContain("sk-123…ZZZZ");
     expect(text).not.toContain("sk-1234567890abcdefZZZZ");
   });
@@ -1543,7 +1590,10 @@ describe("CodexAppServerEventProjector", () => {
     );
 
     expect(onToolResult).toHaveBeenCalledTimes(21);
-    expect(onToolResult.mock.calls[19]?.[0]?.text).toContain("...(truncated)...");
+    const truncatedOutput = mockCallArg(onToolResult, 19, 0, "onToolResult") as {
+      text?: string;
+    };
+    expect(truncatedOutput.text).toContain("...(truncated)...");
     expect(JSON.stringify(onToolResult.mock.calls)).not.toContain(
       "final output should not duplicate",
     );
