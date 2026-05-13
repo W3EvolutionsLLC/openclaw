@@ -2,7 +2,10 @@ import { detectInlineEvalArgv } from "../command-analysis/risks.js";
 import { explainShellCommand } from "../command-explainer/index.js";
 import type { CommandExplanation, CommandRisk, CommandStep } from "../command-explainer/index.js";
 import { analyzeArgvCommand, type ExecCommandSegment } from "../exec-approvals-analysis.js";
-import { normalizeExecutableToken } from "../exec-wrapper-resolution.js";
+import {
+  extractBindableShellWrapperInlineCommand,
+  normalizeExecutableToken,
+} from "../exec-wrapper-resolution.js";
 import type {
   CommandAuthorizationChainOperator,
   CommandAuthorizationContext,
@@ -142,18 +145,35 @@ function selectPlanningSteps(explanation: CommandExplanation): CommandStep[] {
         nestedStep.context === "wrapper-payload" &&
         stepContainsSpan(step, nestedStep.span.startIndex, nestedStep.span.endIndex),
     );
-    const hasShellWrapperRisk = explanation.risks.some(
-      (risk) =>
-        risk.kind === "shell-wrapper" &&
-        spansOverlap(step.span.startIndex, step.span.endIndex, risk),
-    );
-    if (hasShellWrapperRisk && wrapperPayloadSteps.length > 0) {
+    if (shouldPlanWrapperPayload(step, wrapperPayloadSteps, explanation.risks)) {
       selectedSteps.push(...wrapperPayloadSteps);
       continue;
     }
     selectedSteps.push(step);
   }
   return selectedSteps;
+}
+
+function shouldPlanWrapperPayload(
+  step: CommandStep,
+  wrapperPayloadSteps: readonly CommandStep[],
+  risks: readonly CommandRisk[],
+): boolean {
+  if (wrapperPayloadSteps.length === 0) {
+    return false;
+  }
+  const hasShellWrapperRisk = risks.some(
+    (risk) =>
+      risk.kind === "shell-wrapper" && spansOverlap(step.span.startIndex, step.span.endIndex, risk),
+  );
+  if (!hasShellWrapperRisk) {
+    return false;
+  }
+  const inlineCommand = extractBindableShellWrapperInlineCommand(step.argv);
+  if (!inlineCommand || isDirectShellPositionalCarrierInvocation(inlineCommand)) {
+    return false;
+  }
+  return !isPathScopedExecutableToken(wrapperPayloadSteps[0]?.executable ?? "");
 }
 
 type StepGroup = {
@@ -442,6 +462,10 @@ function promptOnlyReasonsForStep(
   step: CommandStep,
   risks: readonly CommandRisk[],
 ): CommandPromptOnlyReason[] {
+  const inlineCommand = extractBindableShellWrapperInlineCommand(step.argv);
+  if (inlineCommand && isDirectShellPositionalCarrierInvocation(inlineCommand)) {
+    return [];
+  }
   return promptOnlyReasonsFromRisks(
     risks.filter((risk) => spansOverlap(step.span.startIndex, step.span.endIndex, risk)),
   );
@@ -476,4 +500,23 @@ function spansOverlap(startIndex: number, endIndex: number, risk: CommandRisk): 
 
 function stepContainsSpan(step: CommandStep, startIndex: number, endIndex: number): boolean {
   return step.span.startIndex <= startIndex && step.span.endIndex >= endIndex;
+}
+
+function isPathScopedExecutableToken(token: string): boolean {
+  return token.includes("/") || token.includes("\\");
+}
+
+function isDirectShellPositionalCarrierInvocation(command: string): boolean {
+  const trimmed = command.trim();
+  if (trimmed.length === 0) {
+    return false;
+  }
+
+  const shellWhitespace = String.raw`[^\S\r\n]+`;
+  const positionalZero = String.raw`(?:\$(?:0|\{0\})|"\$(?:0|\{0\})")`;
+  const positionalArg = String.raw`(?:\$(?:[@*]|[1-9]|\{[@*1-9]\})|"\$(?:[@*]|[1-9]|\{[@*1-9]\})")`;
+  return new RegExp(
+    `^(?:exec${shellWhitespace}(?:--${shellWhitespace})?)?${positionalZero}(?:${shellWhitespace}${positionalArg})*$`,
+    "u",
+  ).test(trimmed);
 }

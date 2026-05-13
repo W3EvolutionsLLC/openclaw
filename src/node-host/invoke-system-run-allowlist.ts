@@ -34,7 +34,7 @@ type SystemRunAllowlistAnalysis = {
   segmentSatisfiedBy: ExecSegmentSatisfiedBy[];
 };
 
-export function evaluateSystemRunAllowlist(params: {
+export async function evaluateSystemRunAllowlist(params: {
   shellCommand: string | null;
   argv: string[];
   approvals: ReturnType<typeof resolveExecApprovals>;
@@ -46,9 +46,9 @@ export function evaluateSystemRunAllowlist(params: {
   env: Record<string, string> | undefined;
   skillBins: SkillBinTrustEntry[];
   autoAllowSkills: boolean;
-}): SystemRunAllowlistAnalysis {
+}): Promise<SystemRunAllowlistAnalysis> {
   if (params.shellCommand) {
-    const allowlistEval = evaluateShellAllowlist({
+    const allowlistEval = await evaluateShellAllowlist({
       command: params.shellCommand,
       allowlist: params.approvals.allowlist,
       safeBins: params.safeBins,

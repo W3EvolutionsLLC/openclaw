@@ -397,7 +397,7 @@ async function evaluateSystemRunPolicyPhase(
     segments,
     segmentAllowlistEntries,
     segmentSatisfiedBy,
-  } = evaluateSystemRunAllowlist({
+  } = await evaluateSystemRunAllowlist({
     shellCommand: parsed.shellPayload,
     argv: parsed.argv,
     approvals,

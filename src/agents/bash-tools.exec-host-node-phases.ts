@@ -299,7 +299,7 @@ export async function analyzeNodeApprovalRequirement(params: {
   hostSecurity: ExecSecurity;
   hostAsk: ExecAsk;
 }): Promise<NodeApprovalAnalysis> {
-  const baseAllowlistEval = evaluateShellAllowlist({
+  const baseAllowlistEval = await evaluateShellAllowlist({
     command: params.request.command,
     allowlist: [],
     safeBins: new Set(),
@@ -340,7 +340,7 @@ export async function analyzeNodeApprovalRequirement(params: {
           overrides: { security: "full" },
         });
         // Allowlist-only precheck; safe bins are node-local and may diverge.
-        const allowlistEval = evaluateShellAllowlist({
+        const allowlistEval = await evaluateShellAllowlist({
           command: params.request.command,
           allowlist: resolved.allowlist,
           safeBins: new Set(),
