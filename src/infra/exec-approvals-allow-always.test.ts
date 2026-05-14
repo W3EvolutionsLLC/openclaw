@@ -562,7 +562,7 @@ describe("resolveAllowAlwaysPatterns", () => {
     expect(patterns).not.toContain("/bin/zsh");
   });
 
-  it.each(["sh -c './tool'", "sh -c 'true; ./tool'"])(
+  it.each(["sh -c './tool'", "sh -c 'true; ./tool'", "sh -c 'env ./tool'"])(
     "does not persist relative shell-wrapper payload paths: %s",
     async (command) => {
       if (process.platform === "win32") {

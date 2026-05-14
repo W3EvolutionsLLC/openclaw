@@ -1,5 +1,5 @@
 import { detectInlineEvalArgv } from "../command-analysis/risks.js";
-import { parseEnvInvocationPrelude } from "../command-carriers.js";
+import { parseEnvInvocationPrelude, resolveCarrierCommandArgv } from "../command-carriers.js";
 import { explainShellCommand } from "../command-explainer/extract.js";
 import type {
   CommandExplanation,
@@ -293,7 +293,7 @@ function shouldPlanWrapperPayload(
     return false;
   }
   return !wrapperPayloadSteps.some((payloadStep) =>
-    isRelativePathScopedExecutableToken(payloadStep.executable ?? ""),
+    hasRelativeExecutableThroughWrapperPayloadArgv(payloadStep.argv),
   );
 }
 
@@ -972,7 +972,7 @@ function hasRelativeWrapperPayloadExecutable(explanation: CommandExplanation): b
       (nestedStep) =>
         nestedStep.context === "wrapper-payload" &&
         stepContainsSpan(step, nestedStep.span.startIndex, nestedStep.span.endIndex) &&
-        isRelativePathScopedExecutableToken(nestedStep.executable ?? ""),
+        hasRelativeExecutableThroughWrapperPayloadArgv(nestedStep.argv),
     );
   });
 }
@@ -1044,6 +1044,35 @@ function hasEnvMutationShellWrapperCarrier(step: CommandStep): boolean {
   }
   const carriedArgv = parsed.splitArgv ?? step.argv.slice(parsed.commandIndex);
   return Boolean(extractBindableShellWrapperInlineCommand(carriedArgv));
+}
+
+function hasRelativeExecutableThroughWrapperPayloadArgv(
+  argv: readonly string[],
+  depth = 0,
+): boolean {
+  if (depth >= 4) {
+    return true;
+  }
+  if (isRelativePathScopedExecutableToken(argv[0] ?? "")) {
+    return true;
+  }
+  const carriedArgv = resolveCarrierCommandArgv([...argv], 0, { includeExec: true });
+  if (carriedArgv && carriedArgv.length > 0) {
+    return hasRelativeExecutableThroughWrapperPayloadArgv(carriedArgv, depth + 1);
+  }
+  const trustPlan = resolveExecWrapperTrustPlan([...argv]);
+  if (
+    !trustPlan.policyBlocked &&
+    trustPlan.argv.length > 0 &&
+    !argvListsEqual(trustPlan.argv, argv)
+  ) {
+    return hasRelativeExecutableThroughWrapperPayloadArgv(trustPlan.argv, depth + 1);
+  }
+  return false;
+}
+
+function argvListsEqual(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 function stepContainsSpan(step: CommandStep, startIndex: number, endIndex: number): boolean {

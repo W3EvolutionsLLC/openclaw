@@ -418,7 +418,7 @@ describe("command authorization planner corpus", () => {
     },
   );
 
-  it.each(["sh -c './tool'", "sh -c 'true; ./tool'"])(
+  it.each(["sh -c './tool'", "sh -c 'true; ./tool'", "sh -c 'env ./tool'"])(
     "makes relative shell wrapper payload executables prompt-only: %s",
     async (command) => {
       const plan = await planCommandForAuthorization({
