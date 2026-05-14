@@ -693,12 +693,17 @@ function promptOnlyReasonsForStep(
   risks: readonly CommandRisk[],
 ): CommandPromptOnlyReason[] {
   const inlineCommand = extractBindableShellWrapperInlineCommand(step.argv);
-  if (inlineCommand && isDirectShellPositionalCarrierInvocation(inlineCommand)) {
-    return [];
-  }
-  const reasons = promptOnlyReasonsFromRisks(
-    risks.filter((risk) => spansOverlap(step.span.startIndex, step.span.endIndex, risk)),
+  const stepRisks = risks.filter((risk) =>
+    spansOverlap(step.span.startIndex, step.span.endIndex, risk),
   );
+  if (inlineCommand && isDirectShellPositionalCarrierInvocation(inlineCommand)) {
+    return promptOnlyReasonsForDirectShellPositionalCarrierStep({
+      step,
+      inlineCommand,
+      risks: stepRisks,
+    });
+  }
+  const reasons = promptOnlyReasonsFromRisks(stepRisks);
   if (hasLeadingVariableAssignment(step)) {
     reasons.push("unsupported-shell-syntax");
   }
@@ -706,6 +711,43 @@ function promptOnlyReasonsForStep(
     reasons.push("unsupported-shell-syntax");
   }
   return uniquePromptOnlyReasons(reasons);
+}
+
+function promptOnlyReasonsForDirectShellPositionalCarrierStep(params: {
+  step: CommandStep;
+  inlineCommand: string;
+  risks: readonly CommandRisk[];
+}): CommandPromptOnlyReason[] {
+  const outerRisks = params.risks.filter(
+    (risk) =>
+      risk.kind !== "inline-eval" &&
+      !riskWithinShellInlinePayload(params.step, params.inlineCommand, risk),
+  );
+  const reasons = promptOnlyReasonsFromRisks(outerRisks);
+  if (outerRisks.some((risk) => risk.kind === "dynamic-argument")) {
+    reasons.push("unsupported-shell-syntax");
+  }
+  if (hasLeadingVariableAssignment(params.step)) {
+    reasons.push("unsupported-shell-syntax");
+  }
+  if (hasEnvMutationShellWrapperCarrier(params.step)) {
+    reasons.push("unsupported-shell-syntax");
+  }
+  return uniquePromptOnlyReasons(reasons);
+}
+
+function riskWithinShellInlinePayload(
+  step: CommandStep,
+  inlineCommand: string,
+  risk: CommandRisk,
+): boolean {
+  const payloadOffset = step.text.indexOf(inlineCommand);
+  if (payloadOffset < 0) {
+    return false;
+  }
+  const payloadStart = step.span.startIndex + payloadOffset;
+  const payloadEnd = payloadStart + inlineCommand.length;
+  return risk.span.startIndex >= payloadStart && risk.span.endIndex <= payloadEnd;
 }
 
 function promptOnlyReasonsFromRisks(risks: readonly CommandRisk[]): CommandPromptOnlyReason[] {

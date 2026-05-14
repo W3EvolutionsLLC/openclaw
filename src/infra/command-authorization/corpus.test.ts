@@ -269,26 +269,25 @@ describe("command authorization planner corpus", () => {
   });
 
   it("makes shell wrapper payloads with evaluated outer arguments prompt-only", async () => {
-    const plan = await planCommandForAuthorization({
-      dialect: "posix-shell",
-      command: "sh -c 'echo safe' $(id)",
-    });
+    for (const command of ["sh -c 'echo safe' $(id)", `sh -c '$0 "$@"' tool $(id)`]) {
+      const plan = await planCommandForAuthorization({
+        dialect: "posix-shell",
+        command,
+      });
 
-    expect(plan.kind).toBe("prompt-only");
-    if (plan.kind !== "prompt-only") {
-      throw new Error(`expected prompt-only plan, got ${plan.kind}`);
+      expect(plan.kind).toBe("prompt-only");
+      if (plan.kind !== "prompt-only") {
+        throw new Error(`expected prompt-only plan for ${command}, got ${plan.kind}`);
+      }
+      expect(plan.promptOnlyReasons).toContain("command-substitution");
+      expect(plan.units).toEqual([
+        expect.objectContaining({
+          allowlistEligible: false,
+          allowAlwaysEligible: false,
+          promptOnlyReasons: expect.arrayContaining(["command-substitution"]),
+        }),
+      ]);
     }
-    expect(plan.promptOnlyReasons).toContain("command-substitution");
-    expect(plan.units).toEqual([
-      expect.objectContaining({
-        raw: "echo safe",
-        argv: ["echo", "safe"],
-        relationship: "wrapper-inline",
-        allowlistEligible: false,
-        allowAlwaysEligible: false,
-        promptOnlyReasons: expect.arrayContaining(["command-substitution"]),
-      }),
-    ]);
   });
 
   it("plans absolute-path POSIX shell wrapper payloads as reusable trust candidates", async () => {
