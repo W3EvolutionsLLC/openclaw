@@ -1331,6 +1331,74 @@ describe("exec approval handlers", () => {
     expect(mockCallArg(visibleResolveRespond)).toBe(true);
   });
 
+  it("rejects duplicate explicit approval ids while command analysis is pending", async () => {
+    let resolveAnalysis:
+      | ((value: Awaited<ReturnType<ResolveCommandAnalysisSummaryForDisplay>>) => void)
+      | undefined;
+    const analysisPromise = new Promise<
+      Awaited<ReturnType<ResolveCommandAnalysisSummaryForDisplay>>
+    >((resolve) => {
+      resolveAnalysis = resolve;
+    });
+    commandAnalysisMocks.resolveOverride = () => analysisPromise;
+    const { handlers, broadcasts, respond, context } = createExecApprovalFixture();
+
+    const firstRequestPromise = requestExecApproval({
+      handlers,
+      respond,
+      context,
+      params: {
+        id: "approval-analysis-duplicate",
+        twoPhase: true,
+        host: "gateway",
+        command: "echo first",
+        commandArgv: ["echo", "first"],
+        systemRunPlan: undefined,
+        nodeId: undefined,
+      },
+    });
+    const duplicateRespond = vi.fn();
+
+    await requestExecApproval({
+      handlers,
+      respond: duplicateRespond,
+      context,
+      params: {
+        id: "approval-analysis-duplicate",
+        twoPhase: true,
+        host: "gateway",
+        command: "echo second",
+        commandArgv: ["echo", "second"],
+        systemRunPlan: undefined,
+        nodeId: undefined,
+      },
+    });
+
+    expect(mockCallArg(duplicateRespond)).toBe(false);
+    expect(mockCallArg(duplicateRespond, 0, 1)).toBeUndefined();
+    expectRecordFields(mockCallArg(duplicateRespond, 0, 2), {
+      message: "approval id already pending",
+    });
+    expect(broadcasts).toEqual([]);
+
+    if (!resolveAnalysis) {
+      throw new Error("command analysis resolver was not installed");
+    }
+    resolveAnalysis(null);
+    const { id, request } = await waitForRequestedExecApprovalPayload(broadcasts);
+    expect(id).toBe("approval-analysis-duplicate");
+    expect(request.command).toBe("echo first");
+
+    const resolveRespond = vi.fn();
+    await resolveExecApproval({
+      handlers,
+      id,
+      respond: resolveRespond,
+      context,
+    });
+    await firstRequestPromise;
+  });
+
   it("lists pending exec approvals", async () => {
     const { handlers, broadcasts, respond, context } = createExecApprovalFixture();
     const requestPromise = requestExecApproval({

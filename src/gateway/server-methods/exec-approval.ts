@@ -123,6 +123,8 @@ export function createExecApprovalHandlers(
   manager: ExecApprovalManager,
   opts?: { forwarder?: ExecApprovalForwarder; iosPushDelivery?: ExecApprovalIosPushDelivery },
 ): GatewayRequestHandlers {
+  const pendingExplicitApprovalIds = new Set<string>();
+
   return {
     "exec.approval.get": async ({ params, respond, client }) => {
       if (!validateExecApprovalGetParams(params)) {
@@ -331,13 +333,19 @@ export function createExecApprovalHandlers(
               env: p.env,
             })
           : null;
-      if (explicitId && manager.getSnapshot(explicitId)) {
+      if (
+        explicitId &&
+        (pendingExplicitApprovalIds.has(explicitId) || manager.getSnapshot(explicitId))
+      ) {
         respond(
           false,
           undefined,
           errorShape(ErrorCodes.INVALID_REQUEST, "approval id already pending"),
         );
         return;
+      }
+      if (explicitId) {
+        pendingExplicitApprovalIds.add(explicitId);
       }
       const request = {
         command: sanitizedCommandText,
@@ -371,22 +379,40 @@ export function createExecApprovalHandlers(
       record.requestedByDeviceId = client?.connect?.device?.id ?? null;
       record.requestedByClientId = client?.connect?.client?.id ?? null;
       record.requestedByDeviceTokenAuth = client?.isDeviceTokenAuth === true;
-      record.request.commandAnalysis = await resolveCommandAnalysisBeforeApprovalRequest(
-        commandAnalysisPromise,
-        timeoutMs,
-      );
+      try {
+        record.request.commandAnalysis = await resolveCommandAnalysisBeforeApprovalRequest(
+          commandAnalysisPromise,
+          timeoutMs,
+        );
+      } catch (err) {
+        if (explicitId) {
+          pendingExplicitApprovalIds.delete(explicitId);
+        }
+        respond(
+          false,
+          undefined,
+          errorShape(ErrorCodes.INVALID_REQUEST, `command analysis failed: ${String(err)}`),
+        );
+        return;
+      }
       let decisionPromise: Promise<
         import("../../infra/exec-approvals.js").ExecApprovalDecision | null
       >;
       try {
         decisionPromise = manager.register(record, timeoutMs, { startTimer: false });
       } catch (err) {
+        if (explicitId) {
+          pendingExplicitApprovalIds.delete(explicitId);
+        }
         respond(
           false,
           undefined,
           errorShape(ErrorCodes.INVALID_REQUEST, `registration failed: ${String(err)}`),
         );
         return;
+      }
+      if (explicitId) {
+        pendingExplicitApprovalIds.delete(explicitId);
       }
       if (!manager.startTimeout(record.id, timeoutMs)) {
         const decision = await decisionPromise;
