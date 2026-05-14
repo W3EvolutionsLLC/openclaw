@@ -212,6 +212,31 @@ describe("command authorization planner corpus", () => {
     ]);
   });
 
+  it("plans absolute-path POSIX shell wrapper payloads as reusable trust candidates", async () => {
+    const plan = await planCommandForAuthorization({
+      dialect: "posix-shell",
+      command: "/bin/sh -c '/usr/bin/printf wrapped'",
+    });
+
+    expect(plan.kind).toBe("analyzable");
+    if (plan.kind !== "analyzable") {
+      throw new Error(`expected analyzable plan, got ${plan.kind}`);
+    }
+    expect(plan.tree).toEqual({ kind: "unit", unitId: "unit-0" });
+    expect(plan.units).toEqual([
+      expect.objectContaining({
+        id: "unit-0",
+        raw: "/usr/bin/printf wrapped",
+        argv: ["/usr/bin/printf", "wrapped"],
+        relationship: "wrapper-inline",
+        allowlistEligible: true,
+        allowAlwaysEligible: true,
+        promptOnlyReasons: [],
+        blockReasons: [],
+      }),
+    ]);
+  });
+
   it("keeps surrounding POSIX chain commands when planning shell wrapper payloads", async () => {
     const plan = await planCommandForAuthorization({
       dialect: "posix-shell",

@@ -255,7 +255,7 @@ function shouldPlanWrapperPayload(
   if (!inlineCommand || isDirectShellPositionalCarrierInvocation(inlineCommand)) {
     return false;
   }
-  return !isPathScopedExecutableToken(wrapperPayloadSteps[0]?.executable ?? "");
+  return !isRelativePathScopedExecutableToken(wrapperPayloadSteps[0]?.executable ?? "");
 }
 
 type StepGroup = {
@@ -701,8 +701,14 @@ function stepContainsSpan(step: CommandStep, startIndex: number, endIndex: numbe
   return step.span.startIndex <= startIndex && step.span.endIndex >= endIndex;
 }
 
-function isPathScopedExecutableToken(token: string): boolean {
-  return token.includes("/") || token.includes("\\");
+function isRelativePathScopedExecutableToken(token: string): boolean {
+  if (!token.includes("/") && !token.includes("\\")) {
+    return false;
+  }
+  const normalized = token.replace(/\\/g, "/");
+  return (
+    !normalized.startsWith("/") && !/^[A-Za-z]:\//u.test(normalized) && !normalized.startsWith("//")
+  );
 }
 
 function isDirectShellPositionalCarrierInvocation(command: string): boolean {
