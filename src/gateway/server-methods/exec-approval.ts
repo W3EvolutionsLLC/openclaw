@@ -371,7 +371,10 @@ export function createExecApprovalHandlers(
       record.requestedByDeviceId = client?.connect?.device?.id ?? null;
       record.requestedByClientId = client?.connect?.client?.id ?? null;
       record.requestedByDeviceTokenAuth = client?.isDeviceTokenAuth === true;
-      // Register before analysis so explicit IDs can be resolved while command analysis runs.
+      record.request.commandAnalysis = await resolveCommandAnalysisBeforeApprovalRequest(
+        commandAnalysisPromise,
+        timeoutMs,
+      );
       let decisionPromise: Promise<
         import("../../infra/exec-approvals.js").ExecApprovalDecision | null
       >;
@@ -385,10 +388,6 @@ export function createExecApprovalHandlers(
         );
         return;
       }
-      record.request.commandAnalysis = await resolveCommandAnalysisBeforeApprovalRequest(
-        commandAnalysisPromise,
-        timeoutMs,
-      );
       if (!manager.startTimeout(record.id, timeoutMs)) {
         const decision = await decisionPromise;
         respond(

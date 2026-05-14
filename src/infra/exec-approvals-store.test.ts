@@ -692,6 +692,11 @@ describe("exec approvals store helpers", () => {
       "printf x > out.txt",
       "echo 'unterminated",
       "sh -c './tool'",
+      "command ./tool",
+      "builtin ./tool",
+      "exec ./tool",
+      "sudo ./tool",
+      "sudo sh -c './tool'",
     ]) {
       await expect(
         canPersistExactCommandAllowAlways({
