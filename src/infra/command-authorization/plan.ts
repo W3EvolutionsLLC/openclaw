@@ -19,6 +19,7 @@ import {
 import {
   extractBindableShellWrapperInlineCommand,
   normalizeExecutableToken,
+  POSIX_SHELL_WRAPPERS,
 } from "../exec-wrapper-resolution.js";
 import { resolveExecWrapperTrustPlan } from "../exec-wrapper-trust-plan.js";
 import type {
@@ -276,6 +277,9 @@ function shouldPlanWrapperPayload(
   if (trustPlan.policyBlocked) {
     return false;
   }
+  if (hasNonTransparentPosixShellWrapperOption(trustPlan.argv)) {
+    return false;
+  }
   const inlineCommand =
     extractBindableShellWrapperInlineCommand(step.argv) ?? trustPlan.shellInlineCommand;
   if (!inlineCommand || isDirectShellPositionalCarrierInvocation(inlineCommand)) {
@@ -284,6 +288,32 @@ function shouldPlanWrapperPayload(
   return !wrapperPayloadSteps.some((payloadStep) =>
     isRelativePathScopedExecutableToken(payloadStep.executable ?? ""),
   );
+}
+
+function hasNonTransparentPosixShellWrapperOption(argv: readonly string[]): boolean {
+  const executable = normalizeExecutableToken(argv[0] ?? "");
+  const posixShellWrappers: ReadonlySet<string> = POSIX_SHELL_WRAPPERS;
+  if (!posixShellWrappers.has(executable)) {
+    return false;
+  }
+
+  for (let index = 1; index < argv.length; index += 1) {
+    const token = argv[index]?.trim();
+    if (!token) {
+      continue;
+    }
+    if (token === "--") {
+      return false;
+    }
+    if (token === "-c" || token === "--command") {
+      return false;
+    }
+    if (token.startsWith("-") || token.startsWith("+")) {
+      return true;
+    }
+    return false;
+  }
+  return false;
 }
 
 type StepGroup = {

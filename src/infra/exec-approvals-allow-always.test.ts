@@ -491,6 +491,43 @@ describe("resolveAllowAlwaysPatterns", () => {
     }
   });
 
+  it("does not authorize semantic shell wrappers from inner payload allowlist entries", async () => {
+    if (process.platform === "win32") {
+      return;
+    }
+    const dir = makeTempDir();
+    makeExecutable(dir, "sh");
+    const falsePath = makeExecutable(dir, "false");
+    const rmPath = makeExecutable(dir, "rm");
+    try {
+      const env = makePathEnv(dir);
+      const result = await evaluateShellAllowlist({
+        command: "sh -e -c 'false; rm marker'",
+        allowlist: [{ pattern: falsePath }, { pattern: rmPath }],
+        safeBins: resolveSafeBins(undefined),
+        cwd: dir,
+        env,
+        platform: process.platform,
+      });
+
+      expect(result.analysisOk).toBe(true);
+      const plan = result.authorizationPlan;
+      expect(plan?.kind).toBe("analyzable");
+      if (!plan || plan.kind !== "analyzable") {
+        throw new Error(`expected analyzable plan, got ${plan?.kind ?? "missing"}`);
+      }
+      expect(plan.units).toEqual([
+        expect.objectContaining({
+          argv: ["sh", "-e", "-c", "false; rm marker"],
+          relationship: "simple",
+        }),
+      ]);
+      expect(result.allowlistSatisfied).toBe(false);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("unwraps shell wrappers and persists the inner executable instead", async () => {
     if (process.platform === "win32") {
       return;

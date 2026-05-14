@@ -337,6 +337,29 @@ describe("command authorization planner corpus", () => {
     ]);
   });
 
+  it.each(["/bin/sh -e -c 'false; rm marker'", "/bin/sh -o pipefail -c 'false; rm marker'"])(
+    "preserves semantic shell options instead of planning payload units: %s",
+    async (command) => {
+      const plan = await planCommandForAuthorization({
+        dialect: "posix-shell",
+        command,
+      });
+
+      expect(plan.kind).toBe("analyzable");
+      if (plan.kind !== "analyzable") {
+        throw new Error(`expected analyzable plan, got ${plan.kind}`);
+      }
+      expect(plan.units).toEqual([
+        expect.objectContaining({
+          raw: command,
+          relationship: "simple",
+          argv: expect.arrayContaining(["-c", "false; rm marker"]),
+          promptOnlyReasons: [],
+        }),
+      ]);
+    },
+  );
+
   it.each(["sh -c './tool'", "sh -c 'true; ./tool'"])(
     "makes relative shell wrapper payload executables prompt-only: %s",
     async (command) => {
