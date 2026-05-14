@@ -6,6 +6,7 @@ import {
   detectCommandCarrierArgv,
   detectInlineEvalArgv,
   detectShellWrapperThroughCarrierArgv,
+  SHELL_STATE_MUTATING_BUILTINS,
   SOURCE_EXECUTABLES,
 } from "../command-analysis/risks.js";
 import { normalizeExecutableToken } from "../exec-wrapper-resolution.js";
@@ -32,17 +33,6 @@ type MutableExplanation = {
   risks: CommandRisk[];
   hasParseError: boolean;
 };
-
-const SHELL_STATE_MUTATING_BUILTINS = new Set([
-  "cd",
-  "export",
-  "unset",
-  "set",
-  "hash",
-  "ulimit",
-  "umask",
-  "trap",
-]);
 
 type DynamicArgument = {
   index: number;
@@ -1053,6 +1043,13 @@ function recordCommandRisks(
   } else if (carriedShellBuiltin?.kind === "source") {
     output.risks.push({
       kind: "source",
+      command: carriedShellBuiltin.command,
+      text,
+      span,
+    });
+  } else if (carriedShellBuiltin?.kind === "shell-state-mutation") {
+    output.risks.push({
+      kind: "shell-state-mutation",
       command: carriedShellBuiltin.command,
       text,
       span,

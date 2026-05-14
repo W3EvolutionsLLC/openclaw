@@ -23,7 +23,21 @@ export type CommandCarrierHit = {
   flag?: string;
 };
 
-export type CarriedShellBuiltinHit = { kind: "eval" } | { kind: "source"; command: string };
+export const SHELL_STATE_MUTATING_BUILTINS = new Set([
+  "cd",
+  "export",
+  "unset",
+  "set",
+  "hash",
+  "ulimit",
+  "umask",
+  "trap",
+]);
+
+export type CarriedShellBuiltinHit =
+  | { kind: "eval" }
+  | { kind: "source"; command: string }
+  | { kind: "shell-state-mutation"; command: string };
 
 function commandArgvKey(argv: readonly string[]): string {
   return argv.join("\0");
@@ -365,6 +379,9 @@ export function detectCarriedShellBuiltinArgv(argv: string[]): CarriedShellBuilt
   }
   if (normalizedCarriedCommand && SOURCE_EXECUTABLES.has(normalizedCarriedCommand)) {
     return { kind: "source", command: normalizedCarriedCommand };
+  }
+  if (normalizedCarriedCommand && SHELL_STATE_MUTATING_BUILTINS.has(normalizedCarriedCommand)) {
+    return { kind: "shell-state-mutation", command: normalizedCarriedCommand };
   }
   return null;
 }
