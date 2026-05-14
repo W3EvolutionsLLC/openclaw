@@ -288,11 +288,19 @@ export async function processGatewayAllowlist(
   const analysisOk = allowlistEval.analysisOk;
   const allowlistSatisfied =
     hostSecurity === "allowlist" && analysisOk ? allowlistEval.allowlistSatisfied : false;
+  const exactCommandDurableApprovalAllowed = await canPersistExactCommandAllowAlways({
+    analysisOk,
+    commandText: params.command,
+    cwd: params.workdir,
+    env: params.env,
+    platform: process.platform,
+  });
   const durableApprovalSatisfied = hasDurableExecApproval({
     analysisOk,
     segmentAllowlistEntries: allowlistEval.segmentAllowlistEntries,
     allowlist: approvals.allowlist,
     commandText: params.command,
+    exactCommandDurableApprovalAllowed,
   });
   const inlineEvalHit =
     params.strictInlineEval === true ? detectPolicyInlineEval(allowlistEval.segments) : null;

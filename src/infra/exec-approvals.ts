@@ -1024,12 +1024,14 @@ export function hasDurableExecApproval(params: {
   segmentAllowlistEntries: Array<ExecAllowlistEntry | null>;
   allowlist?: readonly ExecAllowlistEntry[];
   commandText?: string | null;
+  exactCommandDurableApprovalAllowed?: boolean;
 }): boolean {
   return (
-    hasExactCommandDurableExecApproval({
-      allowlist: params.allowlist,
-      commandText: params.commandText,
-    }) ||
+    (params.exactCommandDurableApprovalAllowed !== false &&
+      hasExactCommandDurableExecApproval({
+        allowlist: params.allowlist,
+        commandText: params.commandText,
+      })) ||
     hasSegmentDurableExecApproval({
       analysisOk: params.analysisOk,
       segmentAllowlistEntries: params.segmentAllowlistEntries,

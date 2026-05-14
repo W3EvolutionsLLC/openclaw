@@ -423,11 +423,19 @@ async function evaluateSystemRunPolicyPhase(
   // dispatch carriers like `env FOO=bar ...` wrap the shell invocation.
   const cmdDetectionArgv = resolveShellWrapperTransportArgv(parsed.argv) ?? parsed.argv;
   const cmdInvocation = opts.isCmdExeInvocation(cmdDetectionArgv);
+  const exactCommandDurableApprovalAllowed = await canPersistExactCommandAllowAlways({
+    analysisOk,
+    commandText: parsed.commandText,
+    cwd: parsed.cwd,
+    env: parsed.env,
+    platform: process.platform,
+  });
   const durableApprovalSatisfied = hasDurableExecApproval({
     analysisOk,
     segmentAllowlistEntries,
     allowlist: approvals.allowlist,
     commandText: parsed.commandText,
+    exactCommandDurableApprovalAllowed,
   });
   const inlineEvalExecutableTrusted =
     inlineEvalHit !== null &&

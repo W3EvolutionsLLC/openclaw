@@ -402,7 +402,7 @@ describe("processGatewayAllowlist", () => {
         timeout: 2000,
         interval: 1,
       })
-      .toBe(1);
+      .toBeGreaterThanOrEqual(2);
     expect(addDurableCommandApprovalMock).not.toHaveBeenCalled();
   });
 

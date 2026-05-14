@@ -1739,7 +1739,7 @@ describe("handleSystemRunInvoke mac app exec host routing", () => {
     }
   });
 
-  it("reuses exact-command durable trust for shell-wrapper reruns", async () => {
+  it("keeps prompt-only shell-wrapper reruns approval-gated despite exact-command durable trust", async () => {
     if (process.platform === "win32") {
       return;
     }
@@ -1785,8 +1785,11 @@ describe("handleSystemRunInvoke mac app exec host routing", () => {
           runCommand: vi.fn(async () => createLocalRunResult("shell-wrapper-reused")),
         });
 
-        expect(rerun.runCommand).toHaveBeenCalledTimes(1);
-        expectInvokeOk(rerun.sendInvokeResult, { payloadContains: "shell-wrapper-reused" });
+        expect(rerun.runCommand).not.toHaveBeenCalled();
+        expectApprovalRequiredDenied({
+          sendNodeEvent: rerun.sendNodeEvent,
+          sendInvokeResult: rerun.sendInvokeResult,
+        });
       },
     });
   });
