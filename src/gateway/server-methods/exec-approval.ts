@@ -345,7 +345,7 @@ export function createExecApprovalHandlers(
         import("../../infra/exec-approvals.js").ExecApprovalDecision | null
       >;
       try {
-        decisionPromise = manager.register(record, timeoutMs);
+        decisionPromise = manager.register(record, timeoutMs, { startTimer: false });
       } catch (err) {
         respond(
           false,
@@ -355,6 +355,7 @@ export function createExecApprovalHandlers(
         return;
       }
       record.request.commandAnalysis = await commandAnalysisPromise;
+      manager.startTimeout(record.id, timeoutMs);
       const requestEvent: ExecApprovalRequest = {
         id: record.id,
         request: record.request,

@@ -883,6 +883,21 @@ describe("exec approval handlers", () => {
     return { manager, handlers, broadcasts, respond, context };
   }
 
+  class CommandAnalysisTimeoutProbeManager extends ExecApprovalManager {
+    sawCommandAnalysisAtTimeoutStart = false;
+
+    override startTimeout(
+      recordId: string,
+      timeoutMs: number,
+    ): ReturnType<ExecApprovalManager["startTimeout"]> {
+      const snapshot = this.getSnapshot(recordId);
+      this.sawCommandAnalysisAtTimeoutStart =
+        snapshot?.request.commandAnalysis !== null &&
+        snapshot?.request.commandAnalysis !== undefined;
+      return super.startTimeout(recordId, timeoutMs);
+    }
+  }
+
   function getRequestedExecApprovalPayload(
     broadcasts: Array<{ event: string; payload: unknown }>,
   ): { id: string; request: Record<string, unknown> } {
@@ -1136,6 +1151,46 @@ describe("exec approval handlers", () => {
     await resolveExecApproval({
       handlers,
       id: requestedEvent.id ?? "",
+      respond: resolveRespond,
+      context,
+    });
+    await requestPromise;
+  });
+
+  it("attaches command analysis before arming timed approval requests", async () => {
+    const manager = new CommandAnalysisTimeoutProbeManager();
+    const handlers = createExecApprovalHandlers(manager);
+    const broadcasts: Array<{ event: string; payload: unknown }> = [];
+    const respond = vi.fn();
+    const context = {
+      broadcast: (event: string, payload: unknown) => {
+        broadcasts.push({ event, payload });
+      },
+      hasExecApprovalClients: () => true,
+    };
+
+    const requestPromise = requestExecApproval({
+      handlers,
+      respond,
+      context,
+      params: {
+        twoPhase: true,
+        host: "gateway",
+        command: "python3 -c 'print(1)'",
+        commandArgv: ["python3", "script.py"],
+        systemRunPlan: undefined,
+        nodeId: undefined,
+        timeoutMs: 10,
+      },
+    });
+
+    const { id } = await waitForRequestedExecApprovalPayload(broadcasts);
+    expect(manager.sawCommandAnalysisAtTimeoutStart).toBe(true);
+
+    const resolveRespond = vi.fn();
+    await resolveExecApproval({
+      handlers,
+      id,
       respond: resolveRespond,
       context,
     });

@@ -7,6 +7,7 @@ import {
   createExecCommandAnalysisFromAuthorizationPlan,
   planCommandForAuthorization,
 } from "../infra/command-authorization/index.js";
+import { explainShellCommand } from "../infra/command-explainer/extract.js";
 import {
   type ExecAsk,
   type ExecHost,
@@ -1194,14 +1195,14 @@ async function rejectUnsafeControlShellCommand(command: string): Promise<void> {
   const analysis = createExecCommandAnalysisFromAuthorizationPlan({ plan });
   const candidates = analysis?.ok
     ? analysis.segments.flatMap((segment) => buildCommandPayloadCandidates(segment.argv))
-    : rawCommand
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter(Boolean)
-        .flatMap((line) => {
-          const argv = splitShellArgs(line);
-          return argv ? buildCommandPayloadCandidates(argv) : [line];
-        });
+    : buildRawShellCommandCandidates(rawCommand);
+  const explanation = await explainShellCommand(rawCommand);
+  if (explanation.ok) {
+    for (const nestedCommand of explanation.nestedCommands) {
+      candidates.push(nestedCommand.text);
+      candidates.push(...buildCommandPayloadCandidates(nestedCommand.argv));
+    }
+  }
   for (const candidate of candidates) {
     if (parseExecApprovalShellCommand(candidate)) {
       throw new Error(
@@ -1220,6 +1221,17 @@ async function rejectUnsafeControlShellCommand(command: string): Promise<void> {
       );
     }
   }
+}
+
+function buildRawShellCommandCandidates(command: string): string[] {
+  return command
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .flatMap((line) => {
+      const argv = splitShellArgs(line);
+      return argv ? buildCommandPayloadCandidates(argv) : [line];
+    });
 }
 
 export function createExecTool(
