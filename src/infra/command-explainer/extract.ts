@@ -1095,6 +1095,8 @@ async function walk(
     output.risks.push({ kind: "here-string", text: node.text, span });
   } else if (node.type === "file_redirect") {
     output.risks.push({ kind: "redirect", text: node.text, span });
+  } else if (node.type === "comment") {
+    output.risks.push({ kind: "comment", text: node.text, span });
   } else if (node.type === "ERROR") {
     output.risks.push({ kind: "syntax-error", text: node.text, span });
   }

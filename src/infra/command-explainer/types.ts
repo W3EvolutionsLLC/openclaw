@@ -51,6 +51,7 @@ export type CommandRisk =
   | { kind: "command-substitution"; text: string; span: SourceSpan }
   | { kind: "process-substitution"; text: string; span: SourceSpan }
   | { kind: "dynamic-executable"; text: string; span: SourceSpan }
+  | { kind: "comment"; text: string; span: SourceSpan }
   | {
       kind: "dynamic-argument";
       command: string;

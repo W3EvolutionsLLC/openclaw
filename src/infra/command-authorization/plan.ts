@@ -206,6 +206,7 @@ async function planPosixShellCommand(
       ? promptOnlyReasonsFromExplanation(explanation)
       : uniquePromptOnlyReasons([
           ...promptOnlyReasonsFromUnsupportedRender(explanation),
+          ...promptOnlyReasonsFromCommentBoundaries(explanation.risks, selectedSteps),
           ...promptOnlyReasonsFromRisksOutsideSelectedSteps(explanation.risks, selectedSteps),
         ]);
   if (selectedSteps.length === 0 && sourcePromptOnlyReasons.length > 0) {
@@ -801,6 +802,33 @@ function promptOnlyReasonsFromUnsupportedRender(
     reasons.push("unsupported-shell-syntax");
   }
   return uniquePromptOnlyReasons(reasons);
+}
+
+function promptOnlyReasonsFromCommentBoundaries(
+  risks: readonly CommandRisk[],
+  selectedSteps: readonly CommandStep[],
+): CommandPromptOnlyReason[] {
+  const steps = selectedSteps.toSorted(
+    (left, right) => left.span.startIndex - right.span.startIndex,
+  );
+  for (let index = 0; index < steps.length - 1; index += 1) {
+    const left = steps[index];
+    const right = steps[index + 1];
+    if (!left || !right) {
+      continue;
+    }
+    if (
+      risks.some(
+        (risk) =>
+          risk.kind === "comment" &&
+          risk.span.startIndex >= left.span.endIndex &&
+          risk.span.endIndex <= right.span.startIndex,
+      )
+    ) {
+      return ["unsupported-shell-syntax"];
+    }
+  }
+  return [];
 }
 
 function hasMixedWrapperPayloadGroupingRisk(explanation: CommandExplanation): boolean {
