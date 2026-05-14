@@ -480,21 +480,25 @@ describe("resolveAllowAlwaysPatterns", () => {
     expect(patterns).not.toContain("/bin/zsh");
   });
 
-  it("does not persist relative shell-wrapper payload paths", async () => {
-    if (process.platform === "win32") {
-      return;
-    }
-    const dir = makeTempDir();
-    makeExecutable(dir, "tool");
-    const { persisted } = await resolvePersistedPatterns({
-      command: "sh -c './tool'",
-      dir,
-      env: makePathEnv(dir),
-      safeBins: resolveSafeBins(undefined),
-    });
+  it.each(["sh -c './tool'", "sh -c 'true; ./tool'"])(
+    "does not persist relative shell-wrapper payload paths: %s",
+    async (command) => {
+      if (process.platform === "win32") {
+        return;
+      }
+      const dir = makeTempDir();
+      makeExecutable(dir, "true");
+      makeExecutable(dir, "tool");
+      const { persisted } = await resolvePersistedPatterns({
+        command,
+        dir,
+        env: makePathEnv(dir),
+        safeBins: resolveSafeBins(undefined),
+      });
 
-    expect(persisted).toStrictEqual([]);
-  });
+      expect(persisted).toStrictEqual([]);
+    },
+  );
 
   it("does not persist wrapper payloads when outer arguments are evaluated", async () => {
     if (process.platform === "win32") {

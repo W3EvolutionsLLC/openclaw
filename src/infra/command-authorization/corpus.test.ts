@@ -315,6 +315,23 @@ describe("command authorization planner corpus", () => {
     ]);
   });
 
+  it.each(["sh -c './tool'", "sh -c 'true; ./tool'"])(
+    "makes relative shell wrapper payload executables prompt-only: %s",
+    async (command) => {
+      const plan = await planCommandForAuthorization({
+        dialect: "posix-shell",
+        command,
+      });
+
+      expect(plan.kind).toBe("prompt-only");
+      if (plan.kind !== "prompt-only") {
+        throw new Error(`expected prompt-only plan, got ${plan.kind}`);
+      }
+      expect(plan.promptOnlyReasons).toContain("unsupported-shell-syntax");
+      expect(plan.units.every((unit) => !unit.allowAlwaysEligible)).toBe(true);
+    },
+  );
+
   it("keeps surrounding POSIX chain commands when planning shell wrapper payloads", async () => {
     const plan = await planCommandForAuthorization({
       dialect: "posix-shell",

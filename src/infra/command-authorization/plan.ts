@@ -274,7 +274,9 @@ function shouldPlanWrapperPayload(
   if (!inlineCommand || isDirectShellPositionalCarrierInvocation(inlineCommand)) {
     return false;
   }
-  return !isRelativePathScopedExecutableToken(wrapperPayloadSteps[0]?.executable ?? "");
+  return !wrapperPayloadSteps.some((payloadStep) =>
+    isRelativePathScopedExecutableToken(payloadStep.executable ?? ""),
+  );
 }
 
 type StepGroup = {
@@ -850,7 +852,29 @@ function promptOnlyReasonsFromUnsupportedRender(
   if (hasMixedWrapperPayloadGroupingRisk(explanation)) {
     reasons.push("unsupported-shell-syntax");
   }
+  if (hasRelativeWrapperPayloadExecutable(explanation)) {
+    reasons.push("unsupported-shell-syntax");
+  }
   return uniquePromptOnlyReasons(reasons);
+}
+
+function hasRelativeWrapperPayloadExecutable(explanation: CommandExplanation): boolean {
+  return explanation.topLevelCommands.some((step) => {
+    const hasShellWrapperRisk = explanation.risks.some(
+      (risk) =>
+        risk.kind === "shell-wrapper" &&
+        spansOverlap(step.span.startIndex, step.span.endIndex, risk),
+    );
+    if (!hasShellWrapperRisk) {
+      return false;
+    }
+    return explanation.nestedCommands.some(
+      (nestedStep) =>
+        nestedStep.context === "wrapper-payload" &&
+        stepContainsSpan(step, nestedStep.span.startIndex, nestedStep.span.endIndex) &&
+        isRelativePathScopedExecutableToken(nestedStep.executable ?? ""),
+    );
+  });
 }
 
 function promptOnlyReasonsFromCommentBoundaries(
