@@ -510,6 +510,24 @@ describe("resolveAllowAlwaysPatterns", () => {
         platform: process.platform,
       });
 
+      const { persisted } = await resolvePersistedPatterns({
+        command: "sh -e -c 'false; rm marker'",
+        dir,
+        env,
+        safeBins: resolveSafeBins(undefined),
+      });
+      expect(persisted).toStrictEqual([]);
+
+      const payloadOnly = await evaluateShellAllowlist({
+        command: "false; rm marker",
+        allowlist: [{ pattern: falsePath }, { pattern: rmPath }],
+        safeBins: resolveSafeBins(undefined),
+        cwd: dir,
+        env,
+        platform: process.platform,
+      });
+      expect(payloadOnly.allowlistSatisfied).toBe(true);
+
       expect(result.analysisOk).toBe(true);
       const plan = result.authorizationPlan;
       expect(plan?.kind).toBe("analyzable");

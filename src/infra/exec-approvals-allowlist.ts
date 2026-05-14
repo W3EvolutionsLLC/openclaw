@@ -43,6 +43,7 @@ import {
   extractBindableShellWrapperInlineCommand,
   isShellWrapperExecutable,
   normalizeExecutableToken,
+  POSIX_SHELL_WRAPPERS,
   POWERSHELL_WRAPPERS,
 } from "./exec-wrapper-resolution.js";
 import { resolveExecWrapperTrustPlan } from "./exec-wrapper-trust-plan.js";
@@ -1099,6 +1100,9 @@ function collectAllowAlwaysPatterns(params: {
     addAllowAlwaysPattern(params.out, candidatePath, argPattern);
     return;
   }
+  if (hasNonTransparentPosixShellWrapperOption(trustPlan.argv)) {
+    return;
+  }
   const powerShellFileScriptArgv = resolvePowerShellFileScriptArgv({
     segment,
     cwd: params.cwd,
@@ -1241,6 +1245,9 @@ async function collectAllowAlwaysPatternsAsync(params: {
     addAllowAlwaysPattern(params.out, candidatePath, argPattern);
     return;
   }
+  if (hasNonTransparentPosixShellWrapperOption(trustPlan.argv)) {
+    return;
+  }
 
   const powerShellFileScriptArgv = resolvePowerShellFileScriptArgv({
     segment,
@@ -1307,6 +1314,32 @@ async function collectAllowAlwaysPatternsAsync(params: {
       out: params.out,
     });
   }
+}
+
+function hasNonTransparentPosixShellWrapperOption(argv: readonly string[]): boolean {
+  const executable = normalizeExecutableToken(argv[0] ?? "");
+  const posixShellWrappers: ReadonlySet<string> = POSIX_SHELL_WRAPPERS;
+  if (!posixShellWrappers.has(executable)) {
+    return false;
+  }
+
+  for (let index = 1; index < argv.length; index += 1) {
+    const token = argv[index]?.trim();
+    if (!token) {
+      continue;
+    }
+    if (token === "--") {
+      return false;
+    }
+    if (token === "-c" || token === "--command") {
+      return false;
+    }
+    if (token.startsWith("-") || token.startsWith("+")) {
+      return true;
+    }
+    return false;
+  }
+  return false;
 }
 
 function isRelativePathScopedExecutableToken(token: string): boolean {

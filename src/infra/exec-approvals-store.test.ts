@@ -697,6 +697,9 @@ describe("exec approvals store helpers", () => {
       "exec ./tool",
       "sudo ./tool",
       "sudo sh -c './tool'",
+      "bash --login -c 'echo safe'",
+      "bash -i -c 'echo safe'",
+      "bash -lc 'echo safe'",
     ]) {
       await expect(
         canPersistExactCommandAllowAlways({

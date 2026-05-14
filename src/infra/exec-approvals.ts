@@ -1273,15 +1273,18 @@ export async function canPersistExactCommandAllowAlways(params: {
   return (
     plan.kind === "analyzable" &&
     plan.units.length > 0 &&
-    plan.units.every(
-      (unit) =>
+    plan.units.every((unit) => {
+      const trustPlan = resolveExecWrapperTrustPlan(unit.argv);
+      return (
         unit.allowAlwaysEligible &&
         unit.blockReasons.length === 0 &&
-        !resolveExecWrapperTrustPlan(unit.argv).policyBlocked &&
+        !trustPlan.policyBlocked &&
+        !trustPlan.shellWrapperExecutable &&
         extractBindableShellWrapperInlineCommand(unit.argv) === null &&
         !isRelativeExecutableToken(unit.executable) &&
-        !hasRelativeExecutableThroughCarrier(unit.argv),
-    )
+        !hasRelativeExecutableThroughCarrier(unit.argv)
+      );
+    })
   );
 }
 
