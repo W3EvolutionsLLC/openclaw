@@ -268,6 +268,28 @@ describe("command authorization planner corpus", () => {
     ]);
   });
 
+  it("plans dispatch-wrapped POSIX shell payloads as reusable trust candidates", async () => {
+    const plan = await planCommandForAuthorization({
+      dialect: "posix-shell",
+      command: "/usr/bin/nice /bin/zsh -c whoami",
+    });
+
+    expect(plan.kind).toBe("analyzable");
+    if (plan.kind !== "analyzable") {
+      throw new Error(`expected analyzable plan, got ${plan.kind}`);
+    }
+    expect(plan.units).toEqual([
+      expect.objectContaining({
+        raw: "whoami",
+        argv: ["whoami"],
+        relationship: "wrapper-inline",
+        allowlistEligible: true,
+        allowAlwaysEligible: true,
+        promptOnlyReasons: [],
+      }),
+    ]);
+  });
+
   it("makes shell wrapper payloads with evaluated outer arguments prompt-only", async () => {
     for (const command of ["sh -c 'echo safe' $(id)", `sh -c '$0 "$@"' tool $(id)`]) {
       const plan = await planCommandForAuthorization({

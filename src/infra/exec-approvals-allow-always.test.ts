@@ -782,6 +782,16 @@ $0 \\"$1\\"" touch {marker}`,
     });
     expect(patterns).toEqual([whoami]);
     expect(patterns).not.toContain("/usr/bin/nice");
+
+    const second = await evaluateShellAllowlist({
+      command: "/usr/bin/nice /bin/zsh -c whoami",
+      allowlist: [{ pattern: whoami }],
+      safeBins: resolveSafeBins(undefined),
+      cwd: dir,
+      env: makePathEnv(dir),
+      platform: process.platform,
+    });
+    expect(second.allowlistSatisfied).toBe(true);
   });
 
   it("unwraps time wrappers and persists the inner executable instead", async () => {

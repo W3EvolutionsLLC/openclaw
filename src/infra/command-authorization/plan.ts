@@ -20,6 +20,7 @@ import {
   extractBindableShellWrapperInlineCommand,
   normalizeExecutableToken,
 } from "../exec-wrapper-resolution.js";
+import { resolveExecWrapperTrustPlan } from "../exec-wrapper-trust-plan.js";
 import type {
   CommandAuthorizationChainOperator,
   CommandAuthorizationContext,
@@ -262,7 +263,8 @@ function shouldPlanWrapperPayload(
   }
   const hasShellWrapperRisk = risks.some(
     (risk) =>
-      risk.kind === "shell-wrapper" && spansOverlap(step.span.startIndex, step.span.endIndex, risk),
+      (risk.kind === "shell-wrapper" || risk.kind === "shell-wrapper-through-carrier") &&
+      spansOverlap(step.span.startIndex, step.span.endIndex, risk),
   );
   if (!hasShellWrapperRisk) {
     return false;
@@ -270,7 +272,12 @@ function shouldPlanWrapperPayload(
   if (hasLeadingVariableAssignment(step)) {
     return false;
   }
-  const inlineCommand = extractBindableShellWrapperInlineCommand(step.argv);
+  const trustPlan = resolveExecWrapperTrustPlan(step.argv);
+  if (trustPlan.policyBlocked) {
+    return false;
+  }
+  const inlineCommand =
+    extractBindableShellWrapperInlineCommand(step.argv) ?? trustPlan.shellInlineCommand;
   if (!inlineCommand || isDirectShellPositionalCarrierInvocation(inlineCommand)) {
     return false;
   }
@@ -862,7 +869,7 @@ function hasRelativeWrapperPayloadExecutable(explanation: CommandExplanation): b
   return explanation.topLevelCommands.some((step) => {
     const hasShellWrapperRisk = explanation.risks.some(
       (risk) =>
-        risk.kind === "shell-wrapper" &&
+        (risk.kind === "shell-wrapper" || risk.kind === "shell-wrapper-through-carrier") &&
         spansOverlap(step.span.startIndex, step.span.endIndex, risk),
     );
     if (!hasShellWrapperRisk) {
