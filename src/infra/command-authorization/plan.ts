@@ -688,9 +688,13 @@ function promptOnlyReasonsForStep(
   if (inlineCommand && isDirectShellPositionalCarrierInvocation(inlineCommand)) {
     return [];
   }
-  return promptOnlyReasonsFromRisks(
+  const reasons = promptOnlyReasonsFromRisks(
     risks.filter((risk) => spansOverlap(step.span.startIndex, step.span.endIndex, risk)),
   );
+  if (hasLeadingVariableAssignment(step)) {
+    reasons.push("unsupported-shell-syntax");
+  }
+  return uniquePromptOnlyReasons(reasons);
 }
 
 function promptOnlyReasonsFromRisks(risks: readonly CommandRisk[]): CommandPromptOnlyReason[] {
@@ -703,6 +707,10 @@ function promptOnlyReasonsFromRisks(risks: readonly CommandRisk[]): CommandPromp
     } else if (risk.kind === "dynamic-executable") {
       reasonSet.add("dynamic-executable");
     } else if (
+      risk.kind === "alias" ||
+      risk.kind === "eval" ||
+      risk.kind === "source" ||
+      risk.kind === "function-definition" ||
       risk.kind === "line-continuation" ||
       risk.kind === "process-substitution" ||
       risk.kind === "heredoc" ||
@@ -751,6 +759,10 @@ function promptOnlyReasonsFromUnsupportedRender(
         risk.kind === "heredoc" ||
         risk.kind === "here-string" ||
         risk.kind === "redirect" ||
+        risk.kind === "alias" ||
+        risk.kind === "eval" ||
+        risk.kind === "source" ||
+        risk.kind === "function-definition" ||
         risk.kind === "line-continuation" ||
         risk.kind === "process-substitution" ||
         risk.kind === "syntax-error",
@@ -766,6 +778,18 @@ function promptOnlyReasonsFromUnsupportedRender(
 
 function spansOverlap(startIndex: number, endIndex: number, risk: CommandRisk): boolean {
   return risk.span.startIndex < endIndex && risk.span.endIndex > startIndex;
+}
+
+function hasLeadingVariableAssignment(step: CommandStep): boolean {
+  const relativeExecutableStart = step.executableSpan.startIndex - step.span.startIndex;
+  if (relativeExecutableStart <= 0) {
+    return false;
+  }
+  const prefix = step.text.slice(0, relativeExecutableStart).trim();
+  if (!prefix) {
+    return false;
+  }
+  return /(?:^|[\s])[_A-Za-z][_A-Za-z0-9]*=/u.test(prefix);
 }
 
 function stepContainsSpan(step: CommandStep, startIndex: number, endIndex: number): boolean {

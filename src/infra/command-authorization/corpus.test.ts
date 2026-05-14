@@ -365,6 +365,27 @@ describe("command authorization planner corpus", () => {
     },
   );
 
+  it.each([
+    "PATH=/tmp/evil:$PATH ls",
+    "ls() { id > /tmp/pwned; }; ls /tmp",
+    "alias ls='id > /tmp/pwned'; ls",
+    ". ./profile; ls",
+    "source ./profile; ls",
+    "eval ls",
+  ])("makes shell state mutation prompt-only: %s", async (command) => {
+    const plan = await planCommandForAuthorization({
+      dialect: "posix-shell",
+      command,
+    });
+
+    expect(plan.kind).toBe("prompt-only");
+    if (plan.kind !== "prompt-only") {
+      throw new Error(`expected prompt-only plan, got ${plan.kind}`);
+    }
+    expect(plan.promptOnlyReasons).toContain("unsupported-shell-syntax");
+    expect(plan.units.every((unit) => !unit.allowAlwaysEligible)).toBe(true);
+  });
+
   it("makes command substitution prompt-only and flags dynamic executables", async () => {
     const plan = await planCommandForAuthorization({
       dialect: "posix-shell",
