@@ -131,8 +131,8 @@ function planArgvCommand(
   context: CommandAuthorizationContext,
 ): CommandAuthorizationPlan {
   const source = command ?? argvInput.join(" ");
-  const argv = argvInput.map((entry) => entry.trim()).filter((entry) => entry.length > 0);
-  if (argv.length === 0) {
+  const argv = [...argvInput];
+  if (argv.length === 0 || (argv[0]?.trim() ?? "").length === 0) {
     return unanalyzablePlan(source, "argv", ["empty-argv"]);
   }
 

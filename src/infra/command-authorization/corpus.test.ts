@@ -31,6 +31,24 @@ describe("command authorization planner corpus", () => {
     ]);
   });
 
+  it("preserves empty arguments in tokenized argv commands", async () => {
+    const plan = await planCommandForAuthorization({
+      dialect: "argv",
+      argv: ["printf", "%s", ""],
+    });
+
+    expect(plan.kind).toBe("analyzable");
+    if (plan.kind !== "analyzable") {
+      throw new Error(`expected analyzable plan, got ${plan.kind}`);
+    }
+    expect(plan.units).toEqual([
+      expect.objectContaining({
+        raw: "printf %s ",
+        argv: ["printf", "%s", ""],
+      }),
+    ]);
+  });
+
   it("marks simple POSIX commands as reusable trust candidates", async () => {
     const plan = await planCommandForAuthorization({
       dialect: "posix-shell",

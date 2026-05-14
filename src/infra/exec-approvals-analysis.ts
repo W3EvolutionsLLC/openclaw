@@ -434,8 +434,8 @@ export function analyzeArgvCommand(params: {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
 }): ExecCommandAnalysis {
-  const argv = params.argv.filter((entry) => entry.trim().length > 0);
-  if (argv.length === 0) {
+  const argv = [...params.argv];
+  if (argv.length === 0 || (argv[0]?.trim() ?? "").length === 0) {
     return { ok: false, reason: "empty argv", segments: [] };
   }
   return {

@@ -354,15 +354,13 @@ export function createExecApprovalHandlers(
         );
         return;
       }
+      record.request.commandAnalysis = await commandAnalysisPromise;
       const requestEvent: ExecApprovalRequest = {
         id: record.id,
         request: record.request,
         createdAtMs: record.createdAtMs,
         expiresAtMs: record.expiresAtMs,
       };
-      void commandAnalysisPromise.then((commandAnalysis) => {
-        record.request.commandAnalysis = commandAnalysis;
-      });
       await handlePendingApprovalRequest({
         manager,
         record,
