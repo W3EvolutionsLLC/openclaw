@@ -1219,7 +1219,7 @@ function argvListsEqual(left: readonly string[], right: readonly string[]): bool
 
 function hasRelativeExecutableThroughCarrier(argv: readonly string[], depth = 0): boolean {
   if (depth >= 4) {
-    return false;
+    return true;
   }
   if (isRelativeExecutableToken(argv[0] ?? null)) {
     return true;
