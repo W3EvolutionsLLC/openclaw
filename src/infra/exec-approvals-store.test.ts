@@ -700,6 +700,7 @@ describe("exec approvals store helpers", () => {
       "bash --login -c 'echo safe'",
       "bash -i -c 'echo safe'",
       "bash -lc 'echo safe'",
+      "missing-tool --version",
       "command command command command ./tool",
       "env env env env ./tool",
     ]) {
@@ -721,6 +722,25 @@ describe("exec approvals store helpers", () => {
         platform: "win32",
       }),
     ).resolves.toBe(true);
+  });
+
+  it("blocks exact-command allow-always fallback for resolved POSIX executables", async () => {
+    if (process.platform === "win32") {
+      return;
+    }
+    const dir = createHomeDir();
+    const binDir = path.join(dir, "bin");
+    fs.mkdirSync(binDir, { recursive: true });
+    makeExecutable(binDir, "git");
+
+    await expect(
+      canPersistExactCommandAllowAlways({
+        commandText: "git status",
+        cwd: dir,
+        env: { PATH: binDir },
+        platform: process.platform,
+      }),
+    ).resolves.toBe(false);
   });
 
   it("keeps planner-backed allow-always persistence scoped to POSIX executable units", async () => {

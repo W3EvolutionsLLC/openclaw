@@ -10,16 +10,12 @@ import {
 } from "../shared/string-coerce.js";
 import type { CommandExplanationSummary } from "./command-analysis/explain.js";
 import { planCommandForAuthorization } from "./command-authorization/index.js";
-import { resolveCarrierCommandArgv } from "./command-carriers.js";
-import { explainShellCommand } from "./command-explainer/extract.js";
 import {
   resolveAllowAlwaysPatternEntries,
   resolveAllowAlwaysPatternEntriesFromPlanAsync,
 } from "./exec-approvals-allowlist.js";
 import type { ExecCommandSegment } from "./exec-approvals-analysis.js";
 import type { ExecAllowlistEntry } from "./exec-approvals.types.js";
-import { extractBindableShellWrapperInlineCommand } from "./exec-wrapper-resolution.js";
-import { resolveExecWrapperTrustPlan } from "./exec-wrapper-trust-plan.js";
 import { assertNoSymlinkParentsSync } from "./fs-safe-advanced.js";
 import { expandHomePrefix, resolveRequiredHomeDir } from "./home-dir.js";
 import { requestJsonlSocket } from "./jsonl-socket.js";
@@ -1203,42 +1199,6 @@ export function addDurableCommandApproval(
   });
 }
 
-function isRelativeExecutableToken(token: string | null): boolean {
-  if (!token || (!token.includes("/") && !token.includes("\\"))) {
-    return false;
-  }
-  const normalized = token.replace(/\\/g, "/");
-  return (
-    !normalized.startsWith("/") && !/^[A-Za-z]:\//u.test(normalized) && !normalized.startsWith("//")
-  );
-}
-
-function argvListsEqual(left: readonly string[], right: readonly string[]): boolean {
-  return left.length === right.length && left.every((value, index) => value === right[index]);
-}
-
-function hasRelativeExecutableThroughCarrier(argv: readonly string[], depth = 0): boolean {
-  if (depth >= 4) {
-    return true;
-  }
-  if (isRelativeExecutableToken(argv[0] ?? null)) {
-    return true;
-  }
-  const carriedArgv = resolveCarrierCommandArgv([...argv], 0, { includeExec: true });
-  if (carriedArgv && carriedArgv.length > 0) {
-    return hasRelativeExecutableThroughCarrier(carriedArgv, depth + 1);
-  }
-  const trustPlan = resolveExecWrapperTrustPlan([...argv]);
-  if (
-    !trustPlan.policyBlocked &&
-    trustPlan.argv.length > 0 &&
-    !argvListsEqual(trustPlan.argv, argv)
-  ) {
-    return hasRelativeExecutableThroughCarrier(trustPlan.argv, depth + 1);
-  }
-  return false;
-}
-
 export async function canPersistExactCommandAllowAlways(params: {
   analysisOk?: boolean;
   commandText?: string;
@@ -1253,39 +1213,9 @@ export async function canPersistExactCommandAllowAlways(params: {
   if (params.platform === "win32") {
     return true;
   }
-  const explanation = await explainShellCommand(commandText).catch(() => null);
-  if (
-    !explanation?.ok ||
-    explanation.risks.some(
-      (risk) => risk.kind === "command-carrier" || risk.kind === "shell-wrapper-through-carrier",
-    )
-  ) {
-    return false;
-  }
-  const plan = await planCommandForAuthorization(
-    { dialect: "posix-shell", command: commandText },
-    {
-      cwd: params.cwd,
-      env: params.env,
-      platform: params.platform,
-    },
-  );
-  return (
-    plan.kind === "analyzable" &&
-    plan.units.length > 0 &&
-    plan.units.every((unit) => {
-      const trustPlan = resolveExecWrapperTrustPlan(unit.argv);
-      return (
-        unit.allowAlwaysEligible &&
-        unit.blockReasons.length === 0 &&
-        !trustPlan.policyBlocked &&
-        !trustPlan.shellWrapperExecutable &&
-        extractBindableShellWrapperInlineCommand(unit.argv) === null &&
-        !isRelativeExecutableToken(unit.executable) &&
-        !hasRelativeExecutableThroughCarrier(unit.argv)
-      );
-    })
-  );
+  // POSIX exact command hashes do not bind the resolved executable identity. Use
+  // planner-backed path entries instead so PATH changes cannot inherit trust.
+  return false;
 }
 
 export async function persistAllowAlwaysPatterns(params: {
