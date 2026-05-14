@@ -1,6 +1,11 @@
 import { detectInlineEvalArgv } from "../command-analysis/risks.js";
 import { explainShellCommand } from "../command-explainer/extract.js";
-import type { CommandExplanation, CommandRisk, CommandStep } from "../command-explainer/types.js";
+import type {
+  CommandExplanation,
+  CommandRisk,
+  CommandShape,
+  CommandStep,
+} from "../command-explainer/types.js";
 import {
   analyzeArgvCommand,
   isWindowsPlatform,
@@ -196,7 +201,10 @@ async function planPosixShellCommand(
   }
 
   const selectedSteps = selectPlanningSteps(explanation);
-  const sourcePromptOnlyReasons = promptOnlyReasonsFromRisks(explanation.risks);
+  const sourcePromptOnlyReasons =
+    selectedSteps.length === 0
+      ? promptOnlyReasonsFromExplanation(explanation)
+      : promptOnlyReasonsFromUnsupportedRender(explanation);
   if (selectedSteps.length === 0 && sourcePromptOnlyReasons.length > 0) {
     const unit = createUnit({
       id: "unit-0",
@@ -212,10 +220,13 @@ async function planPosixShellCommand(
     return unanalyzablePlan(source, "posix-shell", ["empty-command"]);
   }
 
+  const planned = buildTreeFromCommandSteps(source, selectedSteps, explanation.risks);
   return finalizePlannedTree(
     source,
     "posix-shell",
-    buildTreeFromCommandSteps(source, selectedSteps, explanation.risks),
+    sourcePromptOnlyReasons.length > 0
+      ? applyPromptOnlyReasonsToPlannedTree(planned, sourcePromptOnlyReasons)
+      : planned,
   );
 }
 
@@ -331,6 +342,22 @@ function buildTreeFromCommandSteps(
     tree: children[0] ?? { kind: "pipeline", children: [] },
     units,
     nextUnitIndex,
+  };
+}
+
+function applyPromptOnlyReasonsToPlannedTree(
+  planned: PlannedTree,
+  reasons: readonly CommandPromptOnlyReason[],
+): PlannedTree {
+  const promptOnlyReasons = uniquePromptOnlyReasons(reasons);
+  return {
+    ...planned,
+    units: planned.units.map((unit) => ({
+      ...unit,
+      allowlistEligible: false,
+      allowAlwaysEligible: false,
+      promptOnlyReasons: uniquePromptOnlyReasons([...unit.promptOnlyReasons, ...promptOnlyReasons]),
+    })),
   };
 }
 
@@ -678,6 +705,9 @@ function promptOnlyReasonsFromRisks(risks: readonly CommandRisk[]): CommandPromp
     } else if (
       risk.kind === "line-continuation" ||
       risk.kind === "process-substitution" ||
+      risk.kind === "heredoc" ||
+      risk.kind === "here-string" ||
+      risk.kind === "redirect" ||
       risk.kind === "syntax-error"
     ) {
       reasonSet.add("unsupported-shell-syntax");
@@ -691,6 +721,47 @@ function promptOnlyReasonsFromRisks(risks: readonly CommandRisk[]): CommandPromp
       "unsupported-shell-syntax",
     ] as const
   ).filter((reason) => reasonSet.has(reason));
+}
+
+const UNSUPPORTED_RENDER_SHAPES = new Set<CommandShape>([
+  "if",
+  "for",
+  "while",
+  "case",
+  "subshell",
+  "group",
+  "background",
+]);
+
+function promptOnlyReasonsFromExplanation(
+  explanation: CommandExplanation,
+): CommandPromptOnlyReason[] {
+  const reasons = promptOnlyReasonsFromRisks(explanation.risks);
+  reasons.push(...promptOnlyReasonsFromUnsupportedRender(explanation));
+  return uniquePromptOnlyReasons(reasons);
+}
+
+function promptOnlyReasonsFromUnsupportedRender(
+  explanation: CommandExplanation,
+): CommandPromptOnlyReason[] {
+  const reasons: CommandPromptOnlyReason[] = [];
+  if (
+    explanation.risks.some(
+      (risk) =>
+        risk.kind === "heredoc" ||
+        risk.kind === "here-string" ||
+        risk.kind === "redirect" ||
+        risk.kind === "line-continuation" ||
+        risk.kind === "process-substitution" ||
+        risk.kind === "syntax-error",
+    )
+  ) {
+    reasons.push("unsupported-shell-syntax");
+  }
+  if (explanation.shapes.some((shape) => UNSUPPORTED_RENDER_SHAPES.has(shape))) {
+    reasons.push("unsupported-shell-syntax");
+  }
+  return uniquePromptOnlyReasons(reasons);
 }
 
 function spansOverlap(startIndex: number, endIndex: number, risk: CommandRisk): boolean {

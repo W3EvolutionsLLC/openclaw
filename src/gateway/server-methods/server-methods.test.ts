@@ -1123,7 +1123,11 @@ describe("exec approval handlers", () => {
         warningLines: ["Contains inline-eval: python3 -c"],
       });
     });
-    const commandAnalysis = request?.request?.commandAnalysis as Record<string, unknown>;
+    const requestedEvent = request;
+    if (!requestedEvent) {
+      throw new Error("exec approval requested broadcast missing");
+    }
+    const commandAnalysis = requestedEvent.request?.commandAnalysis as Record<string, unknown>;
     expect(commandAnalysis.commandCount).toBe(1);
     expect(commandAnalysis.riskKinds).toEqual(["inline-eval"]);
     expect(commandAnalysis.warningLines).toEqual(["Contains inline-eval: python3 -c"]);
@@ -1131,7 +1135,7 @@ describe("exec approval handlers", () => {
     const resolveRespond = vi.fn();
     await resolveExecApproval({
       handlers,
-      id: request.id ?? "",
+      id: requestedEvent.id ?? "",
       respond: resolveRespond,
       context,
     });

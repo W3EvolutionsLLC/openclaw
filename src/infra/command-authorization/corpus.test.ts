@@ -326,6 +326,45 @@ describe("command authorization planner corpus", () => {
     expect(plan.units.every((unit) => !unit.allowAlwaysEligible)).toBe(true);
   });
 
+  it.each([
+    "if false; then git clean -fdx; else echo ok; fi",
+    'for file in *.ts; do echo "$file"; done',
+    "while true; do echo loop; break; done",
+    'case "$x" in a) echo a ;; *) echo other ;; esac',
+    "(cd /tmp; echo ok)",
+    "{ echo one; echo two; }",
+    "echo a & echo b",
+  ])("makes unsupported compound shell syntax prompt-only: %s", async (command) => {
+    const plan = await planCommandForAuthorization({
+      dialect: "posix-shell",
+      command,
+    });
+
+    expect(plan.kind).toBe("prompt-only");
+    if (plan.kind !== "prompt-only") {
+      throw new Error(`expected prompt-only plan, got ${plan.kind}`);
+    }
+    expect(plan.promptOnlyReasons).toContain("unsupported-shell-syntax");
+    expect(plan.units.every((unit) => !unit.allowAlwaysEligible)).toBe(true);
+  });
+
+  it.each(["printf x > out.txt", "cat <<EOF\nhello\nEOF", "cat <<< hello"])(
+    "makes redirection shell syntax prompt-only: %s",
+    async (command) => {
+      const plan = await planCommandForAuthorization({
+        dialect: "posix-shell",
+        command,
+      });
+
+      expect(plan.kind).toBe("prompt-only");
+      if (plan.kind !== "prompt-only") {
+        throw new Error(`expected prompt-only plan, got ${plan.kind}`);
+      }
+      expect(plan.promptOnlyReasons).toContain("unsupported-shell-syntax");
+      expect(plan.units.every((unit) => !unit.allowAlwaysEligible)).toBe(true);
+    },
+  );
+
   it("makes command substitution prompt-only and flags dynamic executables", async () => {
     const plan = await planCommandForAuthorization({
       dialect: "posix-shell",
