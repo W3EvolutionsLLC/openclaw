@@ -1222,6 +1222,7 @@ async function collectAllowAlwaysPatternsAsync(params: {
       : {
           raw: trustPlan.argv.join(" "),
           argv: trustPlan.argv,
+          sourceArgv: params.segment.sourceArgv,
           resolution: resolveCommandResolutionFromArgv(trustPlan.argv, params.cwd, params.env),
         };
 
@@ -1241,17 +1242,11 @@ async function collectAllowAlwaysPatternsAsync(params: {
     return;
   }
 
-  const isPowerShellFileInvocation =
-    POWERSHELL_WRAPPERS.has(normalizeExecutableToken(segment.argv[0] ?? "")) &&
-    segment.argv.some((t) => {
-      const lower = normalizeLowercaseStringOrEmpty(t);
-      return lower === "-file" || lower === "-f";
-    }) &&
-    !segment.argv.some((t) => {
-      const lower = normalizeLowercaseStringOrEmpty(t);
-      return lower === "-command" || lower === "-c" || lower === "--command";
-    });
-  const inlineCommand = isPowerShellFileInvocation ? null : trustPlan.shellInlineCommand;
+  const powerShellFileScriptArgv = resolvePowerShellFileScriptArgv({
+    segment,
+    cwd: params.cwd,
+  });
+  const inlineCommand = powerShellFileScriptArgv ? null : trustPlan.shellInlineCommand;
   const positionalArgvPath =
     inlineCommand !== null
       ? resolveShellWrapperPositionalArgvCandidatePath({
@@ -1265,13 +1260,15 @@ async function collectAllowAlwaysPatternsAsync(params: {
     return;
   }
   if (!inlineCommand) {
-    const scriptPath = resolveShellWrapperScriptCandidatePath({
-      segment,
-      cwd: params.cwd,
-    });
+    const scriptPath =
+      powerShellFileScriptArgv?.[0] ??
+      resolveShellWrapperScriptCandidatePath({
+        segment,
+        cwd: params.cwd,
+      });
     if (scriptPath) {
       const argPattern = buildScriptArgPatternFromArgv(
-        params.segment.argv,
+        powerShellFileScriptArgv ?? params.segment.argv,
         scriptPath,
         params.cwd,
         params.platform,

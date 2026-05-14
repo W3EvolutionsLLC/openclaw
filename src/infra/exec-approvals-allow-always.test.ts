@@ -371,6 +371,33 @@ describe("resolveAllowAlwaysPatterns", () => {
     },
   );
 
+  it.each(["-fi", "/file"])(
+    "persists planner allow-always patterns for POSIX PowerShell %s aliases",
+    async (fileFlag) => {
+      if (process.platform === "win32") {
+        return;
+      }
+      const dir = makeTempDir();
+      makeExecutable(dir, "pwsh");
+      const scriptPath = path.join(dir, "script.ps1");
+      fs.writeFileSync(scriptPath, "");
+      fs.chmodSync(scriptPath, 0o755);
+      try {
+        const env = makePathEnv(dir);
+        const { persisted } = await resolvePersistedPatterns({
+          command: `pwsh ${fileFlag} ./script.ps1 arg`,
+          dir,
+          env,
+          safeBins: resolveSafeBins(undefined),
+        });
+
+        expect(persisted).toEqual([scriptPath]);
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("keeps inline awk programs out of allow-always persistence in strict inline-eval mode", async () => {
     if (process.platform === "win32") {
       return;
