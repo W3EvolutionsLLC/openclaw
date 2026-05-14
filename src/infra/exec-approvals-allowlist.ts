@@ -11,6 +11,8 @@ import {
   planCommandForAuthorization,
   type CommandAuthorizationChainOperator,
   type CommandAuthorizationPlan,
+  type CommandAuthorizationTree,
+  type CommandAuthorizationUnit,
 } from "./command-authorization/index.js";
 import {
   isDispatchWrapperExecutable,
@@ -1423,6 +1425,9 @@ export async function evaluateShellAllowlist(
     if (!group) {
       return analysisFailure();
     }
+    if (!plannedAllowlistGroupEligible(group)) {
+      return plannedAllowlistGroupMiss({ group, plan });
+    }
     const evaluation = evaluateExecAllowlist({ analysis: group.analysis, ...allowlistContext });
     return {
       analysisOk: true,
@@ -1480,6 +1485,23 @@ export async function evaluateShellAllowlist(
   const segmentSatisfiedBy: ExecSegmentSatisfiedBy[] = [];
 
   for (const [index, { analysis, evaluation }] of finalizedEvaluations.entries()) {
+    const group = plannedGroups[index];
+    if (!group || !plannedAllowlistGroupEligible(group)) {
+      if (group) {
+        segments.push(...group.analysis.segments);
+        segmentAllowlistEntries.push(...group.analysis.segments.map(() => null));
+        segmentSatisfiedBy.push(...group.analysis.segments.map(() => null));
+      }
+      return {
+        analysisOk: true,
+        allowlistSatisfied: false,
+        allowlistMatches,
+        segments,
+        segmentAllowlistEntries,
+        segmentSatisfiedBy,
+        authorizationPlan: plan,
+      };
+    }
     const effectiveSegmentSatisfiedBy = allowSkillPreludeAtIndex.has(index)
       ? analysis.segments.map(() => "skillPrelude" as const)
       : evaluation.segmentSatisfiedBy;
@@ -1517,8 +1539,28 @@ export async function evaluateShellAllowlist(
 
 type PlannedAllowlistGroup = {
   analysis: ExecCommandAnalysis;
+  units: CommandAuthorizationUnit[];
   opToNext: CommandAuthorizationChainOperator | null;
 };
+
+function plannedAllowlistGroupEligible(group: PlannedAllowlistGroup): boolean {
+  return group.units.every((unit) => unit.allowlistEligible && unit.blockReasons.length === 0);
+}
+
+function plannedAllowlistGroupMiss(params: {
+  group: PlannedAllowlistGroup;
+  plan: CommandAuthorizationPlan;
+}): ExecAllowlistAnalysis {
+  return {
+    analysisOk: true,
+    allowlistSatisfied: false,
+    allowlistMatches: [],
+    segments: params.group.analysis.segments,
+    segmentAllowlistEntries: params.group.analysis.segments.map(() => null),
+    segmentSatisfiedBy: params.group.analysis.segments.map(() => null),
+    authorizationPlan: params.plan,
+  };
+}
 
 function hasAnalysisBlockingPromptOnlyReason(plan: CommandAuthorizationPlan): boolean {
   return (
@@ -1540,13 +1582,15 @@ function createPlannedAllowlistGroups(params: {
   if (params.plan.kind === "unanalyzable") {
     return null;
   }
+  const unitsById = new Map(params.plan.units.map((unit) => [unit.id, unit]));
   if (params.plan.tree.kind !== "chain") {
     const analysis = createExecCommandAnalysisFromAuthorizationPlan({
       plan: params.plan,
       cwd: params.cwd,
       env: params.env,
     });
-    return analysis ? [{ analysis, opToNext: null }] : null;
+    const units = collectAuthorizationTreeUnits(params.plan.tree, unitsById);
+    return analysis && units ? [{ analysis, units, opToNext: null }] : null;
   }
 
   const groups: PlannedAllowlistGroup[] = [];
@@ -1560,10 +1604,34 @@ function createPlannedAllowlistGroups(params: {
     if (!analysis) {
       return null;
     }
+    const units = collectAuthorizationTreeUnits(child, unitsById);
+    if (!units) {
+      return null;
+    }
     groups.push({
       analysis,
+      units,
       opToNext: params.plan.tree.operators[index] ?? null,
     });
   }
   return groups.length > 0 ? groups : null;
+}
+
+function collectAuthorizationTreeUnits(
+  tree: CommandAuthorizationTree,
+  unitsById: ReadonlyMap<string, CommandAuthorizationUnit>,
+): CommandAuthorizationUnit[] | null {
+  if (tree.kind === "unit") {
+    const unit = unitsById.get(tree.unitId);
+    return unit ? [unit] : null;
+  }
+  const units: CommandAuthorizationUnit[] = [];
+  for (const child of tree.children) {
+    const childUnits = collectAuthorizationTreeUnits(child, unitsById);
+    if (!childUnits) {
+      return null;
+    }
+    units.push(...childUnits);
+  }
+  return units;
 }

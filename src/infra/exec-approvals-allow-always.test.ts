@@ -390,6 +390,38 @@ describe("resolveAllowAlwaysPatterns", () => {
     expect(persisted).toStrictEqual([]);
   });
 
+  it("does not satisfy allowlist for prompt-only inline eval units", async () => {
+    if (process.platform === "win32") {
+      return;
+    }
+    const dir = makeTempDir();
+    const python = makeExecutable(dir, "python");
+    const env = makePathEnv(dir);
+    const safeBins = resolveSafeBins(undefined);
+
+    const result = await evaluateShellAllowlist({
+      command: "python -c 'print(1)'",
+      allowlist: [{ pattern: python }],
+      safeBins,
+      cwd: dir,
+      env,
+      platform: process.platform,
+      strictInlineEval: false,
+    });
+
+    expect(result.analysisOk).toBe(true);
+    expect(result.authorizationPlan?.kind).toBe("prompt-only");
+    expect(result.allowlistSatisfied).toBe(false);
+    expect(
+      requiresExecApproval({
+        ask: "on-miss",
+        security: "allowlist",
+        analysisOk: result.analysisOk,
+        allowlistSatisfied: result.allowlistSatisfied,
+      }),
+    ).toBe(true);
+  });
+
   it("unwraps shell wrappers and persists the inner executable instead", async () => {
     if (process.platform === "win32") {
       return;

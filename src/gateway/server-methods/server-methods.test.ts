@@ -32,6 +32,32 @@ vi.mock("../../commands/status.js", () => ({
   getStatusSummary: vi.fn().mockResolvedValue({ ok: true }),
 }));
 
+type ResolveCommandAnalysisSummaryForDisplay =
+  typeof import("../../infra/command-analysis/explain.js").resolveCommandAnalysisSummaryForDisplay;
+
+const commandAnalysisMocks = vi.hoisted(() => ({
+  resolveOverride: undefined as ResolveCommandAnalysisSummaryForDisplay | undefined,
+}));
+
+vi.mock("../../infra/command-analysis/explain.js", async () => {
+  const actual = await vi.importActual<typeof import("../../infra/command-analysis/explain.js")>(
+    "../../infra/command-analysis/explain.js",
+  );
+  return {
+    ...actual,
+    resolveCommandAnalysisSummaryForDisplay: (
+      params: Parameters<ResolveCommandAnalysisSummaryForDisplay>[0],
+    ) =>
+      commandAnalysisMocks.resolveOverride
+        ? commandAnalysisMocks.resolveOverride(params)
+        : actual.resolveCommandAnalysisSummaryForDisplay(params),
+  };
+});
+
+afterEach(() => {
+  commandAnalysisMocks.resolveOverride = undefined;
+});
+
 function countMatching<T>(items: readonly T[], predicate: (item: T) => boolean): number {
   let count = 0;
   for (const item of items) {
@@ -1195,6 +1221,46 @@ describe("exec approval handlers", () => {
       context,
     });
     await requestPromise;
+  });
+
+  it("broadcasts approval requests with null analysis when command analysis stalls", async () => {
+    vi.useFakeTimers();
+    try {
+      commandAnalysisMocks.resolveOverride = () => new Promise(() => {});
+      const { manager, handlers, broadcasts, respond, context } = createExecApprovalFixture();
+
+      const requestPromise = requestExecApproval({
+        handlers,
+        respond,
+        context,
+        params: {
+          twoPhase: true,
+          host: "gateway",
+          command: "python3 -c 'print(1)'",
+          commandArgv: ["python3", "script.py"],
+          systemRunPlan: undefined,
+          nodeId: undefined,
+          timeoutMs: 10,
+        },
+      });
+
+      await vi.advanceTimersByTimeAsync(10);
+
+      const { id, request } = getRequestedExecApprovalPayload(broadcasts);
+      expect(request.commandAnalysis).toBeNull();
+      expect(manager.getSnapshot(id)?.resolvedAtMs).toBeUndefined();
+
+      const resolveRespond = vi.fn();
+      await resolveExecApproval({
+        handlers,
+        id,
+        respond: resolveRespond,
+        context,
+      });
+      await requestPromise;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("lists pending exec approvals", async () => {

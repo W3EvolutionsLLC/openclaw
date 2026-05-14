@@ -46,6 +46,7 @@ const APPROVAL_ALLOW_ALWAYS_UNAVAILABLE_DETAILS = {
   reason: "APPROVAL_ALLOW_ALWAYS_UNAVAILABLE",
 } as const;
 const RESERVED_PLUGIN_APPROVAL_ID_PREFIX = "plugin:";
+const EXEC_APPROVAL_COMMAND_ANALYSIS_MAX_WAIT_MS = 1_000;
 
 type ExecApprovalIosPushDelivery = {
   handleRequested?: (
@@ -57,6 +58,37 @@ type ExecApprovalIosPushDelivery = {
   handleResolved?: (resolved: ExecApprovalResolved) => Promise<void>;
   handleExpired?: (request: ExecApprovalRequest) => Promise<void>;
 };
+
+type ExecApprovalCommandAnalysis = Awaited<
+  ReturnType<typeof resolveCommandAnalysisSummaryForDisplay>
+>;
+
+function unrefTimer(timer: ReturnType<typeof setTimeout>): void {
+  const unref = (timer as { unref?: () => void }).unref;
+  if (typeof unref === "function") {
+    unref.call(timer);
+  }
+}
+
+function resolveCommandAnalysisBeforeApprovalRequest(
+  commandAnalysisPromise: Promise<ExecApprovalCommandAnalysis>,
+  timeoutMs: number,
+): Promise<ExecApprovalCommandAnalysis> {
+  const deadlineMs = Math.max(1, Math.min(timeoutMs, EXEC_APPROVAL_COMMAND_ANALYSIS_MAX_WAIT_MS));
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const timeoutPromise = new Promise<ExecApprovalCommandAnalysis>((resolve) => {
+    timer = setTimeout(() => resolve(null), deadlineMs);
+    unrefTimer(timer);
+  });
+  return Promise.race([
+    commandAnalysisPromise.finally(() => {
+      if (timer) {
+        clearTimeout(timer);
+      }
+    }),
+    timeoutPromise,
+  ]);
+}
 
 function normalizeCommandSpans(
   spans: { startIndex: number; endIndex: number }[] | undefined,
@@ -354,7 +386,10 @@ export function createExecApprovalHandlers(
         );
         return;
       }
-      record.request.commandAnalysis = await commandAnalysisPromise;
+      record.request.commandAnalysis = await resolveCommandAnalysisBeforeApprovalRequest(
+        commandAnalysisPromise,
+        timeoutMs,
+      );
       manager.startTimeout(record.id, timeoutMs);
       const requestEvent: ExecApprovalRequest = {
         id: record.id,
