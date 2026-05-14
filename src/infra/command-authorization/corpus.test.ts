@@ -312,6 +312,64 @@ describe("command authorization planner corpus", () => {
     }
   });
 
+  it.each([`sh -c 'echo "$HOME"'`, `sh -c 'echo "$1"' sh ignored dynamic`])(
+    "makes dynamic shell wrapper payload arguments prompt-only: %s",
+    async (command) => {
+      const plan = await planCommandForAuthorization({
+        dialect: "posix-shell",
+        command,
+      });
+
+      expect(plan.kind).toBe("prompt-only");
+      if (plan.kind !== "prompt-only") {
+        throw new Error(`expected prompt-only plan for ${command}, got ${plan.kind}`);
+      }
+      expect(plan.promptOnlyReasons).toContain("unsupported-shell-syntax");
+      expect(plan.units.every((unit) => !unit.allowlistEligible && !unit.allowAlwaysEligible)).toBe(
+        true,
+      );
+      expect(plan.units).toEqual([
+        expect.objectContaining({
+          raw: command,
+          relationship: "simple",
+          promptOnlyReasons: expect.arrayContaining(["unsupported-shell-syntax"]),
+        }),
+      ]);
+    },
+  );
+
+  it.each([
+    {
+      command: `pwsh -Command "Write-Output hi"`,
+      reason: "unsupported-powershell-wrapper",
+    },
+    {
+      command: "cmd /c dir",
+      reason: "unsupported-cmd-wrapper",
+    },
+    {
+      command: `sh -c 'pwsh -Command "Write-Output hi"'`,
+      reason: "unsupported-powershell-wrapper",
+    },
+  ] as const)(
+    "makes unsupported shell wrapper text prompt-only: $command",
+    async ({ command, reason }) => {
+      const plan = await planCommandForAuthorization({
+        dialect: "posix-shell",
+        command,
+      });
+
+      expect(plan.kind).toBe("prompt-only");
+      if (plan.kind !== "prompt-only") {
+        throw new Error(`expected prompt-only plan for ${command}, got ${plan.kind}`);
+      }
+      expect(plan.promptOnlyReasons).toContain(reason);
+      expect(plan.units.every((unit) => !unit.allowlistEligible && !unit.allowAlwaysEligible)).toBe(
+        true,
+      );
+    },
+  );
+
   it("plans absolute-path POSIX shell wrapper payloads as reusable trust candidates", async () => {
     const plan = await planCommandForAuthorization({
       dialect: "posix-shell",

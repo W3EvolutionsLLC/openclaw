@@ -22,6 +22,10 @@ import {
   POSIX_SHELL_WRAPPERS,
 } from "../exec-wrapper-resolution.js";
 import { resolveExecWrapperTrustPlan } from "../exec-wrapper-trust-plan.js";
+import {
+  isPowerShellInlineFileCommandFlag,
+  resolvePowerShellInlineCommandMatch,
+} from "../shell-inline-command.js";
 import type {
   CommandAuthorizationChainOperator,
   CommandAuthorizationContext,
@@ -271,6 +275,9 @@ function shouldPlanWrapperPayload(
     return false;
   }
   if (hasLeadingVariableAssignment(step)) {
+    return false;
+  }
+  if (hasDynamicWrapperPayloadArgument(step, wrapperPayloadSteps, risks)) {
     return false;
   }
   const trustPlan = resolveExecWrapperTrustPlan(step.argv);
@@ -719,10 +726,17 @@ function uniquePromptOnlyReasons(
 function classifyUnsupportedWrapper(argv: readonly string[]): UnsupportedWrapper | null {
   const executable = normalizeExecutableToken(argv[0] ?? "");
   if (executable === "cmd" || executable === "cmd.exe") {
-    return { dialect: "windows-cmd", reason: "unsupported-cmd-wrapper" };
+    return extractBindableShellWrapperInlineCommand([...argv])
+      ? { dialect: "windows-cmd", reason: "unsupported-cmd-wrapper" }
+      : null;
   }
   if (executable === "powershell" || executable === "powershell.exe" || executable === "pwsh") {
-    return { dialect: "powershell", reason: "unsupported-powershell-wrapper" };
+    const match = resolvePowerShellInlineCommandMatch([...argv]);
+    const flag = match.valueTokenIndex === null ? null : argv[match.valueTokenIndex - 1];
+    return match.valueTokenIndex !== null &&
+      !isPowerShellInlineFileCommandFlag(typeof flag === "string" ? flag : "")
+      ? { dialect: "powershell", reason: "unsupported-powershell-wrapper" }
+      : null;
   }
   return null;
 }
@@ -731,6 +745,10 @@ function promptOnlyReasonsForStep(
   step: CommandStep,
   risks: readonly CommandRisk[],
 ): CommandPromptOnlyReason[] {
+  const unsupportedWrapper = classifyUnsupportedWrapper(step.argv);
+  if (unsupportedWrapper) {
+    return [unsupportedWrapper.reason];
+  }
   const inlineCommand = extractBindableShellWrapperInlineCommand(step.argv);
   const stepRisks = risks.filter((risk) =>
     spansOverlap(step.span.startIndex, step.span.endIndex, risk),
@@ -892,7 +910,52 @@ function promptOnlyReasonsFromUnsupportedRender(
   if (hasRelativeWrapperPayloadExecutable(explanation)) {
     reasons.push("unsupported-shell-syntax");
   }
+  if (hasDynamicWrapperPayloadArgumentInExplanation(explanation)) {
+    reasons.push("unsupported-shell-syntax");
+  }
   return uniquePromptOnlyReasons(reasons);
+}
+
+function hasDynamicWrapperPayloadArgumentInExplanation(explanation: CommandExplanation): boolean {
+  return explanation.topLevelCommands.some((step) => {
+    const wrapperPayloadSteps = explanation.nestedCommands.filter(
+      (nestedStep) =>
+        nestedStep.context === "wrapper-payload" &&
+        stepContainsSpan(step, nestedStep.span.startIndex, nestedStep.span.endIndex),
+    );
+    return hasDynamicWrapperPayloadArgument(step, wrapperPayloadSteps, explanation.risks);
+  });
+}
+
+function hasDynamicWrapperPayloadArgument(
+  step: CommandStep,
+  wrapperPayloadSteps: readonly CommandStep[],
+  risks: readonly CommandRisk[],
+): boolean {
+  if (wrapperPayloadSteps.length === 0) {
+    return false;
+  }
+  const hasShellWrapperRisk = risks.some(
+    (risk) =>
+      (risk.kind === "shell-wrapper" || risk.kind === "shell-wrapper-through-carrier") &&
+      spansOverlap(step.span.startIndex, step.span.endIndex, risk),
+  );
+  if (!hasShellWrapperRisk) {
+    return false;
+  }
+  const trustPlan = resolveExecWrapperTrustPlan(step.argv);
+  const inlineCommand =
+    extractBindableShellWrapperInlineCommand(step.argv) ?? trustPlan.shellInlineCommand;
+  if (inlineCommand && isDirectShellPositionalCarrierInvocation(inlineCommand)) {
+    return false;
+  }
+  return risks.some(
+    (risk) =>
+      risk.kind === "dynamic-argument" &&
+      wrapperPayloadSteps.some((payloadStep) =>
+        stepContainsSpan(payloadStep, risk.span.startIndex, risk.span.endIndex),
+      ),
+  );
 }
 
 function hasRelativeWrapperPayloadExecutable(explanation: CommandExplanation): boolean {
