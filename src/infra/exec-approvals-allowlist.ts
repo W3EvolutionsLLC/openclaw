@@ -1058,6 +1058,11 @@ function addAllowAlwaysPattern(
   }
 }
 
+function isShellBuiltinCommandCarrier(argv: readonly string[]): boolean {
+  const executable = normalizeExecutableToken(argv[0] ?? "");
+  return executable === "command" || executable === "builtin" || executable === "exec";
+}
+
 function collectAllowAlwaysPatterns(params: {
   segment: ExecCommandSegment;
   cwd?: string;
@@ -1085,6 +1090,9 @@ function collectAllowAlwaysPatterns(params: {
           resolution: resolveCommandResolutionFromArgv(trustPlan.argv, params.cwd, params.env),
         };
 
+  if (isShellBuiltinCommandCarrier(segment.argv)) {
+    return;
+  }
   const candidatePath = resolveExecutionTargetCandidatePath(segment.resolution, params.cwd);
   if (!candidatePath) {
     return;
@@ -1230,6 +1238,9 @@ async function collectAllowAlwaysPatternsAsync(params: {
           resolution: resolveCommandResolutionFromArgv(trustPlan.argv, params.cwd, params.env),
         };
 
+  if (isShellBuiltinCommandCarrier(segment.argv)) {
+    return;
+  }
   const candidatePath = resolveExecutionTargetCandidatePath(segment.resolution, params.cwd);
   if (!candidatePath) {
     return;

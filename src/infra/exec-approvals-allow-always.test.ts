@@ -1223,6 +1223,29 @@ $0 \\"$1\\"" touch {marker}`,
     expect(second.allowlistSatisfied).toBe(false);
   });
 
+  it("does not persist shell builtin carriers as allow-always executables", async () => {
+    if (process.platform === "win32") {
+      return;
+    }
+    const dir = makeTempDir();
+    makeExecutable(dir, "command");
+    makeExecutable(dir, "builtin");
+    makeExecutable(dir, "exec");
+    makeExecutable(dir, "tool");
+    const env = makePathEnv(dir);
+    const safeBins = resolveSafeBins(undefined);
+
+    for (const command of ["command ./tool", "builtin ./tool", "exec ./tool"]) {
+      const { persisted } = await resolvePersistedPatterns({
+        command,
+        dir,
+        env,
+        safeBins,
+      });
+      expect(persisted).toStrictEqual([]);
+    }
+  });
+
   it("allows positional carriers for unknown carried executables when explicitly allowlisted", async () => {
     if (process.platform === "win32") {
       return;
