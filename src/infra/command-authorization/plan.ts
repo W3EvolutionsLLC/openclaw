@@ -598,6 +598,9 @@ function renderAuthorizationUnit(params: {
     return { ok: true, command: unit.raw.trim() };
   }
 
+  if (requiresLeadingWrapperPreservation(segment) && !canRenderWithoutLeadingWrappers(segment)) {
+    return { ok: false, reason: "allowlist wrapper preservation unavailable" };
+  }
   const argv = resolvePlannedSegmentArgv(segment);
   if (!argv) {
     return { ok: false, reason: "segment execution plan unavailable" };
@@ -732,6 +735,11 @@ function canRenderWithoutLeadingWrappers(segment: ExecCommandSegment): boolean {
     wrapperChain.length > 0 &&
     wrapperChain.every((wrapper) => SEMANTICS_NEUTRAL_RENDER_WRAPPERS.has(wrapper))
   );
+}
+
+function requiresLeadingWrapperPreservation(segment: ExecCommandSegment): boolean {
+  const effectiveArgvStartIndex = resolveEffectiveArgvStartIndex(segment.argv, segment);
+  return effectiveArgvStartIndex !== null && effectiveArgvStartIndex > 0;
 }
 
 function renderQuotedPlannedSegmentArgv(

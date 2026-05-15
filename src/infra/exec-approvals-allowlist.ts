@@ -405,6 +405,8 @@ type SegmentMatchEvaluation = {
   pinnedArgvToken: ExecAllowlistPinnedArgvToken | null;
 };
 
+const SEMANTICS_NEUTRAL_ALLOW_ALWAYS_WRAPPERS = new Set(["env", "nice"]);
+
 function matchExecutableAllowlistForSegment(params: {
   allowlist: ExecAllowlistEntry[];
   candidateResolution: ExecutableResolution | null;
@@ -1205,6 +1207,9 @@ function collectAllowAlwaysPatterns(params: {
   if (trustPlan.policyBlocked) {
     return;
   }
+  if (hasSemanticDispatchWrapper(params.segment)) {
+    return;
+  }
   const segment =
     trustPlan.argv === params.segment.argv
       ? params.segment
@@ -1216,6 +1221,9 @@ function collectAllowAlwaysPatterns(params: {
         };
 
   if (isShellBuiltinCommandCarrier(segment.argv)) {
+    return;
+  }
+  if (hasSemanticDispatchWrapper(segment)) {
     return;
   }
   const candidatePath = resolveExecutionTargetCandidatePath(segment.resolution, params.cwd);
@@ -1336,6 +1344,14 @@ export function resolveAllowAlwaysPatternEntriesFromPlan(params: {
   });
 }
 
+function hasSemanticDispatchWrapper(segment: ExecCommandSegment): boolean {
+  const wrapperChain = segment.resolution?.wrapperChain;
+  return (
+    Array.isArray(wrapperChain) &&
+    wrapperChain.some((wrapper) => !SEMANTICS_NEUTRAL_ALLOW_ALWAYS_WRAPPERS.has(wrapper))
+  );
+}
+
 async function collectAllowAlwaysPatternsAsync(params: {
   segment: ExecCommandSegment;
   cwd?: string;
@@ -1353,6 +1369,9 @@ async function collectAllowAlwaysPatternsAsync(params: {
   if (trustPlan.policyBlocked) {
     return;
   }
+  if (hasSemanticDispatchWrapper(params.segment)) {
+    return;
+  }
   const segment =
     trustPlan.argv === params.segment.argv
       ? params.segment
@@ -1364,6 +1383,9 @@ async function collectAllowAlwaysPatternsAsync(params: {
         };
 
   if (isShellBuiltinCommandCarrier(segment.argv)) {
+    return;
+  }
+  if (hasSemanticDispatchWrapper(segment)) {
     return;
   }
   const candidatePath = resolveExecutionTargetCandidatePath(segment.resolution, params.cwd);

@@ -23,11 +23,15 @@ import {
   analyzeArgvCommand,
   evaluateExecAllowlist,
   loadExecApprovals,
+  resolveExecApprovalsFromFile,
   resolveExecApprovalsPath,
   saveExecApprovals,
 } from "../infra/exec-approvals.js";
 import type { ExecHostResponse } from "../infra/exec-host.js";
-import { resolveSystemRunExecArgv } from "./invoke-system-run-allowlist.js";
+import {
+  evaluateSystemRunAllowlist,
+  resolveSystemRunExecArgv,
+} from "./invoke-system-run-allowlist.js";
 import { buildSystemRunApprovalPlan } from "./invoke-system-run-plan.js";
 import { handleSystemRunInvoke } from "./invoke-system-run.js";
 import type { HandleSystemRunInvokeOptions } from "./invoke-system-run.js";
@@ -1909,6 +1913,100 @@ describe("handleSystemRunInvoke mac app exec host routing", () => {
         });
 
         expect(execArgv?.[3]).toBe(printfPath);
+      } finally {
+        if (oldPath === undefined) {
+          delete process.env.PATH;
+        } else {
+          process.env.PATH = oldPath;
+        }
+      }
+    },
+  );
+
+  it.runIf(process.platform !== "win32")(
+    "resolves direct argv positional carriers with the request environment",
+    async () => {
+      const tempDir = createFixtureDir("openclaw-direct-carrier-env-");
+      const binDir = path.join(tempDir, "bin");
+      fs.mkdirSync(binDir, { recursive: true });
+      const toolPath = path.join(binDir, "tool");
+      fs.writeFileSync(toolPath, "#!/bin/sh\necho env-tool\n");
+      fs.chmodSync(toolPath, 0o755);
+
+      await withTempApprovalsHome({
+        approvals: createAllowlistOnMissApprovals({
+          agents: {
+            main: {
+              allowlist: [{ pattern: toolPath }],
+            },
+          },
+        }),
+        run: async () => {
+          const approvals = resolveExecApprovalsFromFile({
+            file: loadExecApprovals(),
+            agentId: "main",
+            overrides: { security: "allowlist", ask: "on-miss" },
+            path: "",
+            socketPath: "",
+            token: "",
+          });
+          const analysis = await evaluateSystemRunAllowlist({
+            shellCommand: null,
+            argv: ["sh", "-c", '$0 "$@"', "tool", "hi"],
+            approvals,
+            security: "allowlist",
+            safeBins: new Set(),
+            safeBinProfiles: {},
+            trustedSafeBinDirs: new Set(),
+            cwd: tempDir,
+            env: { PATH: `${binDir}${path.delimiter}/usr/bin:/bin` },
+            skillBins: [],
+            autoAllowSkills: false,
+          });
+
+          expect(analysis.allowlistSatisfied).toBe(true);
+          expect(analysis.segmentPinnedArgvTokens[0]?.replacement).toBe(toolPath);
+        },
+      });
+    },
+  );
+
+  it.runIf(process.platform !== "win32")(
+    "pins positional-carrier executables after transparent direct argv dispatch wrappers",
+    () => {
+      const oldPath = process.env.PATH;
+      process.env.PATH = "/usr/bin:/bin";
+      try {
+        const printfPath = fs.realpathSync(
+          fs.existsSync("/usr/bin/printf") ? "/usr/bin/printf" : "/bin/printf",
+        );
+        const argv = ["env", "sh", "-c", '$0 "$@"', "printf", "hi"];
+        const analysis = analyzeArgvCommand({ argv });
+        const evaluation = evaluateExecAllowlist({
+          analysis,
+          allowlist: [{ pattern: printfPath }],
+          safeBins: new Set(),
+        });
+        const execArgv = resolveSystemRunExecArgv({
+          plannedAllowlistArgv: ["/bin/sh", "-c", '$0 "$@"', "printf", "hi"],
+          argv,
+          security: "allowlist",
+          isWindows: false,
+          policy: {
+            approvedByAsk: false,
+            analysisOk: analysis.ok,
+            allowlistSatisfied: evaluation.allowlistSatisfied,
+          },
+          shellCommand: null,
+          segments: analysis.segments,
+          segmentPinnedArgvTokens: evaluation.segmentPinnedArgvTokens,
+          segmentSatisfiedBy: evaluation.segmentSatisfiedBy,
+          cwd: undefined,
+          env: undefined,
+        });
+
+        expect(execArgv?.[3]).toBe(printfPath);
+        expect(execArgv?.[4]).toBe("hi");
       } finally {
         if (oldPath === undefined) {
           delete process.env.PATH;

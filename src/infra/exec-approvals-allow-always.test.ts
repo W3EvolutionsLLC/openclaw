@@ -910,6 +910,22 @@ $0 \\"$1\\"" touch {marker}`,
     expect(second.allowlistSatisfied).toBe(true);
   });
 
+  it("does not persist semantic dispatch-wrapper payloads as allow-always executables", async () => {
+    if (process.platform === "win32") {
+      return;
+    }
+    const dir = makeTempDir();
+    makeExecutable(dir, "sleep");
+    const { persisted } = await resolvePersistedPatterns({
+      command: "/bin/zsh -c 'timeout 1 sleep 100'",
+      dir,
+      env: makePathEnv(dir),
+      safeBins: resolveSafeBins(undefined),
+    });
+
+    expect(persisted).toStrictEqual([]);
+  });
+
   it("unwraps time wrappers and persists the inner executable instead", async () => {
     if (process.platform === "win32") {
       return;

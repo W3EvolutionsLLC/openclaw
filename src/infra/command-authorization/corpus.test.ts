@@ -157,6 +157,36 @@ describe("command authorization planner corpus", () => {
     expect(rendered.command).not.toContain("'env'");
   });
 
+  it("fails closed when rendering shell payloads with semantic dispatch wrappers", async () => {
+    const plan = await planCommandForAuthorization(
+      {
+        dialect: "posix-shell",
+        command: "sh -c 'timeout 1 sleep 100'",
+      },
+      { env: { PATH: "/usr/bin:/bin" }, platform: process.platform },
+    );
+    const analysis = createExecCommandAnalysisFromAuthorizationPlan({
+      plan,
+      env: { PATH: "/usr/bin:/bin" },
+    });
+    expect(analysis?.ok).toBe(true);
+    if (!analysis) {
+      throw new Error("expected command analysis");
+    }
+
+    const rendered = renderAuthorizationShellCommand({
+      plan,
+      segments: analysis.segments,
+      mode: "enforced",
+      platform: process.platform,
+    });
+
+    expect(rendered).toEqual({
+      ok: false,
+      reason: "allowlist wrapper preservation unavailable",
+    });
+  });
+
   it("renders only safe-bin POSIX segments literally from the planner tree", async () => {
     const plan = await planCommandForAuthorization({
       dialect: "posix-shell",
