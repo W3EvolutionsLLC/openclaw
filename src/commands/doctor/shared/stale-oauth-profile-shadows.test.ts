@@ -326,6 +326,7 @@ describe("stale OAuth profile shadow doctor repair", () => {
     const childAgentDir = path.join(stateDir, "agents", "telegram", "agent");
     const repair = await __testing.repairStaleOAuthProfilesForAgent({
       agentDir: childAgentDir,
+      env: process.env,
       mainStore: storeWith(
         profileId,
         oauthCredential({

@@ -5,7 +5,6 @@ import {
   resolveDefaultAgentDir,
   listAgentEntries,
 } from "../../../agents/agent-scope.js";
-import { AUTH_STORE_LOCK_OPTIONS } from "../../../agents/auth-profiles/constants.js";
 import {
   areOAuthCredentialsEquivalent,
   hasUsableOAuthCredential,
@@ -17,7 +16,7 @@ import { saveAuthProfileStore } from "../../../agents/auth-profiles/store.js";
 import type { AuthProfileStore, OAuthCredential } from "../../../agents/auth-profiles/types.js";
 import { resolveStateDir } from "../../../config/paths.js";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
-import { withFileLock } from "../../../infra/file-lock.js";
+import { withOpenClawStateLock } from "../../../state/openclaw-state-lock.js";
 import { shortenHomePath } from "../../../utils.js";
 
 type StaleOAuthProfileShadow = {
@@ -25,6 +24,18 @@ type StaleOAuthProfileShadow = {
   authPath: string;
   profileId: string;
 };
+
+const AUTH_STORE_REPAIR_LOCK_OPTIONS = {
+  retries: {
+    retries: 5,
+    factor: 1.2,
+    minTimeout: 50,
+    maxTimeout: 500,
+    randomize: true,
+  },
+  scope: "auth-profile-store.repair",
+  stale: 30_000,
+} as const;
 
 async function collectStateAgentDirs(env: NodeJS.ProcessEnv): Promise<string[]> {
   const agentsRoot = path.join(resolveStateDir(env), "agents");
@@ -172,9 +183,12 @@ async function repairStaleOAuthProfilesForAgent(params: {
 }): Promise<
   { status: "changed"; removedProfileIds: string[] } | { status: "missing" | "unchanged" }
 > {
-  return await withFileLock(
+  return await withOpenClawStateLock(
     resolveAuthStorePath(params.agentDir),
-    AUTH_STORE_LOCK_OPTIONS,
+    {
+      ...AUTH_STORE_REPAIR_LOCK_OPTIONS,
+      env: params.env,
+    },
     async () => {
       const store = loadPersistedAuthProfileStore(params.agentDir, { env: params.env });
       if (!store) {
