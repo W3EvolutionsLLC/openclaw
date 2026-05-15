@@ -378,6 +378,35 @@ describe("exec approvals shell analysis", () => {
       expect(result.allowlistSatisfied).toBe(testCase.expectedAllowlistSatisfied);
     });
 
+    it.each([
+      { binary: "read", command: "read X; tool" },
+      { binary: "shift", command: "shift; tool" },
+      { binary: "unalias", command: "unalias ll; tool" },
+    ])("does not allowlist shell state builtin $binary via PATH executables", async (testCase) => {
+      if (process.platform === "win32") {
+        return;
+      }
+      const dir = makeTempDir();
+      const builtinPath = path.join(dir, testCase.binary);
+      const toolPath = path.join(dir, "tool");
+      fs.writeFileSync(builtinPath, "#!/bin/sh\n", { mode: 0o755 });
+      fs.writeFileSync(toolPath, "#!/bin/sh\n", { mode: 0o755 });
+      const env = makePathEnv(dir);
+      try {
+        const result = await evaluateShellAllowlist({
+          command: testCase.command,
+          allowlist: [{ pattern: builtinPath }, { pattern: toolPath }],
+          safeBins: new Set(),
+          cwd: dir,
+          env,
+        });
+        expect(result.analysisOk).toBe(false);
+        expect(result.allowlistSatisfied).toBe(false);
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
     it("allows the skill display prelude when a later skill wrapper is allowlisted", async () => {
       if (process.platform === "win32") {
         return;
@@ -849,34 +878,52 @@ describe("exec approvals shell analysis", () => {
           const shellPath = binPath("sh");
           const shellRealPath = fs.realpathSync(shellPath);
           const printfPath = binPath("printf");
-          const result = await evaluateShellAllowlist({
-            command: `${shellPath} -c '$0 "$@"' printf hi`,
-            allowlist: [{ pattern: printfPath }],
-            safeBins: new Set(),
-            cwd: dir,
-            env,
-          });
-          expect(result.analysisOk).toBe(true);
-          expect(result.allowlistSatisfied).toBe(true);
-          expect(result.segmentPinnedArgvTokens).toEqual([
-            { tokenIndex: 3, replacement: printfPath },
-          ]);
-          expect(result.authorizationPlan).toBeDefined();
-          if (!result.authorizationPlan) {
-            throw new Error("expected authorization plan");
-          }
+          for (const testCase of [
+            {
+              command: `sh -c '$0 "$@"' printf hi`,
+              expectedTokenIndex: 3,
+              expectedCommand: `'${shellRealPath}' -c '$0 "$@"' '${printfPath}' hi`,
+            },
+            {
+              command: `env sh -c '$0 "$@"' printf hi`,
+              expectedTokenIndex: 4,
+              expectedCommand: `env '${shellRealPath}' -c '$0 "$@"' '${printfPath}' hi`,
+            },
+            {
+              command: `nice sh -c '$0 "$@"' printf hi`,
+              expectedTokenIndex: 4,
+              expectedCommand: `nice '${shellRealPath}' -c '$0 "$@"' '${printfPath}' hi`,
+            },
+          ]) {
+            const result = await evaluateShellAllowlist({
+              command: testCase.command,
+              allowlist: [{ pattern: printfPath }],
+              safeBins: new Set(),
+              cwd: dir,
+              env,
+            });
+            expect(result.analysisOk, testCase.command).toBe(true);
+            expect(result.allowlistSatisfied, testCase.command).toBe(true);
+            expect(result.segmentPinnedArgvTokens, testCase.command).toEqual([
+              { tokenIndex: testCase.expectedTokenIndex, replacement: printfPath },
+            ]);
+            expect(result.authorizationPlan, testCase.command).toBeDefined();
+            if (!result.authorizationPlan) {
+              throw new Error("expected authorization plan");
+            }
 
-          const rendered = renderAuthorizationShellCommand({
-            plan: result.authorizationPlan,
-            segments: result.segments,
-            segmentPinnedArgvTokens: result.segmentPinnedArgvTokens,
-            platform: process.platform,
-            mode: "enforced",
-          });
-          expect(rendered).toEqual({
-            ok: true,
-            command: `'${shellRealPath}' -c '$0 "$@"' '${printfPath}' hi`,
-          });
+            const rendered = renderAuthorizationShellCommand({
+              plan: result.authorizationPlan,
+              segments: result.segments,
+              segmentPinnedArgvTokens: result.segmentPinnedArgvTokens,
+              platform: process.platform,
+              mode: "enforced",
+            });
+            expect(rendered, testCase.command).toEqual({
+              ok: true,
+              command: testCase.expectedCommand,
+            });
+          }
         });
       });
 

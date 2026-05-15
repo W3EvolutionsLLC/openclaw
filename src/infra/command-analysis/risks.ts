@@ -29,10 +29,13 @@ export const SHELL_STATE_MUTATING_BUILTINS = new Set([
   "export",
   "hash",
   "readonly",
+  "read",
   "set",
+  "shift",
   "typeset",
   "umask",
   "ulimit",
+  "unalias",
   "unset",
   "trap",
 ]);

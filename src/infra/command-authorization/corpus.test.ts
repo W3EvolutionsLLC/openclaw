@@ -582,10 +582,13 @@ describe("command authorization planner corpus", () => {
     "unset PATH; ls",
     "set -a; SECRET=value; ./tool",
     "hash -p /tmp/evil ls; ls",
+    "read X; ./tool",
+    "shift; ./tool",
     "trap 'id > /tmp/pwned' EXIT; echo ok",
     "umask 000; touch file",
     "builtin umask 000; touch file",
     "ulimit -f 1; ./tool",
+    "unalias ls; ls",
   ])("makes shell state mutation prompt-only: %s", async (command) => {
     const plan = await planCommandForAuthorization({
       dialect: "posix-shell",

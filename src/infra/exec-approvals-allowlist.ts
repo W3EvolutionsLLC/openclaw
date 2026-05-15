@@ -575,18 +575,27 @@ function resolveSegmentAllowlistMatch(params: {
           env: params.context.env,
         })
       : undefined;
-  const shellPositionalArgvMatch = shellPositionalArgvCandidate
-    ? matchAllowlist(
-        params.context.allowlist,
-        {
-          rawExecutable: shellPositionalArgvCandidate.path,
-          resolvedPath: shellPositionalArgvCandidate.path,
-          executableName: path.basename(shellPositionalArgvCandidate.path),
-        },
-        undefined,
-        params.context.platform,
-      )
+  const shellPositionalPinnedArgvToken = shellPositionalArgvCandidate
+    ? resolveSourcePinnedArgvToken({
+        sourceArgv: params.segment.argv,
+        effectiveArgv,
+        effectiveTokenIndex: shellPositionalArgvCandidate.tokenIndex,
+        replacement: shellPositionalArgvCandidate.path,
+      })
     : null;
+  const shellPositionalArgvMatch =
+    shellPositionalArgvCandidate && shellPositionalPinnedArgvToken
+      ? matchAllowlist(
+          params.context.allowlist,
+          {
+            rawExecutable: shellPositionalArgvCandidate.path,
+            resolvedPath: shellPositionalArgvCandidate.path,
+            executableName: path.basename(shellPositionalArgvCandidate.path),
+          },
+          undefined,
+          params.context.platform,
+        )
+      : null;
   const shellScriptCandidatePath =
     powerShellFileScriptArgv?.[0] ??
     (inlineCommand === null
@@ -618,11 +627,8 @@ function resolveSegmentAllowlistMatch(params: {
       : null;
   const match = executableMatch ?? shellPositionalArgvMatch ?? shellScriptMatch;
   const pinnedArgvToken =
-    !executableMatch && shellPositionalArgvMatch && shellPositionalArgvCandidate
-      ? {
-          tokenIndex: shellPositionalArgvCandidate.tokenIndex,
-          replacement: shellPositionalArgvCandidate.path,
-        }
+    !executableMatch && shellPositionalArgvMatch && shellPositionalPinnedArgvToken
+      ? shellPositionalPinnedArgvToken
       : null;
   return {
     effectiveArgv,
@@ -630,6 +636,52 @@ function resolveSegmentAllowlistMatch(params: {
     match,
     pinnedArgvToken,
   };
+}
+
+function resolveSourcePinnedArgvToken(params: {
+  sourceArgv: readonly string[];
+  effectiveArgv: readonly string[];
+  effectiveTokenIndex: number;
+  replacement: string;
+}): ExecAllowlistPinnedArgvToken | null {
+  const sourceTokenIndex = resolveSourceArgvTokenIndex({
+    sourceArgv: params.sourceArgv,
+    effectiveArgv: params.effectiveArgv,
+    effectiveTokenIndex: params.effectiveTokenIndex,
+  });
+  return sourceTokenIndex === null
+    ? null
+    : { tokenIndex: sourceTokenIndex, replacement: params.replacement };
+}
+
+function resolveSourceArgvTokenIndex(params: {
+  sourceArgv: readonly string[];
+  effectiveArgv: readonly string[];
+  effectiveTokenIndex: number;
+}): number | null {
+  if (
+    params.effectiveTokenIndex < 0 ||
+    params.effectiveTokenIndex >= params.effectiveArgv.length ||
+    params.effectiveArgv.length === 0 ||
+    params.effectiveArgv.length > params.sourceArgv.length
+  ) {
+    return null;
+  }
+
+  let matchStart: number | null = null;
+  for (let start = 0; start <= params.sourceArgv.length - params.effectiveArgv.length; start += 1) {
+    const matches = params.effectiveArgv.every(
+      (token, offset) => params.sourceArgv[start + offset] === token,
+    );
+    if (!matches) {
+      continue;
+    }
+    if (matchStart !== null) {
+      return null;
+    }
+    matchStart = start;
+  }
+  return matchStart === null ? null : matchStart + params.effectiveTokenIndex;
 }
 
 function resolveSegmentSatisfaction(params: {

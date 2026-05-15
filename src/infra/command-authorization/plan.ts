@@ -663,15 +663,18 @@ function renderPinnedRawUnitArgvToken(params: {
   if (!rendered) {
     return { ok: false, reason: "allowlist pinned argv token replacement unavailable" };
   }
-  const rawExecutable = params.unit.executable?.trim();
+  const executionRaw = params.segment.resolution?.execution.rawExecutable?.trim();
   const argv = resolvePlannedSegmentArgv(params.segment);
   const pinnedExecutable = argv?.[0]?.trim();
-  if (rawExecutable && pinnedExecutable && rawExecutable !== pinnedExecutable) {
-    const executablePinned = replaceLeadingShellToken(
-      rendered,
-      rawExecutable,
-      shellEscapeSingleArg(pinnedExecutable),
-    );
+  if (executionRaw && pinnedExecutable) {
+    const executablePinned = replaceSpannedShellArgvToken({
+      raw: rendered,
+      argv: params.unit.argv,
+      argvSpans: params.unit.argvSpans,
+      tokenIndex: resolveEffectiveArgvStartIndex(params.unit.argv, params.segment),
+      expectedToken: executionRaw,
+      replacement: shellEscapeSingleArg(pinnedExecutable),
+    });
     if (!executablePinned) {
       return { ok: false, reason: "allowlist executable replacement unavailable" };
     }
