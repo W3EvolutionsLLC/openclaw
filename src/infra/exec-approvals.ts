@@ -21,7 +21,7 @@ import { expandHomePrefix, resolveRequiredHomeDir } from "./home-dir.js";
 import { requestJsonlSocket } from "./jsonl-socket.js";
 export * from "./exec-approvals-analysis.js";
 export * from "./exec-approvals-allowlist.js";
-export type { ExecAllowlistEntry } from "./exec-approvals.types.js";
+export type { ExecAllowlistEntry, ExecAllowlistPinnedArgvToken } from "./exec-approvals.types.js";
 
 export type ExecHost = "sandbox" | "gateway" | "node";
 export type ExecTarget = "auto" | ExecHost;

@@ -9,6 +9,7 @@ import {
   resolvePlannedSegmentArgv,
   resolveExecApprovals,
   type ExecAllowlistEntry,
+  type ExecAllowlistPinnedArgvToken,
   type ExecCommandSegment,
   type ExecSegmentSatisfiedBy,
   type ExecSecurity,
@@ -34,6 +35,7 @@ type SystemRunAllowlistAnalysis = {
   allowlistSatisfied: boolean;
   segments: ExecCommandSegment[];
   segmentAllowlistEntries: Array<ExecAllowlistEntry | null>;
+  segmentPinnedArgvTokens: Array<ExecAllowlistPinnedArgvToken | null>;
   segmentSatisfiedBy: ExecSegmentSatisfiedBy[];
   authorizationPlan?: CommandAuthorizationPlan;
 };
@@ -73,6 +75,7 @@ export async function evaluateSystemRunAllowlist(params: {
           : false,
       segments: allowlistEval.segments,
       segmentAllowlistEntries: allowlistEval.segmentAllowlistEntries,
+      segmentPinnedArgvTokens: allowlistEval.segmentPinnedArgvTokens,
       segmentSatisfiedBy: allowlistEval.segmentSatisfiedBy,
       authorizationPlan: allowlistEval.authorizationPlan,
     };
@@ -96,6 +99,7 @@ export async function evaluateSystemRunAllowlist(params: {
       params.security === "allowlist" && analysis.ok ? allowlistEval.allowlistSatisfied : false,
     segments: analysis.segments,
     segmentAllowlistEntries: allowlistEval.segmentAllowlistEntries,
+    segmentPinnedArgvTokens: allowlistEval.segmentPinnedArgvTokens,
     segmentSatisfiedBy: allowlistEval.segmentSatisfiedBy,
   };
 }
@@ -136,6 +140,7 @@ export function resolveSystemRunExecArgv(params: {
   };
   shellCommand: string | null;
   segments: ExecCommandSegment[];
+  segmentPinnedArgvTokens: Array<ExecAllowlistPinnedArgvToken | null>;
   segmentSatisfiedBy: ExecSegmentSatisfiedBy[];
   authorizationPlan?: CommandAuthorizationPlan;
   cwd: string | undefined;
@@ -172,6 +177,7 @@ export function resolveSystemRunExecArgv(params: {
     const rebuilt = renderAuthorizationShellCommand({
       plan: params.authorizationPlan,
       segments: params.segments,
+      segmentPinnedArgvTokens: params.segmentPinnedArgvTokens,
       segmentSatisfiedBy: params.segmentSatisfiedBy,
       platform: process.platform,
       mode: "safe-bins",

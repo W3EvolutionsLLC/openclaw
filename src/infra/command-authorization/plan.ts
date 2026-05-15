@@ -16,6 +16,7 @@ import {
   type ExecCommandAnalysis,
   type ExecCommandSegment,
 } from "../exec-approvals-analysis.js";
+import type { ExecAllowlistPinnedArgvToken } from "../exec-approvals.types.js";
 import {
   extractBindableShellWrapperInlineCommand,
   normalizeExecutableToken,
@@ -102,6 +103,7 @@ export function createExecCommandAnalysisFromAuthorizationPlan(params: {
 export function renderAuthorizationShellCommand(params: {
   plan: CommandAuthorizationPlan;
   segments: readonly ExecCommandSegment[];
+  segmentPinnedArgvTokens?: readonly (ExecAllowlistPinnedArgvToken | null)[];
   segmentSatisfiedBy?: readonly SegmentSatisfiedBy[];
   platform?: string | null;
   mode: RenderAuthorizationShellCommandMode;
@@ -116,6 +118,12 @@ export function renderAuthorizationShellCommand(params: {
   ) {
     return { ok: false, reason: "segment metadata mismatch" };
   }
+  if (
+    params.segmentPinnedArgvTokens !== undefined &&
+    params.segmentPinnedArgvTokens.length !== params.segments.length
+  ) {
+    return { ok: false, reason: "segment pinned token metadata mismatch" };
+  }
 
   const unitsById = new Map(params.plan.units.map((unit) => [unit.id, unit]));
   const cursor = { index: 0 };
@@ -123,6 +131,7 @@ export function renderAuthorizationShellCommand(params: {
     tree: params.plan.tree,
     unitsById,
     segments: params.segments,
+    segmentPinnedArgvTokens: params.segmentPinnedArgvTokens,
     segmentSatisfiedBy: params.segmentSatisfiedBy,
     platform: params.platform,
     mode: params.mode,
@@ -495,6 +504,7 @@ function renderAuthorizationTree(params: {
   tree: CommandAuthorizationTree;
   unitsById: ReadonlyMap<string, CommandAuthorizationUnit>;
   segments: readonly ExecCommandSegment[];
+  segmentPinnedArgvTokens?: readonly (ExecAllowlistPinnedArgvToken | null)[];
   segmentSatisfiedBy?: readonly SegmentSatisfiedBy[];
   platform?: string | null;
   mode: RenderAuthorizationShellCommandMode;
@@ -505,6 +515,7 @@ function renderAuthorizationTree(params: {
       unitId: params.tree.unitId,
       unitsById: params.unitsById,
       segments: params.segments,
+      segmentPinnedArgvTokens: params.segmentPinnedArgvTokens,
       segmentSatisfiedBy: params.segmentSatisfiedBy,
       platform: params.platform,
       mode: params.mode,
@@ -538,6 +549,7 @@ function renderAuthorizationUnit(params: {
   unitId: string;
   unitsById: ReadonlyMap<string, CommandAuthorizationUnit>;
   segments: readonly ExecCommandSegment[];
+  segmentPinnedArgvTokens?: readonly (ExecAllowlistPinnedArgvToken | null)[];
   segmentSatisfiedBy?: readonly SegmentSatisfiedBy[];
   platform?: string | null;
   mode: RenderAuthorizationShellCommandMode;
@@ -548,10 +560,19 @@ function renderAuthorizationUnit(params: {
     return { ok: false, reason: "unit mapping failed" };
   }
   const segment = params.segments[params.cursor.index];
+  const pinnedArgvToken = params.segmentPinnedArgvTokens?.[params.cursor.index];
   const satisfiedBy = params.segmentSatisfiedBy?.[params.cursor.index];
   params.cursor.index += 1;
   if (!segment) {
     return { ok: false, reason: "segment mapping failed" };
+  }
+  if (pinnedArgvToken) {
+    return renderPinnedRawUnitArgvToken({
+      unit,
+      segment,
+      pinnedArgvToken,
+      platform: params.platform,
+    });
   }
   if (params.mode === "safe-bins" && satisfiedBy !== "safeBins") {
     if (satisfiedBy === "allowlist") {
@@ -614,6 +635,47 @@ function renderAllowlistPinnedRawUnit(params: {
   );
   if (!rendered) {
     return { ok: false, reason: "allowlist executable replacement unavailable" };
+  }
+  return { ok: true, command: rendered };
+}
+
+function renderPinnedRawUnitArgvToken(params: {
+  unit: CommandAuthorizationUnit;
+  segment: ExecCommandSegment;
+  pinnedArgvToken: ExecAllowlistPinnedArgvToken;
+  platform?: string | null;
+}): RenderedAuthorizationTree {
+  if (isWindowsPlatform(params.platform)) {
+    return { ok: true, command: params.unit.raw.trim() };
+  }
+  const expectedToken = params.unit.argv[params.pinnedArgvToken.tokenIndex];
+  if (!expectedToken) {
+    return { ok: false, reason: "allowlist pinned argv token unavailable" };
+  }
+  let rendered = replaceSpannedShellArgvToken({
+    raw: params.unit.raw.trim(),
+    argv: params.unit.argv,
+    argvSpans: params.unit.argvSpans,
+    tokenIndex: params.pinnedArgvToken.tokenIndex,
+    expectedToken,
+    replacement: shellEscapeSingleArg(params.pinnedArgvToken.replacement),
+  });
+  if (!rendered) {
+    return { ok: false, reason: "allowlist pinned argv token replacement unavailable" };
+  }
+  const rawExecutable = params.unit.executable?.trim();
+  const argv = resolvePlannedSegmentArgv(params.segment);
+  const pinnedExecutable = argv?.[0]?.trim();
+  if (rawExecutable && pinnedExecutable && rawExecutable !== pinnedExecutable) {
+    const executablePinned = replaceLeadingShellToken(
+      rendered,
+      rawExecutable,
+      shellEscapeSingleArg(pinnedExecutable),
+    );
+    if (!executablePinned) {
+      return { ok: false, reason: "allowlist executable replacement unavailable" };
+    }
+    rendered = executablePinned;
   }
   return { ok: true, command: rendered };
 }

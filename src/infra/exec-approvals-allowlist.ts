@@ -31,7 +31,7 @@ import {
   type ExecCommandSegment,
   type ExecutableResolution,
 } from "./exec-approvals-analysis.js";
-import type { ExecAllowlistEntry } from "./exec-approvals.types.js";
+import type { ExecAllowlistEntry, ExecAllowlistPinnedArgvToken } from "./exec-approvals.types.js";
 import {
   DEFAULT_SAFE_BINS,
   SAFE_BIN_PROFILES,
@@ -131,6 +131,7 @@ export type ExecAllowlistEvaluation = {
   allowlistSatisfied: boolean;
   allowlistMatches: ExecAllowlistEntry[];
   segmentAllowlistEntries: Array<ExecAllowlistEntry | null>;
+  segmentPinnedArgvTokens: Array<ExecAllowlistPinnedArgvToken | null>;
   segmentSatisfiedBy: ExecSegmentSatisfiedBy[];
 };
 
@@ -401,6 +402,7 @@ type SegmentMatchEvaluation = {
   effectiveArgv: string[];
   inlineCommand: string | null;
   match: ExecAllowlistEntry | null;
+  pinnedArgvToken: ExecAllowlistPinnedArgvToken | null;
 };
 
 function matchExecutableAllowlistForSegment(params: {
@@ -565,21 +567,21 @@ function resolveSegmentAllowlistMatch(params: {
       executionResolution,
     ),
   });
-  const shellPositionalArgvCandidatePath =
+  const shellPositionalArgvCandidate =
     inlineCommand !== null
-      ? resolveShellWrapperPositionalArgvCandidatePath({
+      ? resolveShellWrapperPositionalArgvCandidate({
           segment: allowlistSegment,
           cwd: params.context.cwd,
           env: params.context.env,
         })
       : undefined;
-  const shellPositionalArgvMatch = shellPositionalArgvCandidatePath
+  const shellPositionalArgvMatch = shellPositionalArgvCandidate
     ? matchAllowlist(
         params.context.allowlist,
         {
-          rawExecutable: shellPositionalArgvCandidatePath,
-          resolvedPath: shellPositionalArgvCandidatePath,
-          executableName: path.basename(shellPositionalArgvCandidatePath),
+          rawExecutable: shellPositionalArgvCandidate.path,
+          resolvedPath: shellPositionalArgvCandidate.path,
+          executableName: path.basename(shellPositionalArgvCandidate.path),
         },
         undefined,
         params.context.platform,
@@ -614,10 +616,19 @@ function resolveSegmentAllowlistMatch(params: {
           params.context.platform,
         )
       : null;
+  const match = executableMatch ?? shellPositionalArgvMatch ?? shellScriptMatch;
+  const pinnedArgvToken =
+    !executableMatch && shellPositionalArgvMatch && shellPositionalArgvCandidate
+      ? {
+          tokenIndex: shellPositionalArgvCandidate.tokenIndex,
+          replacement: shellPositionalArgvCandidate.path,
+        }
+      : null;
   return {
     effectiveArgv,
     inlineCommand: powerShellFileScriptArgv ? null : inlineCommand,
-    match: executableMatch ?? shellPositionalArgvMatch ?? shellScriptMatch,
+    match,
+    pinnedArgvToken,
   };
 }
 
@@ -710,21 +721,24 @@ function evaluateSegments(
   satisfied: boolean;
   matches: ExecAllowlistEntry[];
   segmentAllowlistEntries: Array<ExecAllowlistEntry | null>;
+  segmentPinnedArgvTokens: Array<ExecAllowlistPinnedArgvToken | null>;
   segmentSatisfiedBy: ExecSegmentSatisfiedBy[];
 } {
   const matches: ExecAllowlistEntry[] = [];
   const skillBinTrust = buildSkillBinTrustIndex(params.skillBins);
   const allowSkills = params.autoAllowSkills === true && skillBinTrust.size > 0;
   const segmentAllowlistEntries: Array<ExecAllowlistEntry | null> = [];
+  const segmentPinnedArgvTokens: Array<ExecAllowlistPinnedArgvToken | null> = [];
   const segmentSatisfiedBy: ExecSegmentSatisfiedBy[] = [];
 
   const satisfied = segments.every((segment) => {
     if (segment.resolution?.policyBlocked === true) {
       segmentAllowlistEntries.push(null);
+      segmentPinnedArgvTokens.push(null);
       segmentSatisfiedBy.push(null);
       return false;
     }
-    const { effectiveArgv, inlineCommand, match } = resolveSegmentAllowlistMatch({
+    const { effectiveArgv, inlineCommand, match, pinnedArgvToken } = resolveSegmentAllowlistMatch({
       segment,
       context: params,
     });
@@ -732,6 +746,7 @@ function evaluateSegments(
       matches.push(match);
     }
     segmentAllowlistEntries.push(match ?? null);
+    segmentPinnedArgvTokens.push(pinnedArgvToken);
     const by = resolveSegmentSatisfaction({
       match,
       segment,
@@ -757,7 +772,13 @@ function evaluateSegments(
     return Boolean(by);
   });
 
-  return { satisfied, matches, segmentAllowlistEntries, segmentSatisfiedBy };
+  return {
+    satisfied,
+    matches,
+    segmentAllowlistEntries,
+    segmentPinnedArgvTokens,
+    segmentSatisfiedBy,
+  };
 }
 
 function resolveAnalysisSegmentGroups(analysis: ExecCommandAnalysis): ExecCommandSegment[][] {
@@ -774,12 +795,14 @@ export function evaluateExecAllowlist(
 ): ExecAllowlistEvaluation {
   const allowlistMatches: ExecAllowlistEntry[] = [];
   const segmentAllowlistEntries: Array<ExecAllowlistEntry | null> = [];
+  const segmentPinnedArgvTokens: Array<ExecAllowlistPinnedArgvToken | null> = [];
   const segmentSatisfiedBy: ExecSegmentSatisfiedBy[] = [];
   if (!params.analysis.ok || params.analysis.segments.length === 0) {
     return {
       allowlistSatisfied: false,
       allowlistMatches,
       segmentAllowlistEntries,
+      segmentPinnedArgvTokens,
       segmentSatisfiedBy,
     };
   }
@@ -794,6 +817,7 @@ export function evaluateExecAllowlist(
           allowlistSatisfied: false,
           allowlistMatches: result.matches,
           segmentAllowlistEntries: result.segmentAllowlistEntries,
+          segmentPinnedArgvTokens: result.segmentPinnedArgvTokens,
           segmentSatisfiedBy: result.segmentSatisfiedBy,
         };
       }
@@ -801,17 +825,20 @@ export function evaluateExecAllowlist(
         allowlistSatisfied: false,
         allowlistMatches: [],
         segmentAllowlistEntries: [],
+        segmentPinnedArgvTokens: [],
         segmentSatisfiedBy: [],
       };
     }
     allowlistMatches.push(...result.matches);
     segmentAllowlistEntries.push(...result.segmentAllowlistEntries);
+    segmentPinnedArgvTokens.push(...result.segmentPinnedArgvTokens);
     segmentSatisfiedBy.push(...result.segmentSatisfiedBy);
   }
   return {
     allowlistSatisfied: true,
     allowlistMatches,
     segmentAllowlistEntries,
+    segmentPinnedArgvTokens,
     segmentSatisfiedBy,
   };
 }
@@ -822,6 +849,7 @@ export type ExecAllowlistAnalysis = {
   allowlistMatches: ExecAllowlistEntry[];
   segments: ExecCommandSegment[];
   segmentAllowlistEntries: Array<ExecAllowlistEntry | null>;
+  segmentPinnedArgvTokens: Array<ExecAllowlistPinnedArgvToken | null>;
   segmentSatisfiedBy: ExecSegmentSatisfiedBy[];
   authorizationPlan?: CommandAuthorizationPlan;
 };
@@ -935,11 +963,11 @@ function resolveShellWrapperScriptCandidatePath(params: {
   return path.resolve(base, expanded);
 }
 
-function resolveShellWrapperPositionalArgvCandidatePath(params: {
+function resolveShellWrapperPositionalArgvCandidate(params: {
   segment: ExecCommandSegment;
   cwd?: string;
   env?: NodeJS.ProcessEnv;
-}): string | undefined {
+}): { path: string; tokenIndex: number } | undefined {
   if (!isShellWrapperSegment(params.segment)) {
     return undefined;
   }
@@ -960,14 +988,18 @@ function resolveShellWrapperPositionalArgvCandidatePath(params: {
   if (inlineMatch.valueTokenIndex === null || !inlineMatch.command) {
     return undefined;
   }
+  const inlineValueTokenIndex = inlineMatch.valueTokenIndex;
   if (!isDirectShellPositionalCarrierInvocation(inlineMatch.command)) {
     return undefined;
   }
 
-  const carriedExecutable = argv
-    .slice(inlineMatch.valueTokenIndex + 1)
-    .map((token) => token.trim())
-    .find((token) => token.length > 0);
+  const carriedExecutableIndex = argv.findIndex(
+    (token, index) => index > inlineValueTokenIndex && token.trim().length > 0,
+  );
+  if (carriedExecutableIndex < 0) {
+    return undefined;
+  }
+  const carriedExecutable = argv[carriedExecutableIndex]?.trim();
   if (!carriedExecutable) {
     return undefined;
   }
@@ -978,7 +1010,8 @@ function resolveShellWrapperPositionalArgvCandidatePath(params: {
   }
 
   const resolution = resolveCommandResolutionFromArgv([carriedExecutable], params.cwd, params.env);
-  return resolveExecutionTargetCandidatePath(resolution, params.cwd);
+  const candidatePath = resolveExecutionTargetCandidatePath(resolution, params.cwd);
+  return candidatePath ? { path: candidatePath, tokenIndex: carriedExecutableIndex } : undefined;
 }
 
 function isDirectShellPositionalCarrierInvocation(command: string): boolean {
@@ -1116,16 +1149,16 @@ function collectAllowAlwaysPatterns(params: {
     cwd: params.cwd,
   });
   const inlineCommand = powerShellFileScriptArgv ? null : trustPlan.shellInlineCommand;
-  const positionalArgvPath =
+  const positionalArgvCandidate =
     inlineCommand !== null
-      ? resolveShellWrapperPositionalArgvCandidatePath({
+      ? resolveShellWrapperPositionalArgvCandidate({
           segment,
           cwd: params.cwd,
           env: params.env,
         })
       : undefined;
-  if (positionalArgvPath) {
-    addAllowAlwaysPattern(params.out, positionalArgvPath);
+  if (positionalArgvCandidate) {
+    addAllowAlwaysPattern(params.out, positionalArgvCandidate.path);
     return;
   }
   if (!inlineCommand) {
@@ -1265,16 +1298,16 @@ async function collectAllowAlwaysPatternsAsync(params: {
     cwd: params.cwd,
   });
   const inlineCommand = powerShellFileScriptArgv ? null : trustPlan.shellInlineCommand;
-  const positionalArgvPath =
+  const positionalArgvCandidate =
     inlineCommand !== null
-      ? resolveShellWrapperPositionalArgvCandidatePath({
+      ? resolveShellWrapperPositionalArgvCandidate({
           segment,
           cwd: params.cwd,
           env: params.env,
         })
       : undefined;
-  if (positionalArgvPath) {
-    addAllowAlwaysPattern(params.out, positionalArgvPath);
+  if (positionalArgvCandidate) {
+    addAllowAlwaysPattern(params.out, positionalArgvCandidate.path);
     return;
   }
   if (!inlineCommand) {
@@ -1431,6 +1464,7 @@ export async function evaluateShellAllowlist(
     allowlistMatches: [],
     segments: [],
     segmentAllowlistEntries: [],
+    segmentPinnedArgvTokens: [],
     segmentSatisfiedBy: [],
   });
 
@@ -1451,6 +1485,7 @@ export async function evaluateShellAllowlist(
       allowlistMatches: evaluation.allowlistMatches,
       segments: analysis.segments,
       segmentAllowlistEntries: evaluation.segmentAllowlistEntries,
+      segmentPinnedArgvTokens: evaluation.segmentPinnedArgvTokens,
       segmentSatisfiedBy: evaluation.segmentSatisfiedBy,
     };
   }
@@ -1496,6 +1531,7 @@ export async function evaluateShellAllowlist(
       allowlistMatches: evaluation.allowlistMatches,
       segments: group.analysis.segments,
       segmentAllowlistEntries: evaluation.segmentAllowlistEntries,
+      segmentPinnedArgvTokens: evaluation.segmentPinnedArgvTokens,
       segmentSatisfiedBy: evaluation.segmentSatisfiedBy,
       authorizationPlan: plan,
     };
@@ -1543,6 +1579,7 @@ export async function evaluateShellAllowlist(
   const allowlistMatches: ExecAllowlistEntry[] = [];
   const segments: ExecCommandSegment[] = [];
   const segmentAllowlistEntries: Array<ExecAllowlistEntry | null> = [];
+  const segmentPinnedArgvTokens: Array<ExecAllowlistPinnedArgvToken | null> = [];
   const segmentSatisfiedBy: ExecSegmentSatisfiedBy[] = [];
 
   for (const [index, { analysis, evaluation }] of finalizedEvaluations.entries()) {
@@ -1551,6 +1588,7 @@ export async function evaluateShellAllowlist(
       if (group) {
         segments.push(...group.analysis.segments);
         segmentAllowlistEntries.push(...group.analysis.segments.map(() => null));
+        segmentPinnedArgvTokens.push(...group.analysis.segments.map(() => null));
         segmentSatisfiedBy.push(...group.analysis.segments.map(() => null));
       }
       return {
@@ -1559,6 +1597,7 @@ export async function evaluateShellAllowlist(
         allowlistMatches,
         segments,
         segmentAllowlistEntries,
+        segmentPinnedArgvTokens,
         segmentSatisfiedBy,
         authorizationPlan: plan,
       };
@@ -1569,10 +1608,14 @@ export async function evaluateShellAllowlist(
     const effectiveSegmentAllowlistEntries = allowSkillPreludeAtIndex.has(index)
       ? analysis.segments.map(() => null)
       : evaluation.segmentAllowlistEntries;
+    const effectiveSegmentPinnedArgvTokens = allowSkillPreludeAtIndex.has(index)
+      ? analysis.segments.map(() => null)
+      : evaluation.segmentPinnedArgvTokens;
 
     segments.push(...analysis.segments);
     allowlistMatches.push(...evaluation.allowlistMatches);
     segmentAllowlistEntries.push(...effectiveSegmentAllowlistEntries);
+    segmentPinnedArgvTokens.push(...effectiveSegmentPinnedArgvTokens);
     segmentSatisfiedBy.push(...effectiveSegmentSatisfiedBy);
     if (!evaluation.allowlistSatisfied && !allowSkillPreludeAtIndex.has(index)) {
       return {
@@ -1581,6 +1624,7 @@ export async function evaluateShellAllowlist(
         allowlistMatches,
         segments,
         segmentAllowlistEntries,
+        segmentPinnedArgvTokens,
         segmentSatisfiedBy,
         authorizationPlan: plan,
       };
@@ -1593,6 +1637,7 @@ export async function evaluateShellAllowlist(
     allowlistMatches,
     segments,
     segmentAllowlistEntries,
+    segmentPinnedArgvTokens,
     segmentSatisfiedBy,
     authorizationPlan: plan,
   };
@@ -1618,6 +1663,7 @@ function plannedAllowlistGroupMiss(params: {
     allowlistMatches: [],
     segments: params.group.analysis.segments,
     segmentAllowlistEntries: params.group.analysis.segments.map(() => null),
+    segmentPinnedArgvTokens: params.group.analysis.segments.map(() => null),
     segmentSatisfiedBy: params.group.analysis.segments.map(() => null),
     authorizationPlan: params.plan,
   };
@@ -1642,6 +1688,7 @@ function promptOnlyAnalysisMiss(params: {
     allowlistMatches: [],
     segments: analysis.segments,
     segmentAllowlistEntries: analysis.segments.map(() => null),
+    segmentPinnedArgvTokens: analysis.segments.map(() => null),
     segmentSatisfiedBy: analysis.segments.map(() => null),
     authorizationPlan: params.plan,
   };

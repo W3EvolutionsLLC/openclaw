@@ -318,6 +318,7 @@ export async function processGatewayAllowlist(
       ? renderAuthorizationShellCommand({
           plan: allowlistEval.authorizationPlan,
           segments: allowlistEval.segments,
+          segmentPinnedArgvTokens: allowlistEval.segmentPinnedArgvTokens,
           platform: process.platform,
           mode: "enforced",
         })

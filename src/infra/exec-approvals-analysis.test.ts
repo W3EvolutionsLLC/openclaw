@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { renderAuthorizationShellCommand } from "./command-authorization/index.js";
 import {
   evaluateExecAllowlist,
   evaluateShellAllowlist,
@@ -837,6 +838,45 @@ describe("exec approvals shell analysis", () => {
           expect(result.analysisOk).toBe(true);
           expect(result.allowlistSatisfied).toBe(true);
           expect(result.segmentSatisfiedBy).toEqual(["allowlist"]);
+        });
+      });
+
+      it("pins allowlisted positional carrier executables when rendering shell commands", async () => {
+        if (process.platform === "win32") {
+          return;
+        }
+        await withShellFixture(["sh", "printf"], async ({ binPath, dir, env }) => {
+          const shellPath = binPath("sh");
+          const shellRealPath = fs.realpathSync(shellPath);
+          const printfPath = binPath("printf");
+          const result = await evaluateShellAllowlist({
+            command: `${shellPath} -c '$0 "$@"' printf hi`,
+            allowlist: [{ pattern: printfPath }],
+            safeBins: new Set(),
+            cwd: dir,
+            env,
+          });
+          expect(result.analysisOk).toBe(true);
+          expect(result.allowlistSatisfied).toBe(true);
+          expect(result.segmentPinnedArgvTokens).toEqual([
+            { tokenIndex: 3, replacement: printfPath },
+          ]);
+          expect(result.authorizationPlan).toBeDefined();
+          if (!result.authorizationPlan) {
+            throw new Error("expected authorization plan");
+          }
+
+          const rendered = renderAuthorizationShellCommand({
+            plan: result.authorizationPlan,
+            segments: result.segments,
+            segmentPinnedArgvTokens: result.segmentPinnedArgvTokens,
+            platform: process.platform,
+            mode: "enforced",
+          });
+          expect(rendered).toEqual({
+            ok: true,
+            command: `'${shellRealPath}' -c '$0 "$@"' '${printfPath}' hi`,
+          });
         });
       });
 

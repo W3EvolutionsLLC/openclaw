@@ -114,6 +114,9 @@ type SystemRunPolicyPhase = SystemRunParsePhase & {
   analysisOk: boolean;
   allowlistSatisfied: boolean;
   segments: ExecCommandSegment[];
+  segmentPinnedArgvTokens: Array<
+    import("../infra/exec-approvals.js").ExecAllowlistPinnedArgvToken | null
+  >;
   segmentSatisfiedBy: import("../infra/exec-approvals.js").ExecSegmentSatisfiedBy[];
   authorizationPlan?: CommandAuthorizationPlan;
   plannedAllowlistArgv: string[] | undefined;
@@ -399,6 +402,7 @@ async function evaluateSystemRunPolicyPhase(
     allowlistSatisfied,
     segments,
     segmentAllowlistEntries,
+    segmentPinnedArgvTokens,
     segmentSatisfiedBy,
     authorizationPlan,
   } = await evaluateSystemRunAllowlist({
@@ -536,6 +540,7 @@ async function evaluateSystemRunPolicyPhase(
     analysisOk,
     allowlistSatisfied,
     segments,
+    segmentPinnedArgvTokens,
     segmentSatisfiedBy,
     authorizationPlan,
     plannedAllowlistArgv: plannedAllowlistArgv ?? undefined,
@@ -606,6 +611,7 @@ async function executeSystemRunPhase(
     policy: phase.policy,
     shellCommand: phase.shellPayload,
     segments: phase.segments,
+    segmentPinnedArgvTokens: phase.segmentPinnedArgvTokens,
     segmentSatisfiedBy: phase.segmentSatisfiedBy,
     authorizationPlan: phase.authorizationPlan,
     cwd: phase.cwd,
