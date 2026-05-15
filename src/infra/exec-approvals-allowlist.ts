@@ -575,6 +575,7 @@ function resolveSegmentAllowlistMatch(params: {
           segment: allowlistSegment,
           cwd: params.context.cwd,
           env: params.context.env,
+          trustedSafeBinDirs: params.context.trustedSafeBinDirs,
         })
       : undefined;
   const shellPositionalPinnedArgvToken = shellPositionalArgvCandidate
@@ -1064,6 +1065,7 @@ function resolveShellWrapperPositionalArgvCandidate(params: {
   segment: ExecCommandSegment;
   cwd?: string;
   env?: NodeJS.ProcessEnv;
+  trustedSafeBinDirs?: ReadonlySet<string>;
 }):
   | {
       path: string;
@@ -1084,6 +1086,17 @@ function resolveShellWrapperPositionalArgvCandidate(params: {
 
   const wrapper = normalizeExecutableToken(argv[0] ?? "");
   if (!["ash", "bash", "dash", "fish", "ksh", "sh", "zsh"].includes(wrapper)) {
+    return undefined;
+  }
+  const shellExecution = resolveExecutionTargetResolution(params.segment.resolution);
+  const shellPath = shellExecution?.resolvedPath;
+  if (
+    !shellPath ||
+    !isTrustedSafeBinPath({
+      resolvedPath: shellPath,
+      trustedDirs: params.trustedSafeBinDirs,
+    })
+  ) {
     return undefined;
   }
 

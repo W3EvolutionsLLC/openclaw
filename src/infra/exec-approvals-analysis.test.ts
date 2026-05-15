@@ -17,6 +17,7 @@ import {
 import { makePathEnv, makeTempDir } from "./exec-approvals-test-helpers.js";
 import type { ExecAllowlistEntry } from "./exec-approvals.js";
 import { matchAllowlist } from "./exec-command-resolution.js";
+import { buildTrustedSafeBinDirs } from "./exec-safe-bin-trust.js";
 
 function createSkillPreludeFixture(options: { withWrapper?: boolean } = {}) {
   const skillRoot = makeTempDir();
@@ -900,6 +901,7 @@ describe("exec approvals shell analysis", () => {
               command: testCase.command,
               allowlist: [{ pattern: printfPath }],
               safeBins: new Set(),
+              trustedSafeBinDirs: buildTrustedSafeBinDirs({ extraDirs: [dir] }),
               cwd: dir,
               env,
             });

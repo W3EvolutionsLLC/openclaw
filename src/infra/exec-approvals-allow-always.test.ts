@@ -22,6 +22,7 @@ import {
   resolveSafeBins,
 } from "./exec-approvals.js";
 import { matchAllowlist } from "./exec-command-resolution.js";
+import { buildTrustedSafeBinDirs } from "./exec-safe-bin-trust.js";
 
 describe("resolveAllowAlwaysPatterns", () => {
   function makeExecutable(dir: string, name: string): string {
@@ -1338,6 +1339,7 @@ $0 \\"$1\\"" touch {marker}`,
       return;
     }
     const dir = makeTempDir();
+    makeExecutable(dir, "sh");
     const xargsPath = makeExecutable(dir, "xargs");
     const env = makePathEnv(dir);
     const safeBins = resolveSafeBins(undefined);
@@ -1354,6 +1356,7 @@ $0 \\"$1\\"" touch {marker}`,
       command: `sh -c '$0 "$@"' xargs sh -c 'id > /tmp/pwned'`,
       allowlist: [{ pattern: xargsPath }],
       safeBins,
+      trustedSafeBinDirs: buildTrustedSafeBinDirs({ extraDirs: [dir] }),
       cwd: dir,
       env,
       platform: process.platform,

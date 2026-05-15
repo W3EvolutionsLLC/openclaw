@@ -28,6 +28,7 @@ import {
   saveExecApprovals,
 } from "../infra/exec-approvals.js";
 import type { ExecHostResponse } from "../infra/exec-host.js";
+import { getTrustedSafeBinDirs } from "../infra/exec-safe-bin-trust.js";
 import {
   evaluateSystemRunAllowlist,
   resolveSystemRunExecArgv,
@@ -1971,6 +1972,39 @@ describe("handleSystemRunInvoke mac app exec host routing", () => {
   );
 
   it.runIf(process.platform !== "win32")(
+    "rejects direct argv positional carriers through untrusted shell wrappers",
+    () => {
+      const tempDir = createFixtureDir("openclaw-direct-carrier-untrusted-shell-");
+      const binDir = path.join(tempDir, "bin");
+      fs.mkdirSync(binDir, { recursive: true });
+      const toolPath = path.join(tempDir, "tool");
+      fs.writeFileSync(toolPath, "#!/bin/sh\necho tool\n");
+      fs.chmodSync(toolPath, 0o755);
+      const fakeShell = path.join(binDir, "sh");
+      fs.writeFileSync(fakeShell, "#!/bin/sh\necho fake-shell\n");
+      fs.chmodSync(fakeShell, 0o755);
+      const env = { PATH: `${binDir}${path.delimiter}/usr/bin:/bin` };
+
+      for (const argv of [
+        [fakeShell, "-c", '$0 "$@"', toolPath, "hi"],
+        ["sh", "-c", '$0 "$@"', toolPath, "hi"],
+      ]) {
+        const analysis = analyzeArgvCommand({ argv, cwd: tempDir, env });
+        const evaluation = evaluateExecAllowlist({
+          analysis,
+          allowlist: [{ pattern: toolPath }],
+          safeBins: new Set(),
+          cwd: tempDir,
+          env,
+        });
+
+        expect(evaluation.allowlistSatisfied, argv.join(" ")).toBe(false);
+        expect(evaluation.segmentPinnedArgvTokens[0], argv.join(" ")).toBeNull();
+      }
+    },
+  );
+
+  it.runIf(process.platform !== "win32")(
     "resolves direct argv positional carriers with the request environment",
     async () => {
       const tempDir = createFixtureDir("openclaw-direct-carrier-env-");
@@ -2005,7 +2039,7 @@ describe("handleSystemRunInvoke mac app exec host routing", () => {
             security: "allowlist",
             safeBins: new Set(),
             safeBinProfiles: {},
-            trustedSafeBinDirs: new Set(),
+            trustedSafeBinDirs: getTrustedSafeBinDirs(),
             cwd: tempDir,
             env: { PATH: `${binDir}${path.delimiter}/usr/bin:/bin` },
             skillBins: [],
