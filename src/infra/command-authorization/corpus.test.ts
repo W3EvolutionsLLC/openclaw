@@ -574,6 +574,7 @@ describe("command authorization planner corpus", () => {
     "env BASH_ENV=/tmp/payload bash -c 'echo ok'",
     "cd /tmp; ./tool",
     "command cd /tmp; ./tool",
+    "PATH=/tmp/evil:$PATH; ls",
     "export BASH_ENV=/tmp/payload; bash -c 'echo ok'",
     "declare -x NODE_OPTIONS=--require=/tmp/payload.js; node safe.js",
     "readonly -x NODE_OPTIONS=--require=/tmp/payload.js; node safe.js",

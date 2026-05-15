@@ -1092,6 +1092,13 @@ async function walk(
     output.risks.push({ kind: "here-string", text: node.text, span });
   } else if (node.type === "file_redirect") {
     output.risks.push({ kind: "redirect", text: node.text, span });
+  } else if (node.type === "variable_assignment") {
+    output.risks.push({
+      kind: "shell-state-mutation",
+      command: "assignment",
+      text: node.text,
+      span,
+    });
   } else if (node.type === "comment") {
     output.risks.push({ kind: "comment", text: node.text, span });
   } else if (node.type === "ERROR") {
