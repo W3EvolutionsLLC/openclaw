@@ -180,6 +180,107 @@ describe("command authorization planner corpus", () => {
     expect(rendered.command).toMatch(/'(?:[^']*\/)?head' '-n' '5'/);
   });
 
+  it.each([
+    {
+      command: "sh -c 'sh -c \"echo hi\"'",
+      expectedTree: { kind: "unit", unitId: "unit-0" },
+      expectedUnits: [
+        {
+          raw: "echo hi",
+          argv: ["echo", "hi"],
+          relationship: "wrapper-inline",
+        },
+      ],
+      renderedMatch: /'(?:[^']*\/)?echo' 'hi'/,
+    },
+    {
+      command: "sh -c 'false && sh -c \"rm marker\"'",
+      expectedTree: {
+        kind: "chain",
+        operators: ["&&"],
+        children: [
+          { kind: "unit", unitId: "unit-0" },
+          { kind: "unit", unitId: "unit-1" },
+        ],
+      },
+      expectedUnits: [
+        {
+          raw: "false",
+          argv: ["false"],
+          relationship: "wrapper-inline",
+        },
+        {
+          raw: "rm marker",
+          argv: ["rm", "marker"],
+          relationship: "and-conditional",
+        },
+      ],
+      renderedMatch: /'(?:[^']*\/)?false' && '(?:[^']*\/)?rm' 'marker'/,
+    },
+    {
+      command: "sh -c 'true || sh -c \"rm marker\"'",
+      expectedTree: {
+        kind: "chain",
+        operators: ["||"],
+        children: [
+          { kind: "unit", unitId: "unit-0" },
+          { kind: "unit", unitId: "unit-1" },
+        ],
+      },
+      expectedUnits: [
+        {
+          raw: "true",
+          argv: ["true"],
+          relationship: "wrapper-inline",
+        },
+        {
+          raw: "rm marker",
+          argv: ["rm", "marker"],
+          relationship: "or-conditional",
+        },
+      ],
+      renderedMatch: /'(?:[^']*\/)?true' \|\| '(?:[^']*\/)?rm' 'marker'/,
+    },
+  ])(
+    "plans only leaf commands inside nested shell-wrapper payloads: $command",
+    async (testCase) => {
+      const plan = await planCommandForAuthorization({
+        dialect: "posix-shell",
+        command: testCase.command,
+      });
+      const analysis = createExecCommandAnalysisFromAuthorizationPlan({ plan });
+      expect(analysis?.ok).toBe(true);
+      if (!analysis) {
+        throw new Error("expected command analysis");
+      }
+
+      expect(plan.kind).toBe("analyzable");
+      if (plan.kind !== "analyzable") {
+        throw new Error(`expected analyzable plan, got ${plan.kind}`);
+      }
+      expect(plan.tree).toEqual(testCase.expectedTree);
+      expect(plan.units).toEqual(
+        testCase.expectedUnits.map((unit, index) =>
+          expect.objectContaining({
+            id: `unit-${index}`,
+            allowlistEligible: true,
+            ...unit,
+          }),
+        ),
+      );
+
+      const rendered = renderAuthorizationShellCommand({
+        plan,
+        segments: analysis.segments,
+        mode: "enforced",
+      });
+      expect(rendered.ok).toBe(true);
+      expect(rendered.command).toMatch(testCase.renderedMatch);
+      expect(rendered.command).not.toContain("-c");
+      expect(rendered.command).not.toContain(" ; ");
+    },
+  );
+
   it("fails closed when planner render segment metadata does not match", async () => {
     const plan = await planCommandForAuthorization({
       dialect: "posix-shell",

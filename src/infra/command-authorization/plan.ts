@@ -258,13 +258,25 @@ function selectPlanningSteps(explanation: CommandExplanation): CommandStep[] {
         nestedStep.context === "wrapper-payload" &&
         stepContainsSpan(step, nestedStep.span.startIndex, nestedStep.span.endIndex),
     );
-    if (shouldPlanWrapperPayload(step, wrapperPayloadSteps, explanation.risks)) {
-      selectedSteps.push(...wrapperPayloadSteps);
+    const leafWrapperPayloadSteps = leafCommandSteps(wrapperPayloadSteps);
+    if (shouldPlanWrapperPayload(step, leafWrapperPayloadSteps, explanation.risks)) {
+      selectedSteps.push(...leafWrapperPayloadSteps);
       continue;
     }
     selectedSteps.push(step);
   }
   return selectedSteps;
+}
+
+function leafCommandSteps(steps: readonly CommandStep[]): CommandStep[] {
+  return steps.filter(
+    (step) =>
+      !steps.some(
+        (candidate) =>
+          candidate !== step &&
+          stepContainsSpan(step, candidate.span.startIndex, candidate.span.endIndex),
+      ),
+  );
 }
 
 function shouldPlanWrapperPayload(
