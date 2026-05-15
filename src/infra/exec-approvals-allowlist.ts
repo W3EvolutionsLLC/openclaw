@@ -1463,8 +1463,13 @@ export async function evaluateShellAllowlist(
       platform: params.platform,
     },
   );
-  if (plan.kind === "unanalyzable" || hasAnalysisBlockingPromptOnlyReason(plan)) {
+  if (plan.kind === "unanalyzable") {
     return analysisFailure();
+  }
+  if (hasAnalysisBlockingPromptOnlyReason(plan)) {
+    return hasPromptOnlyInlineEval(plan)
+      ? (promptOnlyAnalysisMiss({ plan, cwd: params.cwd, env: params.env }) ?? analysisFailure())
+      : analysisFailure();
   }
 
   const plannedGroups = createPlannedAllowlistGroups({
@@ -1618,6 +1623,30 @@ function plannedAllowlistGroupMiss(params: {
   };
 }
 
+function promptOnlyAnalysisMiss(params: {
+  plan: CommandAuthorizationPlan;
+  cwd?: string;
+  env?: NodeJS.ProcessEnv;
+}): ExecAllowlistAnalysis | null {
+  const analysis = createExecCommandAnalysisFromAuthorizationPlan({
+    plan: params.plan,
+    cwd: params.cwd,
+    env: params.env,
+  });
+  if (!analysis) {
+    return null;
+  }
+  return {
+    analysisOk: false,
+    allowlistSatisfied: false,
+    allowlistMatches: [],
+    segments: analysis.segments,
+    segmentAllowlistEntries: analysis.segments.map(() => null),
+    segmentSatisfiedBy: analysis.segments.map(() => null),
+    authorizationPlan: params.plan,
+  };
+}
+
 function hasAnalysisBlockingPromptOnlyReason(plan: CommandAuthorizationPlan): boolean {
   return (
     plan.kind === "prompt-only" &&
@@ -1628,6 +1657,10 @@ function hasAnalysisBlockingPromptOnlyReason(plan: CommandAuthorizationPlan): bo
         reason === "unsupported-shell-syntax",
     )
   );
+}
+
+function hasPromptOnlyInlineEval(plan: CommandAuthorizationPlan): boolean {
+  return plan.kind === "prompt-only" && plan.promptOnlyReasons.includes("interpreter-inline-eval");
 }
 
 function createPlannedAllowlistGroups(params: {
