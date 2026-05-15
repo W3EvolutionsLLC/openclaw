@@ -1155,7 +1155,10 @@ export function loadPersistedAuthProfileStoreEntry(
   }
   const merged = {
     ...store,
-    ...mergeAuthProfileState(coerceAuthProfileState(raw), loadPersistedAuthProfileState(agentDir)),
+    ...mergeAuthProfileState(
+      coerceAuthProfileState(raw),
+      loadPersistedAuthProfileState(agentDir, options),
+    ),
   };
   return {
     store: resolvePersistedOAuthProfileSecrets(merged),

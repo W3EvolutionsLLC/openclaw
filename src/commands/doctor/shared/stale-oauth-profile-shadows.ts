@@ -26,15 +26,6 @@ type StaleOAuthProfileShadow = {
   profileId: string;
 };
 
-async function pathExists(targetPath: string): Promise<boolean> {
-  try {
-    await fs.lstat(targetPath);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 async function collectStateAgentDirs(env: NodeJS.ProcessEnv): Promise<string[]> {
   const agentsRoot = path.join(resolveStateDir(env), "agents");
   const entries = await fs.readdir(agentsRoot, { withFileTypes: true }).catch(() => []);
@@ -95,17 +86,17 @@ export async function scanStaleOAuthProfileShadows(params: {
   const now = params.now ?? Date.now();
   const mainAgentDir = resolveDefaultAgentDir({}, env);
   const mainAuthPath = path.resolve(resolveAuthStorePath(mainAgentDir));
-  const mainStore = loadPersistedAuthProfileStore(mainAgentDir);
+  const mainStore = loadPersistedAuthProfileStore(mainAgentDir, { env });
   if (!mainStore) {
     return [];
   }
   const hits: StaleOAuthProfileShadow[] = [];
   for (const agentDir of await collectCandidateAgentDirs(params.cfg, env)) {
     const authPath = path.resolve(resolveAuthStorePath(agentDir));
-    if (authPath === mainAuthPath || !(await pathExists(authPath))) {
+    if (authPath === mainAuthPath) {
       continue;
     }
-    const localStore = loadPersistedAuthProfileStore(agentDir);
+    const localStore = loadPersistedAuthProfileStore(agentDir, { env });
     if (!localStore) {
       continue;
     }
@@ -174,6 +165,7 @@ function formatProfileList(profileIds: string[]): string {
 
 async function repairStaleOAuthProfilesForAgent(params: {
   agentDir: string;
+  env: NodeJS.ProcessEnv;
   mainStore: AuthProfileStore;
   profileIds: Set<string>;
   now: number;
@@ -184,7 +176,7 @@ async function repairStaleOAuthProfilesForAgent(params: {
     resolveAuthStorePath(params.agentDir),
     AUTH_STORE_LOCK_OPTIONS,
     async () => {
-      const store = loadPersistedAuthProfileStore(params.agentDir);
+      const store = loadPersistedAuthProfileStore(params.agentDir, { env: params.env });
       if (!store) {
         return { status: "missing" };
       }
@@ -197,7 +189,7 @@ async function repairStaleOAuthProfilesForAgent(params: {
       if (result.removedProfileIds.length === 0) {
         return { status: "unchanged" };
       }
-      saveAuthProfileStore(result.store, params.agentDir);
+      saveAuthProfileStore(result.store, params.agentDir, { env: params.env });
       return {
         status: "changed",
         removedProfileIds: result.removedProfileIds,
@@ -233,7 +225,7 @@ export async function repairStaleOAuthProfileShadows(params: {
     byAgentDir.set(hit.agentDir, existing);
   }
   for (const [agentDir, agentHits] of byAgentDir) {
-    const mainStore = loadPersistedAuthProfileStore(resolveDefaultAgentDir({}, env));
+    const mainStore = loadPersistedAuthProfileStore(resolveDefaultAgentDir({}, env), { env });
     if (!mainStore) {
       continue;
     }
@@ -241,6 +233,7 @@ export async function repairStaleOAuthProfileShadows(params: {
     try {
       const repair = await repairStaleOAuthProfilesForAgent({
         agentDir,
+        env,
         mainStore,
         profileIds,
         now,

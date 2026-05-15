@@ -1,5 +1,8 @@
 import { normalizeOptionalString } from "../../shared/string-coerce.js";
-import type { OpenClawStateDatabase } from "../../state/openclaw-state-db.js";
+import type {
+  OpenClawStateDatabase,
+  OpenClawStateDatabaseOptions,
+} from "../../state/openclaw-state-db.js";
 import { AUTH_STORE_VERSION } from "./constants.js";
 import { resolveAuthProfileStoreKey } from "./paths.js";
 import {
@@ -86,9 +89,12 @@ function writeAuthProfileStatePayload(key: string, payload: AuthProfileStateStor
   writeAuthProfileStatePayloadToSqlite(key, authProfileStateToPayloadValue(payload));
 }
 
-export function loadPersistedAuthProfileState(agentDir?: string): AuthProfileState {
+export function loadPersistedAuthProfileState(
+  agentDir?: string,
+  options: OpenClawStateDatabaseOptions = {},
+): AuthProfileState {
   const key = authProfileStateKey(agentDir);
-  const sqliteState = readAuthProfileStatePayloadResult(key);
+  const sqliteState = readAuthProfileStatePayloadResult(key, options);
   if (sqliteState.exists && sqliteState.value !== undefined) {
     return coerceAuthProfileState(sqliteState.value);
   }
