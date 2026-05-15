@@ -587,14 +587,25 @@ function renderAllowlistPinnedRawUnit(params: {
     return { ok: false, reason: "allowlist executable unavailable" };
   }
   const raw = params.unit.raw.trim();
-  const executionRaw = params.segment.resolution?.execution.rawExecutable?.trim();
-  if (executionRaw && executionRaw !== rawExecutable) {
-    return { ok: false, reason: "allowlist wrapper raw executable replacement unavailable" };
-  }
   const argv = resolvePlannedSegmentArgv(params.segment);
   const pinnedExecutable = argv?.[0]?.trim();
   if (!pinnedExecutable) {
     return { ok: false, reason: "allowlist pinned executable unavailable" };
+  }
+  const executionRaw = params.segment.resolution?.execution.rawExecutable?.trim();
+  if (executionRaw && executionRaw !== rawExecutable) {
+    const rendered = replaceSpannedShellArgvToken({
+      raw,
+      argv: params.unit.argv,
+      argvSpans: params.unit.argvSpans,
+      tokenIndex: resolveEffectiveArgvStartIndex(params.unit.argv, params.segment),
+      expectedToken: executionRaw,
+      replacement: shellEscapeSingleArg(pinnedExecutable),
+    });
+    if (!rendered) {
+      return { ok: false, reason: "allowlist wrapper raw executable replacement unavailable" };
+    }
+    return { ok: true, command: rendered };
   }
   const rendered = replaceLeadingShellToken(
     raw,
@@ -605,6 +616,55 @@ function renderAllowlistPinnedRawUnit(params: {
     return { ok: false, reason: "allowlist executable replacement unavailable" };
   }
   return { ok: true, command: rendered };
+}
+
+function resolveEffectiveArgvStartIndex(
+  argv: readonly string[],
+  segment: ExecCommandSegment,
+): number | null {
+  const effectiveArgv = segment.resolution?.effectiveArgv;
+  if (!effectiveArgv || effectiveArgv.length === 0 || effectiveArgv.length > argv.length) {
+    return null;
+  }
+  const startIndex = argv.length - effectiveArgv.length;
+  for (let offset = 0; offset < effectiveArgv.length; offset += 1) {
+    if (argv[startIndex + offset] !== effectiveArgv[offset]) {
+      return null;
+    }
+  }
+  return startIndex;
+}
+
+function replaceSpannedShellArgvToken(params: {
+  raw: string;
+  argv: readonly string[];
+  argvSpans: CommandAuthorizationUnit["argvSpans"];
+  tokenIndex: number | null;
+  expectedToken: string;
+  replacement: string;
+}): string | null {
+  if (
+    params.tokenIndex === null ||
+    !params.argvSpans ||
+    params.argvSpans.length !== params.argv.length
+  ) {
+    return null;
+  }
+  if (params.argv[params.tokenIndex] !== params.expectedToken) {
+    return null;
+  }
+  const span = params.argvSpans[params.tokenIndex];
+  if (
+    !span ||
+    span.startIndex < 0 ||
+    span.endIndex <= span.startIndex ||
+    span.endIndex > params.raw.length
+  ) {
+    return null;
+  }
+  return `${params.raw.slice(0, span.startIndex)}${params.replacement}${params.raw.slice(
+    span.endIndex,
+  )}`;
 }
 
 function replaceLeadingShellToken(raw: string, token: string, replacement: string): string | null {
@@ -679,6 +739,7 @@ function createUnitFromStep(
     id,
     raw: step.text,
     argv: step.argv,
+    argvSpans: relativeArgSpansForStep(step),
     relationship: unitRelationship,
     promptOnlyReasons,
   });
@@ -688,6 +749,7 @@ function createUnit(params: {
   id: string;
   raw: string;
   argv: string[];
+  argvSpans?: CommandAuthorizationUnit["argvSpans"];
   relationship: CommandAuthorizationRelationship;
   promptOnlyReasons: CommandPromptOnlyReason[];
 }): CommandAuthorizationUnit {
@@ -698,6 +760,7 @@ function createUnit(params: {
     id: params.id,
     raw: params.raw,
     argv: params.argv,
+    ...(params.argvSpans ? { argvSpans: params.argvSpans } : {}),
     executable,
     normalizedExecutable,
     relationship: params.relationship,
@@ -706,6 +769,16 @@ function createUnit(params: {
     promptOnlyReasons: params.promptOnlyReasons,
     blockReasons: [],
   };
+}
+
+function relativeArgSpansForStep(step: CommandStep): CommandAuthorizationUnit["argvSpans"] {
+  if (!step.argvSpans || step.argvSpans.length !== step.argv.length) {
+    return undefined;
+  }
+  return step.argvSpans.map((span) => ({
+    startIndex: span.startIndex - step.span.startIndex,
+    endIndex: span.endIndex - step.span.startIndex,
+  }));
 }
 
 function finalizePlannedTree(

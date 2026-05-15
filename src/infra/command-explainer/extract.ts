@@ -1122,16 +1122,23 @@ async function walk(
         span: spanFromNode(nameNode, state.spanBase),
       });
     } else if (parsed) {
+      const executableSpan =
+        nameNode !== null
+          ? spanFromNode(nameNode, state.spanBase)
+          : (parsed.arguments[0]?.span ?? span);
       const step: CommandStep = {
         context,
         executable: parsed.argv[0] ?? "",
         argv: parsed.argv,
         text: node.text,
         span,
-        executableSpan:
-          nameNode !== null
-            ? spanFromNode(nameNode, state.spanBase)
-            : (parsed.arguments[0]?.span ?? span),
+        executableSpan,
+        argvSpans: [
+          executableSpan,
+          ...parsed.arguments
+            .toSorted((left, right) => left.index - right.index)
+            .map((arg) => arg.span),
+        ],
       };
       if (step.executable) {
         output.commands.push(step);

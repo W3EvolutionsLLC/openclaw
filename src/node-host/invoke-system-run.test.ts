@@ -1771,6 +1771,51 @@ describe("handleSystemRunInvoke mac app exec host routing", () => {
     },
   );
 
+  it.runIf(process.platform !== "win32")(
+    "auto-runs allowlisted commands through dispatch-wrapped shell payloads",
+    async () => {
+      const oldPath = process.env.PATH;
+      process.env.PATH = "/usr/bin:/bin";
+      try {
+        const printfPath = fs.realpathSync(
+          fs.existsSync("/usr/bin/printf") ? "/usr/bin/printf" : "/bin/printf",
+        );
+        await withTempApprovalsHome({
+          approvals: createAllowlistOnMissApprovals({
+            agents: {
+              main: {
+                allowlist: [{ pattern: printfPath }],
+              },
+            },
+          }),
+          run: async () => {
+            const invoke = await runSystemInvoke({
+              preferMacAppExecHost: false,
+              command: ["/bin/sh", "-lc", "nice printf hi"],
+              rawCommand: '/bin/sh -lc "nice printf hi"',
+              security: "allowlist",
+              ask: "on-miss",
+              runCommand: vi.fn(async () => createLocalRunResult("dispatch-wrapper-ok")),
+            });
+
+            const payload = requireFirstRunCommandArgs(invoke.runCommand)[2] ?? "";
+            expect(payload).toContain("nice");
+            expect(payload).toContain(printfPath);
+            expectInvokeOk(invoke.sendInvokeResult, {
+              payloadContains: "dispatch-wrapper-ok",
+            });
+          },
+        });
+      } finally {
+        if (oldPath === undefined) {
+          delete process.env.PATH;
+        } else {
+          process.env.PATH = oldPath;
+        }
+      }
+    },
+  );
+
   it("keeps cmd.exe transport wrappers approval-gated on Windows", async () => {
     const platformSpy = vi.spyOn(process, "platform", "get").mockReturnValue("win32");
     try {

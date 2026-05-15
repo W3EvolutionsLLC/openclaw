@@ -56,10 +56,16 @@ export type CommandUnanalyzableReason =
   | "malformed-shell"
   | "unsupported-dialect";
 
+export type CommandAuthorizationArgSpan = {
+  startIndex: number;
+  endIndex: number;
+};
+
 export type CommandAuthorizationUnit = {
   id: string;
   raw: string;
   argv: string[];
+  argvSpans?: CommandAuthorizationArgSpan[];
   executable: string | null;
   normalizedExecutable: string | null;
   relationship: CommandAuthorizationRelationship;
