@@ -795,9 +795,7 @@ describe("resolveDeliveryTarget", () => {
       to: undefined,
     });
 
-    expect(extractDeliveryInfoMock).toHaveBeenCalledWith("agent:agent-b:main", {
-      cfg: expect.any(Object),
-    });
+    expect(extractDeliveryInfoMock).toHaveBeenCalledWith("agent:agent-b:main");
     expect(result).toMatchObject({
       ok: true,
       channel: "alpha",
