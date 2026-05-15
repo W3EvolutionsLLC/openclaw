@@ -58,6 +58,44 @@ Do not precompute effective allowlists, command owners, or command groups. The
 resolver derives them from raw allowlists, store callbacks, route descriptors,
 access groups, policy, and conversation kind.
 
+`allowFrom` is the direct-message allowlist. For group conversations, pass
+explicit non-DM targets when the channel has them:
+
+- `groupAllowFrom` controls normal group sender authorization.
+- `command.commandGroupAllowFrom` controls group command senders.
+- `command.groupOwnerAllowFrom` controls group command owners.
+
+`groupAllowFromFallbackToAllowFrom` controls only the shared normal group
+sender fallback. `command.commandGroupAllowFromFallbackToAllowFrom` is a
+separate command-group override; when omitted, it inherits the normal group
+fallback flag. `command.groupOwnerAllowFromFallbackToAllowFrom` controls the
+legacy group command-owner fallback and defaults to enabled for compatibility.
+
+When a channel disables one of these fallbacks, update the runtime resolver
+input and the doctor capability metadata in the same channel PR. Runtime config
+loading does not perform this repair; `openclaw doctor --fix` is the only
+preservation-copy path.
+
+Use these runtime flags before declaring the matching manifest metadata:
+
+| Fallback family               | Runtime input to set                                      | Required explicit input                                                                                              |
+| ----------------------------- | --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Normal group sender fallback  | `policy.groupAllowFromFallbackToAllowFrom: false`         | `groupAllowFrom` or a route sender allowlist that replaces the legacy fallback.                                      |
+| Group command-sender fallback | `command.commandGroupAllowFromFallbackToAllowFrom: false` | `command.commandGroupAllowFrom`, unless command authorization is intentionally covered by explicit `groupAllowFrom`. |
+| Group command-owner fallback  | `command.groupOwnerAllowFromFallbackToAllowFrom: false`   | `command.groupOwnerAllowFrom`, or an intentional no-owner mode such as the legacy `"none"` sentinel.                 |
+
+Provider-wide command fallback and elevated fallback are not ingress resolver
+inputs. Those paths read prepared channel capability metadata, so the channel PR
+must ensure the command or elevated authorization path already has an explicit
+target before declaring the fallback disabled.
+
+After the runtime consumes the explicit target, set the corresponding
+`package.json#openclaw.channel.doctorCapabilities` fields described in
+[Plugin manifest](/plugins/manifest#disable-fallback-in-a-channel-pr). Doctor
+infers the copy target from the disabled fallback flag, so channel PRs should
+only set the fallback metadata after the target config key is accepted by that
+channel schema and read by that channel runtime.
+
 ## Result
 
 Bundled plugins should consume modern projections directly:

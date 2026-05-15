@@ -748,6 +748,53 @@ checks that run before channel runtime loads. Bundled channels can also publish
 the same defaults through `package.json#openclaw.channel.commands` alongside
 their other package-owned channel catalog metadata.
 
+Channel packages can also publish `package.json#openclaw.channel.doctorCapabilities`
+for read-only doctor and transition checks. These fields are metadata, not user
+config. When a channel sets one fallback flag to `false`, `openclaw doctor --fix`
+infers the matching preservation copy from existing DM `allowFrom` entries to the
+canonical explicit allowlist.
+
+Valid fallback metadata fields are:
+
+| Field                                      | Values    |
+| ------------------------------------------ | --------- |
+| `groupAllowFromFallbackToAllowFrom`        | `boolean` |
+| `groupOwnerAllowFromFallbackToAllowFrom`   | `boolean` |
+| `commandGroupAllowFromFallbackToAllowFrom` | `boolean` |
+| `commandAllowFromFallbackToAllowFrom`      | `boolean` |
+| `elevatedAllowFromFallbackToAllowFrom`     | `boolean` |
+
+### Disable fallback in a channel PR
+
+Channel follow-up PRs should disable one fallback family only after the channel
+runtime consumes the matching explicit allowlist. The metadata and runtime flag
+must move together: setting only metadata makes doctor guidance wrong, and
+setting only runtime flags can remove access before `openclaw doctor --fix` can
+preserve it.
+
+Use this table as the channel PR checklist:
+
+| Fallback being removed                                                        | Runtime change in the channel                                                                                                                                            | Doctor capability metadata                        | Doctor copy target                      |
+| ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------- | --------------------------------------- |
+| Normal group sender access falls back from group allowlists to DM `allowFrom` | Pass `policy.groupAllowFromFallbackToAllowFrom: false` to the shared ingress resolver and pass the explicit group sender allowlist the channel will use.                 | `groupAllowFromFallbackToAllowFrom: false`        | `channels.<id>.groupAllowFrom`          |
+| Group command senders fall back to DM or group sender allowlists              | Pass `command.commandGroupAllowFromFallbackToAllowFrom: false` and pass `command.commandGroupAllowFrom` when the channel has a command-specific sender allowlist.        | `commandGroupAllowFromFallbackToAllowFrom: false` | `channels.<id>.commandGroupAllowFrom`   |
+| Group command owners fall back to DM `allowFrom`                              | Pass `command.groupOwnerAllowFromFallbackToAllowFrom: false` and pass `command.groupOwnerAllowFrom` when the channel has a command-owner allowlist.                      | `groupOwnerAllowFromFallbackToAllowFrom: false`   | `channels.<id>.groupOwnerAllowFrom`     |
+| Text command authorization falls back to channel `allowFrom`                  | Make command authorization use explicit `commands.allowFrom` entries for this provider and keep the prepared doctor capability available to the auto-reply command path. | `commandAllowFromFallbackToAllowFrom: false`      | `commands.allowFrom.<channel-id>`       |
+| Elevated authorization falls back to channel `allowFrom`                      | Stop using the channel elevated `allowFromFallback` hook, or let shared elevated auth skip it through the prepared doctor capability.                                    | `elevatedAllowFromFallbackToAllowFrom: false`     | `tools.elevated.allowFrom.<channel-id>` |
+
+Before setting any fallback flag to `false`, verify that:
+
+- the target config key is accepted by that channel schema
+- the channel runtime reads that key on the relevant ingress or command path
+- `openclaw doctor --fix` can preserve existing access without broadening
+  account scope
+- synthetic open-DM wildcards are not being used as the source of the migration
+
+Command-only migrations must target command-specific allowlists:
+`commandGroupAllowFrom`, `groupOwnerAllowFrom`, or provider maps under
+`commands.allowFrom` and `tools.elevated.allowFrom`. Do not use normal group
+sender targets to preserve command authorization fallback.
+
 ```json
 {
   "channelConfigs": {
