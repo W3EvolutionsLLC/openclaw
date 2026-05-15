@@ -550,9 +550,9 @@ describe("exec approvals safe bins", () => {
       cwd: "/tmp",
       platform: process.platform,
     });
-    expect(result.analysisOk).toBe(true);
+    expect(result.analysisOk).toBe(false);
     expect(result.allowlistSatisfied).toBe(false);
-    expect(result.segmentSatisfiedBy).toEqual([null]);
-    expect(result.segments[0]?.resolution?.policyBlocked).toBe(true);
+    expect(result.segmentSatisfiedBy).toEqual([]);
+    expect(result.segments).toEqual([]);
   });
 });
