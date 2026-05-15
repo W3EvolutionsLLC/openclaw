@@ -1319,16 +1319,13 @@ export function resolveAllowAlwaysPatternEntriesFromPlan(params: {
       : params.approvedSegments !== undefined && params.approvedSegments.length > 0
         ? params.approvedSegments.length
         : params.plan.units.length;
-  const segments = params.plan.units
-    .slice(0, approvedSegmentCount)
-    .filter((unit) => unit.allowAlwaysEligible && unit.blockReasons.length === 0)
-    .map(
-      (unit): ExecCommandSegment => ({
-        raw: unit.raw,
-        argv: unit.argv,
-        resolution: resolveCommandResolutionFromArgv(unit.argv, params.cwd, params.env),
-      }),
-    );
+  const segments = resolveAllowAlwaysEligiblePlanSegments({
+    units: params.plan.units,
+    approvedSegments: params.approvedSegments,
+    approvedSegmentCount,
+    cwd: params.cwd,
+    env: params.env,
+  });
 
   return resolveAllowAlwaysPatternEntries({
     segments,
@@ -1491,6 +1488,36 @@ function isRelativePathScopedExecutableToken(token: string): boolean {
   );
 }
 
+function resolveAllowAlwaysEligiblePlanSegments(params: {
+  units: readonly CommandAuthorizationUnit[];
+  approvedSegments?: readonly ExecCommandSegment[];
+  approvedSegmentCount: number;
+  cwd?: string;
+  env?: NodeJS.ProcessEnv;
+}): ExecCommandSegment[] {
+  const segments: ExecCommandSegment[] = [];
+  for (const [index, unit] of params.units.slice(0, params.approvedSegmentCount).entries()) {
+    if (!unit.allowAlwaysEligible || unit.blockReasons.length > 0) {
+      continue;
+    }
+    const approvedSegment = params.approvedSegments?.[index];
+    if (approvedSegment && argvListsEqual(approvedSegment.argv, unit.argv)) {
+      segments.push(approvedSegment);
+      continue;
+    }
+    segments.push({
+      raw: unit.raw,
+      argv: unit.argv,
+      resolution: resolveCommandResolutionFromArgv(unit.argv, params.cwd, params.env),
+    });
+  }
+  return segments;
+}
+
+function argvListsEqual(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
 export async function resolveAllowAlwaysPatternEntriesFromPlanAsync(params: {
   plan: CommandAuthorizationPlan;
   approvedSegments?: ExecCommandSegment[];
@@ -1510,16 +1537,13 @@ export async function resolveAllowAlwaysPatternEntriesFromPlanAsync(params: {
       : params.approvedSegments !== undefined && params.approvedSegments.length > 0
         ? params.approvedSegments.length
         : params.plan.units.length;
-  const segments = params.plan.units
-    .slice(0, approvedSegmentCount)
-    .filter((unit) => unit.allowAlwaysEligible && unit.blockReasons.length === 0)
-    .map(
-      (unit): ExecCommandSegment => ({
-        raw: unit.raw,
-        argv: unit.argv,
-        resolution: resolveCommandResolutionFromArgv(unit.argv, params.cwd, params.env),
-      }),
-    );
+  const segments = resolveAllowAlwaysEligiblePlanSegments({
+    units: params.plan.units,
+    approvedSegments: params.approvedSegments,
+    approvedSegmentCount,
+    cwd: params.cwd,
+    env: params.env,
+  });
 
   const patterns: AllowAlwaysPattern[] = [];
   for (const segment of segments) {

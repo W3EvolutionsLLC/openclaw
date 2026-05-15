@@ -20,11 +20,14 @@ import {
 } from "../config/runtime-snapshot.js";
 import type { SystemRunApprovalPlan } from "../infra/exec-approvals.js";
 import {
+  analyzeArgvCommand,
+  evaluateExecAllowlist,
   loadExecApprovals,
   resolveExecApprovalsPath,
   saveExecApprovals,
 } from "../infra/exec-approvals.js";
 import type { ExecHostResponse } from "../infra/exec-host.js";
+import { resolveSystemRunExecArgv } from "./invoke-system-run-allowlist.js";
 import { buildSystemRunApprovalPlan } from "./invoke-system-run-plan.js";
 import { handleSystemRunInvoke } from "./invoke-system-run.js";
 import type { HandleSystemRunInvokeOptions } from "./invoke-system-run.js";
@@ -1818,6 +1821,94 @@ describe("handleSystemRunInvoke mac app exec host routing", () => {
             });
           },
         });
+      } finally {
+        if (oldPath === undefined) {
+          delete process.env.PATH;
+        } else {
+          process.env.PATH = oldPath;
+        }
+      }
+    },
+  );
+
+  it.runIf(process.platform !== "win32")(
+    "does not drop semantic dispatch wrappers from allowlisted shell payloads",
+    async () => {
+      const oldPath = process.env.PATH;
+      process.env.PATH = "/usr/bin:/bin";
+      try {
+        const sleepPath = fs.realpathSync(
+          fs.existsSync("/usr/bin/sleep") ? "/usr/bin/sleep" : "/bin/sleep",
+        );
+        await withTempApprovalsHome({
+          approvals: createAllowlistOnMissApprovals({
+            agents: {
+              main: {
+                allowlist: [{ pattern: sleepPath }],
+              },
+            },
+          }),
+          run: async () => {
+            const invoke = await runSystemInvoke({
+              preferMacAppExecHost: false,
+              command: ["/bin/sh", "-lc", "timeout 1 sleep 100"],
+              rawCommand: '/bin/sh -lc "timeout 1 sleep 100"',
+              security: "allowlist",
+              ask: "on-miss",
+              runCommand: vi.fn(async () => createLocalRunResult("timeout-dropped")),
+            });
+
+            expect(invoke.runCommand).not.toHaveBeenCalled();
+            expectInvokeErrorMessage(invoke.sendInvokeResult, {
+              message: "execution plan mismatch",
+            });
+          },
+        });
+      } finally {
+        if (oldPath === undefined) {
+          delete process.env.PATH;
+        } else {
+          process.env.PATH = oldPath;
+        }
+      }
+    },
+  );
+
+  it.runIf(process.platform !== "win32")(
+    "pins positional-carrier executables for direct argv allowlist execution",
+    () => {
+      const oldPath = process.env.PATH;
+      process.env.PATH = "/usr/bin:/bin";
+      try {
+        const printfPath = fs.realpathSync(
+          fs.existsSync("/usr/bin/printf") ? "/usr/bin/printf" : "/bin/printf",
+        );
+        const argv = ["sh", "-c", '$0 "$@"', "printf", "hi"];
+        const analysis = analyzeArgvCommand({ argv });
+        const evaluation = evaluateExecAllowlist({
+          analysis,
+          allowlist: [{ pattern: printfPath }],
+          safeBins: new Set(),
+        });
+        const execArgv = resolveSystemRunExecArgv({
+          plannedAllowlistArgv: ["/bin/sh", "-c", '$0 "$@"', "printf", "hi"],
+          argv,
+          security: "allowlist",
+          isWindows: false,
+          policy: {
+            approvedByAsk: false,
+            analysisOk: analysis.ok,
+            allowlistSatisfied: evaluation.allowlistSatisfied,
+          },
+          shellCommand: null,
+          segments: analysis.segments,
+          segmentPinnedArgvTokens: evaluation.segmentPinnedArgvTokens,
+          segmentSatisfiedBy: evaluation.segmentSatisfiedBy,
+          cwd: undefined,
+          env: undefined,
+        });
+
+        expect(execArgv?.[3]).toBe(printfPath);
       } finally {
         if (oldPath === undefined) {
           delete process.env.PATH;

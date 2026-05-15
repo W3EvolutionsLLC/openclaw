@@ -149,6 +149,20 @@ export function resolveSystemRunExecArgv(params: {
   let execArgv = params.plannedAllowlistArgv ?? params.argv;
   if (
     params.security === "allowlist" &&
+    !params.isWindows &&
+    !params.policy.approvedByAsk &&
+    !params.shellCommand &&
+    params.policy.analysisOk &&
+    params.policy.allowlistSatisfied
+  ) {
+    execArgv = applyPinnedArgvTokens({
+      execArgv,
+      sourceArgv: params.argv,
+      pinnedArgvTokens: params.segmentPinnedArgvTokens,
+    });
+  }
+  if (
+    params.security === "allowlist" &&
     params.isWindows &&
     !params.policy.approvedByAsk &&
     params.shellCommand &&
@@ -196,6 +210,27 @@ export function resolveSystemRunExecArgv(params: {
     execArgv = rewrittenArgv;
   }
   return execArgv;
+}
+
+function applyPinnedArgvTokens(params: {
+  execArgv: string[];
+  sourceArgv: readonly string[];
+  pinnedArgvTokens: readonly (ExecAllowlistPinnedArgvToken | null)[];
+}): string[] {
+  let rewritten: string[] | null = null;
+  for (const pinned of params.pinnedArgvTokens) {
+    if (!pinned || pinned.tokenIndex < 0 || pinned.tokenIndex >= params.execArgv.length) {
+      continue;
+    }
+    const sourceToken = params.sourceArgv[pinned.tokenIndex];
+    const execToken = params.execArgv[pinned.tokenIndex];
+    if (sourceToken === undefined || execToken === undefined || execToken !== sourceToken) {
+      continue;
+    }
+    rewritten ??= [...params.execArgv];
+    rewritten[pinned.tokenIndex] = pinned.replacement;
+  }
+  return rewritten ?? params.execArgv;
 }
 
 function isPosixShellInlineCommandTransport(argv: string[]): boolean {

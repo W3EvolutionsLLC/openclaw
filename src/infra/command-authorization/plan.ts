@@ -61,6 +61,8 @@ type UnsupportedWrapper = {
   reason: CommandPromptOnlyReason;
 };
 
+const SEMANTICS_NEUTRAL_RENDER_WRAPPERS = new Set(["env", "nice"]);
+
 export async function planCommandForAuthorization(
   input: CommandAuthorizationInput,
   context: CommandAuthorizationContext = {},
@@ -632,6 +634,9 @@ function renderAllowlistPinnedRawUnit(params: {
       params.segment,
     );
     if (effectiveArgvStartIndex !== null && effectiveArgvStartIndex > 0) {
+      if (!canRenderWithoutLeadingWrappers(params.segment)) {
+        return { ok: false, reason: "allowlist wrapper preservation unavailable" };
+      }
       const rendered = renderQuotedPlannedSegmentArgv(params.segment, params.platform);
       if (!rendered) {
         return { ok: false, reason: "allowlist wrapper argv render unavailable" };
@@ -677,6 +682,9 @@ function renderPinnedRawUnitArgvToken(params: {
   }
   const effectiveArgvStartIndex = resolveEffectiveArgvStartIndex(params.unit.argv, params.segment);
   if (effectiveArgvStartIndex !== null && effectiveArgvStartIndex > 0) {
+    if (!canRenderWithoutLeadingWrappers(params.segment)) {
+      return { ok: false, reason: "allowlist wrapper preservation unavailable" };
+    }
     const rendered = renderQuotedPlannedSegmentArgv(params.segment, params.platform, {
       tokenIndex: params.pinnedArgvToken.tokenIndex - effectiveArgvStartIndex,
       replacement: params.pinnedArgvToken.replacement,
@@ -715,6 +723,15 @@ function renderPinnedRawUnitArgvToken(params: {
     rendered = executablePinned;
   }
   return { ok: true, command: rendered };
+}
+
+function canRenderWithoutLeadingWrappers(segment: ExecCommandSegment): boolean {
+  const wrapperChain = segment.resolution?.wrapperChain;
+  return (
+    Array.isArray(wrapperChain) &&
+    wrapperChain.length > 0 &&
+    wrapperChain.every((wrapper) => SEMANTICS_NEUTRAL_RENDER_WRAPPERS.has(wrapper))
+  );
 }
 
 function renderQuotedPlannedSegmentArgv(
