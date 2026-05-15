@@ -517,6 +517,7 @@ export async function processGatewayAllowlist(
             analysisOk,
             commandText: params.command,
             segments: allowlistEval.segments,
+            segmentSatisfiedBy: allowlistEval.segmentSatisfiedBy,
             cwd: params.workdir,
             env: params.env,
             platform: process.platform,

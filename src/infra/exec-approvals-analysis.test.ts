@@ -442,7 +442,7 @@ describe("exec approvals shell analysis", () => {
 
       expect(result.analysisOk).toBe(true);
       expect(result.allowlistSatisfied).toBe(false);
-      expect(result.segmentSatisfiedBy).toEqual([null]);
+      expect(result.segmentSatisfiedBy).toEqual([null, null, null]);
     });
 
     it("still rejects the skill display prelude when no trusted skill command follows", async () => {
@@ -460,7 +460,7 @@ describe("exec approvals shell analysis", () => {
 
       expect(result.analysisOk).toBe(true);
       expect(result.allowlistSatisfied).toBe(false);
-      expect(result.segmentSatisfiedBy).toEqual([null]);
+      expect(result.segmentSatisfiedBy).toEqual([null, null]);
     });
 
     it("rejects the skill display prelude when a trusted wrapper is not reachable", async () => {
@@ -480,7 +480,7 @@ describe("exec approvals shell analysis", () => {
 
       expect(result.analysisOk).toBe(true);
       expect(result.allowlistSatisfied).toBe(false);
-      expect(result.segmentSatisfiedBy).toEqual([null]);
+      expect(result.segmentSatisfiedBy).toEqual([null, null, null, null]);
     });
 
     it.each(['/usr/bin/echo "foo && bar"', '/usr/bin/echo "foo\\" && bar"'])(

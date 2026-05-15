@@ -1,7 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { detectPolicyInlineEval } from "./command-analysis/policy.js";
 import {
+  countAllowAlwaysApprovedSegments,
   resolveAllowAlwaysPatternEntries,
   resolveAllowAlwaysPatternEntriesFromPlanAsync,
 } from "./exec-approvals-allowlist.js";
@@ -51,6 +53,10 @@ describe("resolveAllowAlwaysPatterns", () => {
         ? await resolveAllowAlwaysPatternEntriesFromPlanAsync({
             plan: analysis.authorizationPlan,
             approvedSegments: analysis.segments,
+            approvedSegmentCount: countAllowAlwaysApprovedSegments({
+              plan: analysis.authorizationPlan,
+              segmentSatisfiedBy: analysis.segmentSatisfiedBy,
+            }),
             cwd: params.dir,
             env: params.env,
             platform: process.platform,
@@ -446,6 +452,34 @@ describe("resolveAllowAlwaysPatterns", () => {
         allowlistSatisfied: result.allowlistSatisfied,
       }),
     ).toBe(true);
+  });
+
+  it("keeps later inline-eval units visible after an earlier allowlist miss", async () => {
+    if (process.platform === "win32") {
+      return;
+    }
+    const dir = makeTempDir();
+    makeExecutable(dir, "echo");
+    makeExecutable(dir, "python");
+    const env = makePathEnv(dir);
+    const safeBins = new Set<string>();
+
+    const result = await evaluateShellAllowlist({
+      command: "echo ok; python -c 'print(1)'",
+      allowlist: [],
+      safeBins,
+      cwd: dir,
+      env,
+      platform: process.platform,
+    });
+
+    expect(result.analysisOk).toBe(true);
+    expect(result.allowlistSatisfied).toBe(false);
+    expect(result.segments.map((segment) => segment.argv)).toEqual([
+      ["echo", "ok"],
+      ["python", "-c", "print(1)"],
+    ]);
+    expect(detectPolicyInlineEval(result.segments)?.normalizedExecutable).toBe("python");
   });
 
   it("does not satisfy allowlist or persist allow-always for shell state builtins", async () => {

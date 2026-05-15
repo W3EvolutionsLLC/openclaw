@@ -11,9 +11,11 @@ import {
 import type { CommandExplanationSummary } from "./command-analysis/explain.js";
 import { planCommandForAuthorization } from "./command-authorization/index.js";
 import {
+  countAllowAlwaysApprovedSegments,
   resolveAllowAlwaysPatternEntries,
   resolveAllowAlwaysPatternEntriesFromPlanAsync,
 } from "./exec-approvals-allowlist.js";
+import type { ExecSegmentSatisfiedBy } from "./exec-approvals-allowlist.js";
 import type { ExecCommandSegment } from "./exec-approvals-analysis.js";
 import type { ExecAllowlistEntry } from "./exec-approvals.types.js";
 import { assertNoSymlinkParentsSync } from "./fs-safe-advanced.js";
@@ -1224,6 +1226,7 @@ export async function persistAllowAlwaysPatterns(params: {
   analysisOk?: boolean;
   commandText?: string;
   segments: ExecCommandSegment[];
+  segmentSatisfiedBy?: ExecSegmentSatisfiedBy[];
   cwd?: string;
   env?: NodeJS.ProcessEnv;
   platform?: string | null;
@@ -1232,17 +1235,24 @@ export async function persistAllowAlwaysPatterns(params: {
   const commandText = params.commandText?.trim();
   const usePlanner =
     params.analysisOk !== false && Boolean(commandText) && params.platform !== "win32";
-  const patterns = usePlanner
+  const plan = usePlanner
+    ? await planCommandForAuthorization(
+        { dialect: "posix-shell", command: commandText ?? "" },
+        {
+          cwd: params.cwd,
+          env: params.env,
+          platform: params.platform,
+        },
+      )
+    : null;
+  const patterns = plan
     ? await resolveAllowAlwaysPatternEntriesFromPlanAsync({
-        plan: await planCommandForAuthorization(
-          { dialect: "posix-shell", command: commandText ?? "" },
-          {
-            cwd: params.cwd,
-            env: params.env,
-            platform: params.platform,
-          },
-        ),
+        plan,
         approvedSegments: params.segments.length > 0 ? params.segments : undefined,
+        approvedSegmentCount: countAllowAlwaysApprovedSegments({
+          plan,
+          segmentSatisfiedBy: params.segmentSatisfiedBy,
+        }),
         cwd: params.cwd,
         env: params.env,
         platform: params.platform,

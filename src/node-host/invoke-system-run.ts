@@ -673,6 +673,7 @@ async function executeSystemRunPhase(
           analysisOk: phase.policy.analysisOk,
           commandText: phase.shellPayload ?? undefined,
           segments: phase.segments,
+          segmentSatisfiedBy: phase.segmentSatisfiedBy,
           cwd: phase.cwd,
           env: phase.env,
           platform: process.platform,

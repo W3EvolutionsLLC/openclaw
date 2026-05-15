@@ -1425,6 +1425,10 @@ describe("handleSystemRunInvoke mac app exec host routing", () => {
         expected: "python3 -c requires explicit approval in strictInlineEval mode",
       },
       {
+        command: ["/bin/sh", "-c", "echo ok; python3 -c 'print(1)'"],
+        expected: "python3 -c requires explicit approval in strictInlineEval mode",
+      },
+      {
         command: ["/bin/sh", "-c", `sh -c "sh -c 'python3 -c \\"print(1)\\"'"`],
         expected: "python3 -c requires explicit approval in strictInlineEval mode",
       },

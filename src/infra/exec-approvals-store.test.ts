@@ -777,6 +777,7 @@ describe("exec approvals store helpers", () => {
         analysisOk: analysis.analysisOk,
         commandText,
         segments: analysis.segments,
+        segmentSatisfiedBy: analysis.segmentSatisfiedBy,
         cwd: dir,
         env,
         platform: process.platform,

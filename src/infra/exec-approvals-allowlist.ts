@@ -906,6 +906,46 @@ export type ExecAllowlistAnalysis = {
   authorizationPlan?: CommandAuthorizationPlan;
 };
 
+export function countAllowAlwaysApprovedSegments(params: {
+  plan: CommandAuthorizationPlan;
+  segmentSatisfiedBy?: readonly ExecSegmentSatisfiedBy[];
+}): number | undefined {
+  const segmentSatisfiedBy = params.segmentSatisfiedBy;
+  if (
+    !segmentSatisfiedBy ||
+    segmentSatisfiedBy.length === 0 ||
+    params.plan.kind === "unanalyzable"
+  ) {
+    return undefined;
+  }
+  const firstMissIndex = segmentSatisfiedBy.findIndex((entry) => entry === null);
+  if (firstMissIndex === -1) {
+    return segmentSatisfiedBy.length;
+  }
+  let groupEndIndex = 0;
+  for (const groupSize of authorizationTreeGroupSizes(params.plan.tree)) {
+    groupEndIndex += groupSize;
+    if (firstMissIndex < groupEndIndex) {
+      return groupEndIndex;
+    }
+  }
+  return firstMissIndex + 1;
+}
+
+function authorizationTreeGroupSizes(tree: CommandAuthorizationTree): number[] {
+  if (tree.kind !== "chain") {
+    return [authorizationTreeUnitCount(tree)];
+  }
+  return tree.children.map((child) => authorizationTreeUnitCount(child));
+}
+
+function authorizationTreeUnitCount(tree: CommandAuthorizationTree): number {
+  if (tree.kind === "unit") {
+    return 1;
+  }
+  return tree.children.reduce((count, child) => count + authorizationTreeUnitCount(child), 0);
+}
+
 function hasSegmentExecutableMatch(
   segment: ExecCommandSegment,
   predicate: (token: string) => boolean,
@@ -1263,6 +1303,7 @@ export function resolveAllowAlwaysPatternEntries(params: {
 export function resolveAllowAlwaysPatternEntriesFromPlan(params: {
   plan: CommandAuthorizationPlan;
   approvedSegments?: ExecCommandSegment[];
+  approvedSegmentCount?: number;
   cwd?: string;
   env?: NodeJS.ProcessEnv;
   platform?: string | null;
@@ -1273,9 +1314,11 @@ export function resolveAllowAlwaysPatternEntriesFromPlan(params: {
   }
 
   const approvedSegmentCount =
-    params.approvedSegments !== undefined && params.approvedSegments.length > 0
-      ? params.approvedSegments.length
-      : params.plan.units.length;
+    params.approvedSegmentCount !== undefined
+      ? params.approvedSegmentCount
+      : params.approvedSegments !== undefined && params.approvedSegments.length > 0
+        ? params.approvedSegments.length
+        : params.plan.units.length;
   const segments = params.plan.units
     .slice(0, approvedSegmentCount)
     .filter((unit) => unit.allowAlwaysEligible && unit.blockReasons.length === 0)
@@ -1451,6 +1494,7 @@ function isRelativePathScopedExecutableToken(token: string): boolean {
 export async function resolveAllowAlwaysPatternEntriesFromPlanAsync(params: {
   plan: CommandAuthorizationPlan;
   approvedSegments?: ExecCommandSegment[];
+  approvedSegmentCount?: number;
   cwd?: string;
   env?: NodeJS.ProcessEnv;
   platform?: string | null;
@@ -1461,9 +1505,11 @@ export async function resolveAllowAlwaysPatternEntriesFromPlanAsync(params: {
   }
 
   const approvedSegmentCount =
-    params.approvedSegments !== undefined && params.approvedSegments.length > 0
-      ? params.approvedSegments.length
-      : params.plan.units.length;
+    params.approvedSegmentCount !== undefined
+      ? params.approvedSegmentCount
+      : params.approvedSegments !== undefined && params.approvedSegments.length > 0
+        ? params.approvedSegments.length
+        : params.plan.units.length;
   const segments = params.plan.units
     .slice(0, approvedSegmentCount)
     .filter((unit) => unit.allowAlwaysEligible && unit.blockReasons.length === 0)
@@ -1643,6 +1689,14 @@ export async function evaluateShellAllowlist(
         segmentPinnedArgvTokens.push(...group.analysis.segments.map(() => null));
         segmentSatisfiedBy.push(...group.analysis.segments.map(() => null));
       }
+      appendUnevaluatedPlannedGroups({
+        groups: plannedGroups,
+        startIndex: index + 1,
+        segments,
+        segmentAllowlistEntries,
+        segmentPinnedArgvTokens,
+        segmentSatisfiedBy,
+      });
       return {
         analysisOk: true,
         allowlistSatisfied: false,
@@ -1670,6 +1724,14 @@ export async function evaluateShellAllowlist(
     segmentPinnedArgvTokens.push(...effectiveSegmentPinnedArgvTokens);
     segmentSatisfiedBy.push(...effectiveSegmentSatisfiedBy);
     if (!evaluation.allowlistSatisfied && !allowSkillPreludeAtIndex.has(index)) {
+      appendUnevaluatedPlannedGroups({
+        groups: plannedGroups,
+        startIndex: index + 1,
+        segments,
+        segmentAllowlistEntries,
+        segmentPinnedArgvTokens,
+        segmentSatisfiedBy,
+      });
       return {
         analysisOk: true,
         allowlistSatisfied: false,
@@ -1693,6 +1755,26 @@ export async function evaluateShellAllowlist(
     segmentSatisfiedBy,
     authorizationPlan: plan,
   };
+}
+
+function appendUnevaluatedPlannedGroups(params: {
+  groups: readonly PlannedAllowlistGroup[];
+  startIndex: number;
+  segments: ExecCommandSegment[];
+  segmentAllowlistEntries: Array<ExecAllowlistEntry | null>;
+  segmentPinnedArgvTokens: Array<ExecAllowlistPinnedArgvToken | null>;
+  segmentSatisfiedBy: ExecSegmentSatisfiedBy[];
+}): void {
+  for (let index = params.startIndex; index < params.groups.length; index += 1) {
+    const group = params.groups[index];
+    if (!group) {
+      continue;
+    }
+    params.segments.push(...group.analysis.segments);
+    params.segmentAllowlistEntries.push(...group.analysis.segments.map(() => null));
+    params.segmentPinnedArgvTokens.push(...group.analysis.segments.map(() => null));
+    params.segmentSatisfiedBy.push(...group.analysis.segments.map(() => null));
+  }
 }
 
 type PlannedAllowlistGroup = {
