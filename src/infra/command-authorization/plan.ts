@@ -627,11 +627,22 @@ function renderAllowlistPinnedRawUnit(params: {
   }
   const executionRaw = params.segment.resolution?.execution.rawExecutable?.trim();
   if (executionRaw && executionRaw !== rawExecutable) {
+    const effectiveArgvStartIndex = resolveEffectiveArgvStartIndex(
+      params.unit.argv,
+      params.segment,
+    );
+    if (effectiveArgvStartIndex !== null && effectiveArgvStartIndex > 0) {
+      const rendered = renderQuotedPlannedSegmentArgv(params.segment, params.platform);
+      if (!rendered) {
+        return { ok: false, reason: "allowlist wrapper argv render unavailable" };
+      }
+      return { ok: true, command: rendered };
+    }
     const rendered = replaceSpannedShellArgvToken({
       raw,
       argv: params.unit.argv,
       argvSpans: params.unit.argvSpans,
-      tokenIndex: resolveEffectiveArgvStartIndex(params.unit.argv, params.segment),
+      tokenIndex: effectiveArgvStartIndex,
       expectedToken: executionRaw,
       replacement: shellEscapeSingleArg(pinnedExecutable),
     });
@@ -664,6 +675,17 @@ function renderPinnedRawUnitArgvToken(params: {
   if (!expectedToken) {
     return { ok: false, reason: "allowlist pinned argv token unavailable" };
   }
+  const effectiveArgvStartIndex = resolveEffectiveArgvStartIndex(params.unit.argv, params.segment);
+  if (effectiveArgvStartIndex !== null && effectiveArgvStartIndex > 0) {
+    const rendered = renderQuotedPlannedSegmentArgv(params.segment, params.platform, {
+      tokenIndex: params.pinnedArgvToken.tokenIndex - effectiveArgvStartIndex,
+      replacement: params.pinnedArgvToken.replacement,
+    });
+    if (!rendered) {
+      return { ok: false, reason: "allowlist pinned wrapper argv render unavailable" };
+    }
+    return { ok: true, command: rendered };
+  }
   let rendered = replaceSpannedShellArgvToken({
     raw: params.unit.raw.trim(),
     argv: params.unit.argv,
@@ -693,6 +715,24 @@ function renderPinnedRawUnitArgvToken(params: {
     rendered = executablePinned;
   }
   return { ok: true, command: rendered };
+}
+
+function renderQuotedPlannedSegmentArgv(
+  segment: ExecCommandSegment,
+  platform?: string | null,
+  replacement?: { tokenIndex: number; replacement: string },
+): string | null {
+  const argv = resolvePlannedSegmentArgv(segment);
+  if (!argv) {
+    return null;
+  }
+  if (replacement) {
+    if (replacement.tokenIndex < 0 || replacement.tokenIndex >= argv.length) {
+      return null;
+    }
+    argv[replacement.tokenIndex] = replacement.replacement;
+  }
+  return renderQuotedArgv(argv, platform);
 }
 
 function resolveEffectiveArgvStartIndex(
@@ -1032,6 +1072,7 @@ function promptOnlyReasonsFromRisks(risks: readonly CommandRisk[]): CommandPromp
       risk.kind === "heredoc" ||
       risk.kind === "here-string" ||
       risk.kind === "redirect" ||
+      risk.kind === "wrapper-payload-depth" ||
       risk.kind === "syntax-error"
     ) {
       reasonSet.add("unsupported-shell-syntax");

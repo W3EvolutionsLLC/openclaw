@@ -225,6 +225,27 @@ function detectShellPositionalCarrierInlineEvalArgvInternal(
   return detectInlineEvalArgvInternal(carriedArgv, seenArgv);
 }
 
+function detectShellWrapperInlineEvalArgvInternal(
+  argv: string[],
+  seenArgv: Set<string>,
+): InterpreterInlineEvalHit | null {
+  const executableArgv = stripLeadingEnvAssignments(argv);
+  const key = `shell-wrapper\0${commandArgvKey(executableArgv)}`;
+  if (seenArgv.has(key)) {
+    return null;
+  }
+  seenArgv.add(key);
+  const payload = extractShellWrapperInlineCommand(executableArgv);
+  if (!payload) {
+    return null;
+  }
+  const payloadArgv = splitShellArgs(payload);
+  if (!payloadArgv) {
+    return null;
+  }
+  return detectInlineEvalArgvInternal(payloadArgv, seenArgv);
+}
+
 function detectCarrierInlineEvalArgvInternal(
   argv: string[],
   seenArgv: Set<string>,
@@ -265,6 +286,7 @@ function detectInlineEvalArgvInternal(
   }
   return (
     detectInterpreterInlineEvalArgv(argv) ??
+    detectShellWrapperInlineEvalArgvInternal(argv, seenArgv) ??
     detectShellPositionalCarrierInlineEvalArgvInternal(argv, seenArgv) ??
     detectCarrierInlineEvalArgvInternal(argv, seenArgv)
   );

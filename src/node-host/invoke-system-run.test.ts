@@ -1424,6 +1424,10 @@ describe("handleSystemRunInvoke mac app exec host routing", () => {
         command: ["/bin/sh", "-c", "python3 -c 'print(1)' > out.txt"],
         expected: "python3 -c requires explicit approval in strictInlineEval mode",
       },
+      {
+        command: ["/bin/sh", "-c", `sh -c "sh -c 'python3 -c \\"print(1)\\"'"`],
+        expected: "python3 -c requires explicit approval in strictInlineEval mode",
+      },
     ] as const;
     setRuntimeConfigSnapshot({
       tools: {
@@ -1803,7 +1807,7 @@ describe("handleSystemRunInvoke mac app exec host routing", () => {
             });
 
             const payload = requireFirstRunCommandArgs(invoke.runCommand)[2] ?? "";
-            expect(payload).toContain("nice");
+            expect(payload).not.toContain("nice");
             expect(payload).toContain(printfPath);
             expectInvokeOk(invoke.sendInvokeResult, {
               payloadContains: "dispatch-wrapper-ok",

@@ -887,12 +887,12 @@ describe("exec approvals shell analysis", () => {
             {
               command: `env sh -c '$0 "$@"' printf hi`,
               expectedTokenIndex: 4,
-              expectedCommand: `env '${shellRealPath}' -c '$0 "$@"' '${printfPath}' hi`,
+              expectedCommand: `'${shellRealPath}' '-c' '$0 "$@"' '${printfPath}' 'hi'`,
             },
             {
               command: `nice sh -c '$0 "$@"' printf hi`,
               expectedTokenIndex: 4,
-              expectedCommand: `nice '${shellRealPath}' -c '$0 "$@"' '${printfPath}' hi`,
+              expectedCommand: `'${shellRealPath}' '-c' '$0 "$@"' '${printfPath}' 'hi'`,
             },
           ]) {
             const result = await evaluateShellAllowlist({

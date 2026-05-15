@@ -974,11 +974,6 @@ function recordCommandRisks(
   }
   const normalizedExecutable = normalizeExecutableToken(executable);
   recordDynamicArgumentRisks(normalizedExecutable, dynamicArguments, output);
-  const inlineEval = detectInlineEvalArgv(argv) ?? detectSharedCarrierInlineEvalArgv(argv);
-  if (inlineEval) {
-    recordInlineEvalRisk(inlineEval, text, span, output);
-  }
-
   const shellWrapper = extractShellWrapperCommand(argv);
   const shellWrapperPayload = shellWrapper.command ?? extractShellWrapperInlineCommand(argv);
   if (shellWrapper.isWrapper && shellWrapperPayload) {
@@ -1002,6 +997,10 @@ function recordCommandRisks(
         span,
       });
     }
+  }
+  const inlineEval = detectInlineEvalArgv(argv) ?? detectSharedCarrierInlineEvalArgv(argv);
+  if (inlineEval) {
+    recordInlineEvalRisk(inlineEval, text, span, output);
   }
 
   for (const carrier of detectCommandCarrierArgv(argv)) {
@@ -1155,28 +1154,36 @@ async function walk(
           parsed.arguments,
           parsed.dynamicArguments,
         );
-        if (wrapperPayload && state.wrapperPayloadDepth < MAX_WRAPPER_PAYLOAD_DEPTH) {
-          const wrapperTree = await parseBashForCommandExplanation(wrapperPayload.command);
-          const wrapperSpanBase = spanBaseForParserSource(
-            wrapperPayload.command,
-            wrapperTree.rootNode,
-            wrapperPayload.spanBase,
-          );
-          try {
-            if (wrapperTree.rootNode.hasError) {
-              output.hasParseError = true;
-              output.risks.push({
-                kind: "syntax-error",
-                text: wrapperPayload.command,
-                span: spanFromNode(wrapperTree.rootNode, wrapperSpanBase),
+        if (wrapperPayload) {
+          if (state.wrapperPayloadDepth < MAX_WRAPPER_PAYLOAD_DEPTH) {
+            const wrapperTree = await parseBashForCommandExplanation(wrapperPayload.command);
+            const wrapperSpanBase = spanBaseForParserSource(
+              wrapperPayload.command,
+              wrapperTree.rootNode,
+              wrapperPayload.spanBase,
+            );
+            try {
+              if (wrapperTree.rootNode.hasError) {
+                output.hasParseError = true;
+                output.risks.push({
+                  kind: "syntax-error",
+                  text: wrapperPayload.command,
+                  span: spanFromNode(wrapperTree.rootNode, wrapperSpanBase),
+                });
+              }
+              await walk(wrapperTree.rootNode, output, "wrapper-payload", {
+                wrapperPayloadDepth: state.wrapperPayloadDepth + 1,
+                spanBase: wrapperSpanBase,
               });
+            } finally {
+              wrapperTree.delete();
             }
-            await walk(wrapperTree.rootNode, output, "wrapper-payload", {
-              wrapperPayloadDepth: state.wrapperPayloadDepth + 1,
-              spanBase: wrapperSpanBase,
+          } else {
+            output.risks.push({
+              kind: "wrapper-payload-depth",
+              text: wrapperPayload.command,
+              span,
             });
-          } finally {
-            wrapperTree.delete();
           }
         }
       }

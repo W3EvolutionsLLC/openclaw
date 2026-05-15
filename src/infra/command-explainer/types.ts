@@ -69,6 +69,7 @@ export type CommandRisk =
   | { kind: "heredoc"; text: string; span: SourceSpan }
   | { kind: "here-string"; text: string; span: SourceSpan }
   | { kind: "redirect"; text: string; span: SourceSpan }
+  | { kind: "wrapper-payload-depth"; text: string; span: SourceSpan }
   | { kind: "syntax-error"; text: string; span: SourceSpan };
 
 export type CommandExplanation = {
