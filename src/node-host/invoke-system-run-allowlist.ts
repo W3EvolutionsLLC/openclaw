@@ -1,4 +1,8 @@
 import {
+  renderAuthorizationShellCommand,
+  type CommandAuthorizationPlan,
+} from "../infra/command-authorization/index.js";
+import {
   analyzeArgvCommand,
   evaluateExecAllowlist,
   evaluateShellAllowlist,
@@ -10,10 +14,6 @@ import {
   type ExecSecurity,
   type SkillBinTrustEntry,
 } from "../infra/exec-approvals.js";
-import {
-  renderAuthorizationShellCommand,
-  type CommandAuthorizationPlan,
-} from "../infra/command-authorization/index.js";
 import { resolveExecSafeBinRuntimePolicy } from "../infra/exec-safe-bin-runtime-policy.js";
 import {
   normalizeExecutableToken,
@@ -161,7 +161,6 @@ export function resolveSystemRunExecArgv(params: {
     params.shellCommand &&
     params.policy.analysisOk &&
     params.policy.allowlistSatisfied &&
-    params.segmentSatisfiedBy.some((entry) => entry === "safeBins" || entry === "inlineChain") &&
     isPosixShellInlineCommandTransport(params.argv)
   ) {
     if (!params.authorizationPlan) {
@@ -172,7 +171,7 @@ export function resolveSystemRunExecArgv(params: {
       segments: params.segments,
       segmentSatisfiedBy: params.segmentSatisfiedBy,
       platform: process.platform,
-      mode: "safe-bins",
+      mode: "enforced",
     });
     if (!rebuilt.ok || !rebuilt.command) {
       return null;

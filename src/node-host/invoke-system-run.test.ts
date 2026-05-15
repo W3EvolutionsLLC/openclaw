@@ -1674,6 +1674,9 @@ describe("handleSystemRunInvoke mac app exec host routing", () => {
           });
 
           expect(invoke.runCommand).toHaveBeenCalledTimes(1);
+          const payload = requireFirstRunCommandArgs(invoke.runCommand)[2] ?? "";
+          expect(payload).toContain(scriptPath);
+          expect(payload).not.toContain("./scripts/check_mail.sh");
           expectInvokeOk(invoke.sendInvokeResult, {
             payloadContains: "shell-wrapper-inner-ok",
           });
