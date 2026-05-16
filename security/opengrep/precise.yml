@@ -2695,14 +2695,14 @@ rules:
       detector-bucket: precise
       source-run: 2026-04-17T07-37-10Z
       source-rule-id: replay-key-derived-from-idempotency-header
-  - id: ghsa-gfmx-pph7-g46x.openclaw.system-event-missing-non-owner-authority
+  - id: ghsa-gfmx-pph7-g46x.openclaw.system-event-missing-explicit-authority
     languages:
       - typescript
       - javascript
     severity: ERROR
     message: |
-      enqueueSystemEvent() is called with interpolated or variable text without explicit run authority metadata. External event content - channel messages, user IDs, event payloads, exec output - MUST set `forceSenderIsOwnerFalse: true` so event-triggered runs do not inherit owner authority. Use `forceSenderIsOwnerFalse: false` only for intentionally owner-inheriting internal events. Legacy `trusted: false` is accepted only for compatibility. See GHSA-GFMX-PPH7-G46X.
-      TRIAGE NOTE: If ALL interpolated values in the template literal are boolean flags or enum/const expressions (e.g. `${x ? "on" : "off"}`), or if the variable text is formatted from fully-internal state (not external channel content), the finding may be low-risk. Prefer explicit `forceSenderIsOwnerFalse` authority metadata over omitted authority.
+      enqueueSystemEvent() is called with interpolated or variable text without explicit run authority metadata. Event producers must choose whether the resulting run can inherit owner authority by setting `forceSenderIsOwnerFalse`; use `true` for external event content such as channel messages, user IDs, event payloads, or exec output, and `false` only for intentionally owner-inheriting internal events. Legacy `trusted: false` is accepted only for compatibility. See GHSA-GFMX-PPH7-G46X.
+      TRIAGE NOTE: This rule enforces an explicit authority decision, not provenance inference. If ALL interpolated values in the template literal are boolean flags or enum/const expressions (e.g. `${x ? "on" : "off"}`), or if the variable text is formatted from fully-internal state (not external channel content), `forceSenderIsOwnerFalse: false` may be correct. Prefer explicit `forceSenderIsOwnerFalse` authority metadata over omitted authority.
     metadata:
       category: security
       cwe:
@@ -2714,7 +2714,7 @@ rules:
       advisory-url: https://github.com/openclaw/openclaw/security/advisories/GHSA-GFMX-PPH7-G46X
       detector-bucket: precise
       source-run: 2026-04-17T07-37-10Z
-      source-rule-id: openclaw.system-event-missing-non-owner-authority
+      source-rule-id: openclaw.system-event-missing-explicit-authority
     paths:
       exclude:
         - "**/*.test.*"
