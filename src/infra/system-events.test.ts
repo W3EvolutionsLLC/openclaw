@@ -370,10 +370,7 @@ describe("system events (session routing)", () => {
       false,
       true,
     ]);
-    expect(peekSystemEventEntries(key).map((event) => event.trusted)).toEqual([
-      undefined,
-      undefined,
-    ]);
+    expect(peekSystemEventEntries(key).map((event) => event.trusted)).toEqual([true, false]);
   });
 
   it("keeps trusted false as a deprecated owner-downgrade alias", () => {
@@ -392,10 +389,7 @@ describe("system events (session routing)", () => {
       true,
       false,
     ]);
-    expect(peekSystemEventEntries(key).map((event) => event.trusted)).toEqual([
-      undefined,
-      undefined,
-    ]);
+    expect(peekSystemEventEntries(key).map((event) => event.trusted)).toEqual([false, true]);
   });
 
   it("preserves lastContextKey when a duplicate is skipped", () => {
