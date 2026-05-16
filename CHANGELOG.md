@@ -94,7 +94,7 @@ Docs: https://docs.openclaw.ai
 - QA-Lab: add `--pack personal-agent` for `openclaw qa suite` so maintainers can run the accepted personal-agent scenario pack by selector. (#82760) Thanks @iFiras-Max1.
 - QA-Lab: add a private Codex-vs-Pi runtime parity axis with runtime-pair suite runs, parity reports, and release-check wiring. (#80238) Thanks @100yenadmin.
 - Slack: add Slack assistant thread lifecycle support with assistant view manifest entries, suggested prompts, thread-scoped assistant sessions, and Slack-provided assistant context. Fixes #80787. Thanks @mobybot27.
-- System events: remove remaining in-repo legacy trust metadata from queued event producers and keep inbound marker sanitization from reintroducing `System (untrusted):` labels.
+- System events: remove remaining in-repo legacy trust metadata from queued event producers and keep inbound marker sanitization from reintroducing `System (untrusted):` labels. (#81729) Thanks @jesse-merhi.
 
 ### Fixes
 
