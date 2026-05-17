@@ -263,6 +263,39 @@ describe("OAuthManagerRefreshError", () => {
     expect(error.message).not.toContain("[redacted]456");
     expect(error.message.match(/\[redacted\]/g)?.length).toBe(2);
   });
+
+  it("does not flatten refresh contention lock paths into surfaced diagnostics", () => {
+    const lockPath = "/tmp/openclaw-refresh-contention.lock";
+    const lockCause = Object.assign(new Error(`file lock timeout for ${lockPath}`), {
+      code: "OPENCLAW_FILE_LOCK_TIMEOUT",
+      lockPath,
+    });
+    const error = new OAuthManagerRefreshError({
+      credential: createCredential(),
+      profileId: "openai-codex:default",
+      refreshedStore: { version: 1, profiles: {} },
+      cause: Object.assign(
+        new Error(
+          "OAuth refresh failed (refresh_contention): another process is already refreshing openai-codex for openai-codex:default. Please wait for the in-flight refresh to finish and retry.",
+          { cause: lockCause },
+        ),
+        {
+          code: "refresh_contention",
+          cause: lockCause,
+        },
+      ),
+    });
+
+    expect(error.code).toBe("refresh_contention");
+    expect(error.lockPath).toBe(lockPath);
+    expect(error.message).toContain("refresh_contention");
+    expect(error.message).not.toContain(lockPath);
+    expect(error.message).not.toContain("file lock timeout");
+    const surfacedCauseMessage = formatErrorMessage(error.cause);
+    expect(surfacedCauseMessage).toContain("refresh_contention");
+    expect(surfacedCauseMessage).not.toContain(lockPath);
+    expect(surfacedCauseMessage).not.toContain("file lock timeout");
+  });
 });
 
 describe("createOAuthManager", () => {
