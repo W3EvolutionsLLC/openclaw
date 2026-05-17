@@ -73,9 +73,9 @@ function protectJsonStdout(opts: Pick<AgentCliOpts, "json">): void {
 function parseTimeoutSeconds(opts: { cfg: OpenClawConfig; timeout?: string }) {
   const raw =
     opts.timeout !== undefined
-      ? Number.parseInt(opts.timeout, 10)
+      ? Number(opts.timeout.trim())
       : (opts.cfg.agents?.defaults?.timeoutSeconds ?? 600);
-  if (Number.isNaN(raw) || raw < 0) {
+  if (!Number.isInteger(raw) || raw < 0) {
     throw new Error(
       `Invalid --timeout. Use seconds as a non-negative integer, for example --timeout 600. Use --timeout 0 to disable the timeout.`,
     );
