@@ -63,7 +63,6 @@ describe("resolvePluginRuntimeLoadContext", () => {
     getCurrentPluginMetadataSnapshotMock.mockReset();
     getCurrentPluginMetadataSnapshotMock.mockReturnValue(undefined);
     loadPluginMetadataSnapshotMock.mockClear();
-    getCurrentPluginMetadataSnapshotMock.mockClear();
     setCurrentPluginMetadataSnapshotMock.mockClear();
     resolveAgentWorkspaceDirMock.mockClear();
     resolveDefaultAgentIdMock.mockClear();
@@ -114,6 +113,11 @@ describe("resolvePluginRuntimeLoadContext", () => {
       manifestRegistry,
     });
     expect(loadPluginMetadataSnapshotMock).toHaveBeenCalledWith({
+      config: rawConfig,
+      env,
+      workspaceDir: "/resolved-workspace",
+    });
+    expect(getCurrentPluginMetadataSnapshotMock).toHaveBeenCalledWith({
       config: rawConfig,
       env,
       workspaceDir: "/resolved-workspace",
