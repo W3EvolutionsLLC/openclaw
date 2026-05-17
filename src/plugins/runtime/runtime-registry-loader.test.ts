@@ -79,6 +79,10 @@ vi.mock("../runtime.js", () => ({
   getActivePluginRegistryWorkspaceDir: () => undefined,
 }));
 
+vi.mock("../plugin-metadata-snapshot.js", () => ({
+  loadPluginMetadataSnapshot: () => undefined,
+}));
+
 vi.mock("../channel-plugin-ids.js", () => ({
   resolveConfiguredChannelPluginIds: (
     ...args: Parameters<typeof mocks.resolveConfiguredChannelPluginIds>

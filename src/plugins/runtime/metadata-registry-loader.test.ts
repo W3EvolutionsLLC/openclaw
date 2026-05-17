@@ -20,6 +20,10 @@ vi.mock("../loader.js", () => ({
   loadOpenClawPlugins: (...args: unknown[]) => loadOpenClawPluginsMock(...args),
 }));
 
+vi.mock("../plugin-metadata-snapshot.js", () => ({
+  loadPluginMetadataSnapshot: () => undefined,
+}));
+
 vi.mock("../../agents/agent-scope.js", () => ({
   resolveAgentWorkspaceDir: () => "/resolved-workspace",
   resolveDefaultAgentId: () => "default",

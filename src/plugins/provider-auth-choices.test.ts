@@ -10,6 +10,7 @@ const pluginRegistryMocks = vi.hoisted(() => ({
 vi.mock("./manifest-registry-installed.js", () => ({
   loadPluginManifestRegistryForInstalledIndex:
     pluginRegistryMocks.loadPluginManifestRegistryForInstalledIndex,
+  resolveInstalledManifestRegistryIndexFingerprint: () => "test-installed-index",
 }));
 
 vi.mock("./plugin-registry.js", () => ({

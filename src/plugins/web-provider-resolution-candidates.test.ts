@@ -18,6 +18,7 @@ vi.mock("./plugin-registry.js", () => ({
 vi.mock("./manifest-registry-installed.js", () => ({
   loadPluginManifestRegistryForInstalledIndex: (...args: unknown[]) =>
     mocks.loadPluginManifestRegistryForInstalledIndex(...args),
+  resolveInstalledManifestRegistryIndexFingerprint: () => "test-installed-index",
 }));
 
 vi.mock("./plugin-metadata-snapshot.js", () => ({

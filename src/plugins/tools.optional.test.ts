@@ -2,6 +2,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import { DEFAULT_PLUGIN_TOOLS_ALLOWLIST_ENTRY } from "../agents/tool-policy.js";
 import { resetLogger, setLoggerOverride } from "../logging/logger.js";
 import { loggingState } from "../logging/state.js";
+import { applyTestPluginDefaults } from "./config-state.js";
 import { resolveInstalledPluginIndexPolicyHash } from "./installed-plugin-index-policy.js";
 
 type MockRegistryToolEntry = {
@@ -16,6 +17,7 @@ type MockRegistryToolEntry = {
 const loadOpenClawPluginsMock = vi.fn();
 const resolveRuntimePluginRegistryMock = vi.fn();
 const applyPluginAutoEnableMock = vi.fn();
+const loadPluginMetadataSnapshotMock = vi.hoisted(() => vi.fn());
 
 vi.mock("./loader.js", () => ({
   loadOpenClawPlugins: (params: unknown) => loadOpenClawPluginsMock(params),
@@ -27,6 +29,10 @@ vi.mock("./loader.js", () => ({
 
 vi.mock("../config/plugin-auto-enable.js", () => ({
   applyPluginAutoEnable: (params: unknown) => applyPluginAutoEnableMock(params),
+}));
+
+vi.mock("./plugin-metadata-snapshot.js", () => ({
+  loadPluginMetadataSnapshot: (params: unknown) => loadPluginMetadataSnapshotMock(params),
 }));
 
 let resolvePluginTools: typeof import("./tools.js").resolvePluginTools;
@@ -289,60 +295,66 @@ function installToolManifestSnapshots(params: {
   plugins: Record<string, unknown>[];
 }) {
   const plugins = params.plugins;
-  setCurrentPluginMetadataSnapshot(
-    {
-      policyHash: resolveInstalledPluginIndexPolicyHash(params.config),
-      workspaceDir: "/tmp",
-      index: {
-        version: 1,
-        hostContractVersion: "test",
-        compatRegistryVersion: "test",
-        migrationVersion: 1,
-        policyHash: "test",
-        generatedAtMs: 0,
-        installRecords: {},
-        plugins: plugins.map((plugin) => ({
-          pluginId: String(plugin.id),
-          origin: plugin.origin,
-          enabled: true,
-          enabledByDefault: plugin.enabledByDefault,
-          startup: {
-            sidecar: false,
-            memory: false,
-            deferConfiguredChannelFullLoadUntilAfterListen: false,
-            agentHarnesses: [],
-          },
-          compat: [],
-        })),
-        diagnostics: [],
-      },
-      registryDiagnostics: [],
-      manifestRegistry: { plugins, diagnostics: [] },
-      plugins,
+  const env = params.env ?? process.env;
+  const runtimeConfig = applyTestPluginDefaults(params.config, env);
+  const snapshot = {
+    policyHash: resolveInstalledPluginIndexPolicyHash(params.config),
+    workspaceDir: "/tmp",
+    index: {
+      version: 1,
+      hostContractVersion: "test",
+      compatRegistryVersion: "test",
+      migrationVersion: 1,
+      policyHash: "test",
+      generatedAtMs: 0,
+      installRecords: {},
+      plugins: plugins.map((plugin) => ({
+        pluginId: String(plugin.id),
+        origin: plugin.origin,
+        enabled: true,
+        enabledByDefault: plugin.enabledByDefault,
+        startup: {
+          sidecar: false,
+          memory: false,
+          deferConfiguredChannelFullLoadUntilAfterListen: false,
+          agentHarnesses: [],
+        },
+        compat: [],
+      })),
       diagnostics: [],
-      byPluginId: new Map(plugins.map((plugin) => [String(plugin.id), plugin])),
-      normalizePluginId: (id: string) => id,
-      owners: {
-        channels: new Map(),
-        channelConfigs: new Map(),
-        providers: new Map(),
-        modelCatalogProviders: new Map(),
-        cliBackends: new Map(),
-        setupProviders: new Map(),
-        commandAliases: new Map(),
-        contracts: new Map(),
-      },
-      metrics: {
-        registrySnapshotMs: 0,
-        manifestRegistryMs: 0,
-        ownerMapsMs: 0,
-        totalMs: 0,
-        indexPluginCount: plugins.length,
-        manifestPluginCount: plugins.length,
-      },
-    } as never,
-    { config: params.config, env: params.env ?? process.env, workspaceDir: "/tmp" },
-  );
+    },
+    registryDiagnostics: [],
+    manifestRegistry: { plugins, diagnostics: [] },
+    plugins,
+    diagnostics: [],
+    byPluginId: new Map(plugins.map((plugin) => [String(plugin.id), plugin])),
+    normalizePluginId: (id: string) => id,
+    owners: {
+      channels: new Map(),
+      channelConfigs: new Map(),
+      providers: new Map(),
+      modelCatalogProviders: new Map(),
+      cliBackends: new Map(),
+      setupProviders: new Map(),
+      commandAliases: new Map(),
+      contracts: new Map(),
+    },
+    metrics: {
+      registrySnapshotMs: 0,
+      manifestRegistryMs: 0,
+      ownerMapsMs: 0,
+      totalMs: 0,
+      indexPluginCount: plugins.length,
+      manifestPluginCount: plugins.length,
+    },
+  };
+  loadPluginMetadataSnapshotMock.mockReturnValue(snapshot);
+  setCurrentPluginMetadataSnapshot(snapshot as never, {
+    config: params.config,
+    compatibleConfigs: [{}, params.config, runtimeConfig],
+    env,
+    workspaceDir: "/tmp",
+  });
 }
 
 function createXaiToolManifest() {
@@ -449,6 +461,7 @@ describe("resolvePluginTools optional tools", () => {
 
   beforeEach(() => {
     loadOpenClawPluginsMock.mockReset();
+    loadPluginMetadataSnapshotMock.mockReset();
     resolveRuntimePluginRegistryMock.mockReset();
     resolveRuntimePluginRegistryMock.mockImplementation((params) =>
       loadOpenClawPluginsMock(params),
