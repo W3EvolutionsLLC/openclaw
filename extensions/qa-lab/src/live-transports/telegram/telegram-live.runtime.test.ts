@@ -483,8 +483,6 @@ describe("telegram live qa runtime", () => {
         "telegram-other-bot-command-gating",
         "telegram-context-command",
         "telegram-mentioned-message-reply",
-        "telegram-reply-chain-exact-marker",
-        "telegram-stream-final-single-message",
         "telegram-long-final-reuses-preview",
         "telegram-mention-gating",
       ],
@@ -500,8 +498,14 @@ describe("telegram live qa runtime", () => {
       false,
     );
     const streamSingle = requireScenario(catalog, "telegram-stream-final-single-message");
-    expect(streamSingle.defaultEnabled).toBe(true);
+    expect(streamSingle.defaultEnabled).toBe(false);
     expect(streamSingle.regressionRefs).toEqual(["openclaw/openclaw#39905"]);
+    expect(requireScenario(catalog, "telegram-reply-chain-exact-marker").defaultEnabled).toBe(
+      false,
+    );
+    expect(requireScenario(catalog, "telegram-long-final-reuses-preview").defaultEnabled).toBe(
+      true,
+    );
   });
 
   it("tracks Telegram live coverage against the shared transport contract", () => {
