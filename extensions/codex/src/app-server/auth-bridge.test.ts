@@ -720,12 +720,9 @@ describe("bridgeCodexAppServerStartOptions", () => {
         >;
       };
       const persistedCredential = persisted.profiles?.["openai-codex:default"];
-      expect(persistedCredential?.access).toBeUndefined();
-      expect(persistedCredential?.refresh).toBeUndefined();
-      expect(persistedCredential?.oauthRef).toMatchObject({
-        source: "openclaw-credentials",
-        provider: "openai-codex",
-      });
+      expect(persistedCredential?.access).toBe("ref-backed-access-token");
+      expect(persistedCredential?.refresh).toBe("ref-backed-refresh-token");
+      expect(persistedCredential?.oauthRef).toBeUndefined();
       clearRuntimeAuthProfileStoreSnapshots();
 
       await expect(refreshCodexAppServerAuthTokens({ agentDir })).resolves.toEqual({
