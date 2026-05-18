@@ -30,6 +30,9 @@ import { isRemoteEnvironment, openUrl } from "./setup-browser.js";
 import type { ProviderAuthMethod, ProviderAuthOptionBag, ProviderPlugin } from "./types.js";
 
 type UpsertAuthProfileParams = Parameters<typeof upsertAuthProfileWithLock>[0];
+type ProviderAuthMethodResult = Awaited<ReturnType<ProviderAuthMethod["run"]>>;
+type ProviderAuthConfigUpdate = (cfg: OpenClawConfig) => OpenClawConfig;
+type ProviderAuthProfileConfig = Parameters<typeof applyAuthProfileConfig>[1];
 
 export type ApplyProviderAuthChoiceParams = {
   authChoice: string;
@@ -256,7 +259,12 @@ export async function runProviderPluginAuthMethod(params: {
   secretInputMode?: ProviderAuthOptionBag["secretInputMode"];
   allowSecretRefPrompt?: boolean;
   opts?: Partial<ProviderAuthOptionBag>;
-}): Promise<{ config: OpenClawConfig; defaultModel?: string }> {
+  openUrl?: (url: string) => Promise<void>;
+}): Promise<{
+  config: OpenClawConfig;
+  defaultModel?: string;
+  applyToConfig: ProviderAuthConfigUpdate;
+}> {
   const agentId = params.agentId ?? resolveDefaultAgentId(params.config);
   const agentDir = params.agentDir ?? resolveAgentDir(params.config, agentId);
   const workspaceDir =
@@ -275,20 +283,15 @@ export async function runProviderPluginAuthMethod(params: {
     secretInputMode: params.secretInputMode,
     allowSecretRefPrompt: params.allowSecretRefPrompt,
     isRemote: isRemoteEnvironment(),
-    openUrl: async (url) => {
-      await openUrl(url);
-    },
+    openUrl:
+      params.openUrl ??
+      (async (url) => {
+        await openUrl(url);
+      }),
     oauth: {
       createVpsAwareHandlers: (opts) => createVpsAwareOAuthHandlers(opts),
     },
   });
-
-  let nextConfig = params.config;
-  if (result.configPatch) {
-    nextConfig = applyProviderAuthConfigPatch(nextConfig, result.configPatch, {
-      replaceDefaultModels: result.replaceDefaultModels,
-    });
-  }
 
   for (const profile of result.profiles) {
     await upsertAuthProfileWithLockOrThrow({
@@ -296,19 +299,9 @@ export async function runProviderPluginAuthMethod(params: {
       credential: profile.credential,
       agentDir,
     });
-
-    nextConfig = applyAuthProfileConfig(nextConfig, {
-      profileId: profile.profileId,
-      provider: profile.credential.provider,
-      mode: profile.credential.type === "token" ? "token" : profile.credential.type,
-      ...("email" in profile.credential && profile.credential.email
-        ? { email: profile.credential.email }
-        : {}),
-      ...("displayName" in profile.credential && profile.credential.displayName
-        ? { displayName: profile.credential.displayName }
-        : {}),
-    });
   }
+  const applyToConfig = buildProviderAuthConfigUpdate(result);
+  const nextConfig = applyToConfig(params.config);
 
   if (params.emitNotes !== false && result.notes && result.notes.length > 0) {
     await params.prompter.note(result.notes.join("\n"), "Provider notes");
@@ -321,6 +314,33 @@ export async function runProviderPluginAuthMethod(params: {
   return {
     config: nextConfig,
     ...(defaultModel ? { defaultModel } : {}),
+    applyToConfig,
+  };
+}
+
+function buildProviderAuthConfigUpdate(result: ProviderAuthMethodResult): ProviderAuthConfigUpdate {
+  const profileConfigs: ProviderAuthProfileConfig[] = result.profiles.map((profile) => ({
+    profileId: profile.profileId,
+    provider: profile.credential.provider,
+    mode: profile.credential.type,
+    ...("email" in profile.credential && profile.credential.email
+      ? { email: profile.credential.email }
+      : {}),
+    ...("displayName" in profile.credential && profile.credential.displayName
+      ? { displayName: profile.credential.displayName }
+      : {}),
+  }));
+  return (cfg) => {
+    let nextConfig = cfg;
+    if (result.configPatch) {
+      nextConfig = applyProviderAuthConfigPatch(nextConfig, result.configPatch, {
+        replaceDefaultModels: result.replaceDefaultModels,
+      });
+    }
+    for (const profileConfig of profileConfigs) {
+      nextConfig = applyAuthProfileConfig(nextConfig, profileConfig);
+    }
+    return nextConfig;
   };
 }
 
