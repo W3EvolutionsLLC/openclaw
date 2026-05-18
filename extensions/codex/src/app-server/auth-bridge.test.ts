@@ -75,9 +75,12 @@ vi.mock("openclaw/plugin-sdk/agent-runtime", async (importOriginal) => {
         return null;
       }
       let oauthCredential = credential;
+      const legacyOAuthCredential = oauthCredential as typeof oauthCredential & {
+        oauthRef?: { source?: string };
+      };
       if (
-        !oauthCredential.access?.trim() &&
-        oauthCredential.oauthRef?.source === "openclaw-credentials" &&
+        !legacyOAuthCredential.access?.trim() &&
+        legacyOAuthCredential.oauthRef?.source === "openclaw-credentials" &&
         (params.agentDir || process.env.OPENCLAW_STATE_DIR)
       ) {
         const runtimeCredential = actual.loadAuthProfileStoreForSecretsRuntime(params.agentDir)
