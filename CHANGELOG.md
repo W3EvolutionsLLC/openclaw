@@ -67,6 +67,7 @@ Docs: https://docs.openclaw.ai
 - Agents/OpenAI streams: yield via `setTimeout(0)` instead of `setImmediate` between bursty Responses chunks so abort timers can fire during the yield, keeping cancel-on-timeout responsive on hot streams. Refs #82462.
 - Agents/Codex: keep legacy `oauthRef`-backed OAuth profiles usable while `openclaw doctor --fix` migrates them back to inline credentials, without creating new sidecar credentials. (#83312) Thanks @joshavant.
 - Agents/Codex: ignore stale auto-selected session auth profiles that are no longer eligible for the current OpenAI/Codex route.
+- Agents/Codex: keep OpenAI PI runtime selection from switching to `openai-codex` based only on stale `auth.order.openai` entries, and skip Codex harness auth bootstrap when no eligible forwarded profile exists. Fixes #83223. (#83345) Thanks @fuller-stack-dev and @BKF-Gitty.
 - CLI/config: send SecretRef diagnostics to stderr so JSON command stdout remains parseable.
 - CLI/doctor: seed Control UI allowed origins when migrating legacy non-loopback gateway bind host aliases like `0.0.0.0`. Fixes #83286. Thanks @giodl73-repo.
 - CLI/plugins: ship the bundled memory CLI as a package entry so package-installed `openclaw memory` commands register correctly.

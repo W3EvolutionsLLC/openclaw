@@ -227,6 +227,9 @@ export const mockedEnsureAuthProfileStoreWithoutExternalProfiles = vi.fn(
 export const mockedResolveAuthProfileOrder = vi.fn<(_params?: unknown) => string[]>(
   (_params?: unknown) => [],
 );
+export const mockedResolveAuthProfileEligibility = vi.fn<
+  (_params?: unknown) => { eligible: boolean }
+>((_params?: unknown) => ({ eligible: true }));
 export const mockedMarkAuthProfileSuccess = vi.fn(async () => {});
 export const mockedShouldPreferExplicitConfigApiKeyAuth = vi.fn(() => false);
 
@@ -412,6 +415,8 @@ export function resetRunOverflowCompactionHarnessMocks(): void {
   mockedEnsureAuthProfileStoreWithoutExternalProfiles.mockReturnValue({});
   mockedResolveAuthProfileOrder.mockReset();
   mockedResolveAuthProfileOrder.mockReturnValue([]);
+  mockedResolveAuthProfileEligibility.mockReset();
+  mockedResolveAuthProfileEligibility.mockReturnValue({ eligible: true });
   mockedMarkAuthProfileSuccess.mockReset();
   mockedMarkAuthProfileSuccess.mockResolvedValue(undefined);
   mockedShouldPreferExplicitConfigApiKeyAuth.mockReset();
@@ -463,6 +468,7 @@ export async function loadRunOverflowCompactionHarness(): Promise<{
     isProfileInCooldown: vi.fn(() => false),
     markAuthProfileFailure: vi.fn(async () => {}),
     markAuthProfileSuccess: mockedMarkAuthProfileSuccess,
+    resolveAuthProfileEligibility: mockedResolveAuthProfileEligibility,
     resolveProfilesUnavailableReason: vi.fn(() => undefined),
   }));
 
