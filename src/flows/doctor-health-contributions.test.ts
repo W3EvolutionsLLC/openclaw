@@ -170,7 +170,10 @@ describe("doctor health contributions", () => {
       configResult: { cfg: {} },
       sourceConfigValid: true,
       prompter: buildDoctorPrompter(true),
+      runtime: { log: vi.fn(), error: vi.fn(), exit: vi.fn() },
       options: { nonInteractive: true },
+      cfgForPersistence: {},
+      configPath: "/tmp/fake-openclaw.json",
       env: {
         OPENCLAW_UPDATE_IN_PROGRESS: "1",
         OPENCLAW_UPDATE_DEFER_CONFIGURED_PLUGIN_INSTALL_REPAIR: "1",
