@@ -12,6 +12,7 @@ import type {
 } from "../../../channels/plugins/types.adapters.js";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
 import { normalizeOptionalLowercaseString } from "../../../shared/string-coerce.js";
+import { shouldDeferConfiguredPluginInstallRepair } from "./update-phase.js";
 
 type ChannelDoctorEntry = {
   doctor: ChannelDoctorAdapter;
@@ -113,9 +114,9 @@ function safeGetLoadedChannelPlugin(id: string) {
   }
 }
 
-function safeGetBundledChannelSetupPlugin(id: string) {
+function safeGetBundledChannelSetupPlugin(id: string, env?: NodeJS.ProcessEnv) {
   try {
-    return getBundledChannelSetupPlugin(id);
+    return env ? getBundledChannelSetupPlugin(id, env) : getBundledChannelSetupPlugin(id);
   } catch {
     return undefined;
   }
@@ -131,14 +132,19 @@ function safeGetBundledChannelPlugin(id: string) {
 
 function safeListReadOnlyChannelPlugins(context: ChannelDoctorLookupContext) {
   try {
+    const skipGeneratedFallbacks = shouldSkipGeneratedBundledDoctorFallbacks(context);
     return resolveReadOnlyChannelPluginsForConfig(context.cfg, {
       ...(context.env ? { env: context.env } : {}),
       includePersistedAuthState: false,
-      includeSetupFallbackPlugins: true,
+      includeSetupFallbackPlugins: !skipGeneratedFallbacks,
     }).plugins;
   } catch {
     return [];
   }
+}
+
+function shouldSkipGeneratedBundledDoctorFallbacks(context: ChannelDoctorLookupContext): boolean {
+  return shouldDeferConfiguredPluginInstallRepair(context.env ?? process.env);
 }
 
 function listReadOnlyChannelPluginsById(
@@ -211,14 +217,19 @@ function listChannelDoctorEntries(
   }
   const readOnlyPluginsById =
     options.readOnlyPluginsById ?? listReadOnlyChannelPluginsById(context);
+  const skipGeneratedFallbacks = shouldSkipGeneratedBundledDoctorFallbacks(context);
 
   const entries: ChannelDoctorEntry[] = [];
   for (const id of selectedIds) {
     const doctor = mergeDoctorAdapters([
       readOnlyPluginsById.get(id)?.doctor,
       safeGetLoadedChannelPlugin(id)?.doctor,
-      safeGetBundledChannelSetupPlugin(id)?.doctor,
-      safeGetBundledChannelPlugin(id)?.doctor,
+      ...(skipGeneratedFallbacks
+        ? []
+        : [
+            safeGetBundledChannelSetupPlugin(id, context.env)?.doctor,
+            safeGetBundledChannelPlugin(id)?.doctor,
+          ]),
     ]);
     if (!doctor) {
       continue;

@@ -19,6 +19,11 @@ const READ_ONLY_CHANNEL_DOCTOR_OPTIONS = {
   includeSetupFallbackPlugins: true,
 } as const;
 
+const READ_ONLY_CHANNEL_DOCTOR_UPDATE_OPTIONS = {
+  includePersistedAuthState: false,
+  includeSetupFallbackPlugins: false,
+} as const;
+
 vi.mock("../../../channels/plugins/registry.js", () => ({
   getLoadedChannelPlugin: (...args: Parameters<typeof mocks.getLoadedChannelPlugin>) =>
     mocks.getLoadedChannelPlugin(...args),
@@ -246,6 +251,70 @@ describe("channel doctor compatibility mutations", () => {
       env,
       ...READ_ONLY_CHANNEL_DOCTOR_OPTIONS,
     });
+  });
+
+  it("skips generated bundled doctor fallbacks during package update swaps", () => {
+    const cfg = createMatrixEnabledConfig();
+    const env = {
+      OPENCLAW_UPDATE_IN_PROGRESS: "1",
+      OPENCLAW_UPDATE_DEFER_CONFIGURED_PLUGIN_INSTALL_REPAIR: "1",
+    };
+    mocks.getBundledChannelSetupPlugin.mockImplementation(() => {
+      throw new Error("setup entry should not load during update swap");
+    });
+    mocks.getBundledChannelPlugin.mockImplementation(() => {
+      throw new Error("runtime entry should not load during update swap");
+    });
+
+    const result = collectChannelDoctorCompatibilityMutations(cfg as never, { env });
+
+    expect(result).toStrictEqual([]);
+    expect(mocks.resolveReadOnlyChannelPluginsForConfig).toHaveBeenCalledWith(cfg, {
+      env,
+      ...READ_ONLY_CHANNEL_DOCTOR_UPDATE_OPTIONS,
+    });
+    expect(mocks.getLoadedChannelPlugin).toHaveBeenCalledWith("matrix");
+    expect(mocks.getBundledChannelSetupPlugin).not.toHaveBeenCalled();
+    expect(mocks.getBundledChannelPlugin).not.toHaveBeenCalled();
+  });
+
+  it("keeps generated bundled doctor fallbacks for legacy update doctors", () => {
+    const normalizeCompatibilityConfig = createNormalizeCompatibilityConfig();
+    mockBundledMatrixSetupPlugin({ normalizeCompatibilityConfig });
+    const cfg = createMatrixEnabledConfig();
+    const env = {
+      OPENCLAW_UPDATE_IN_PROGRESS: "1",
+    };
+
+    const result = collectChannelDoctorCompatibilityMutations(cfg as never, { env });
+
+    expect(result).toHaveLength(1);
+    expect(normalizeCompatibilityConfig).toHaveBeenCalledTimes(1);
+    expect(mocks.resolveReadOnlyChannelPluginsForConfig).toHaveBeenCalledWith(cfg, {
+      env,
+      ...READ_ONLY_CHANNEL_DOCTOR_OPTIONS,
+    });
+    expect(mocks.getBundledChannelSetupPlugin).toHaveBeenCalledWith("matrix", env);
+  });
+
+  it("keeps generated bundled doctor fallbacks enabled during post-core convergence", () => {
+    const normalizeCompatibilityConfig = createNormalizeCompatibilityConfig();
+    mockBundledMatrixSetupPlugin({ normalizeCompatibilityConfig });
+    const cfg = createMatrixEnabledConfig();
+    const env = {
+      OPENCLAW_UPDATE_IN_PROGRESS: "1",
+      OPENCLAW_UPDATE_POST_CORE_CONVERGENCE: "1",
+    };
+
+    const result = collectChannelDoctorCompatibilityMutations(cfg as never, { env });
+
+    expect(result).toHaveLength(1);
+    expect(normalizeCompatibilityConfig).toHaveBeenCalledTimes(1);
+    expect(mocks.resolveReadOnlyChannelPluginsForConfig).toHaveBeenCalledWith(cfg, {
+      env,
+      ...READ_ONLY_CHANNEL_DOCTOR_OPTIONS,
+    });
+    expect(mocks.getBundledChannelSetupPlugin).toHaveBeenCalledWith("matrix", env);
   });
 
   it("keeps configured channel doctor lookup non-fatal when setup loading fails", () => {

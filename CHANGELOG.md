@@ -24,7 +24,7 @@ Docs: https://docs.openclaw.ai
 
 ### Fixes
 
-- Plugins: refresh stale disabled bundled setup metadata after upgrades so channel setup no longer warns about missing generated bundled modules.
+- Plugins: keep in-progress package-update doctor runs off generated bundled channel setup fallbacks until postinstall has produced them.
 - Gateway CLI: surface local post-challenge connect assembly failures immediately instead of waiting for the wrapper timeout. Fixes #68944. (#85253) Thanks @samzong.
 - Codex app-server: reject command overrides that embed Node or package-manager arguments and point users to `appServer.args`, so Windows startup avoids shell parsing failures. (#84417) Thanks @TurboTheTurtle.
 - Agents/Copilot: drop unsafe GitHub Copilot Responses reasoning replay items before send so Telegram direct sessions no longer fail on overlong replay IDs. Fixes #85197. (#85198) Thanks @galiniliev.
