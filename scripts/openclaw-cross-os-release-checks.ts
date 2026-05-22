@@ -786,78 +786,90 @@ async function runFreshLane(params) {
   const cleanup = [];
   try {
     const env = buildLaneEnv(lane, params.providerConfig, params.providerSecretValue);
-    logLanePhase(lane, "install-candidate");
-    await installTarballPackage({
-      lane,
-      env,
-      tgzPath: params.build.candidateTgz,
-      logPath: join(params.logsDir, "fresh-install.log"),
-      restoreBundledPluginPostinstall: false,
+    await runTimedLanePhase(lane, "install-candidate", async () => {
+      await installTarballPackage({
+        lane,
+        env,
+        tgzPath: params.build.candidateTgz,
+        logPath: join(params.logsDir, "fresh-install.log"),
+        restoreBundledPluginPostinstall: false,
+      });
     });
     const installed = readInstalledMetadata(lane.prefixDir);
     verifyInstalledCandidate(installed, params.build);
-    logLanePhase(lane, "run-bundled-plugin-postinstall");
-    await runBundledPluginPostinstall({
-      lane,
-      env,
-      logPath: join(params.logsDir, "fresh-install.log"),
+    await runTimedLanePhase(lane, "run-bundled-plugin-postinstall", async () => {
+      await runBundledPluginPostinstall({
+        lane,
+        env,
+        logPath: join(params.logsDir, "fresh-install.log"),
+      });
     });
 
     let browserOverrideImportStatus = "skipped";
     if (shouldRunWindowsInstalledBrowserOverrideImportSmoke()) {
-      logLanePhase(lane, "windows-browser-override-import");
-      browserOverrideImportStatus = await runInstalledBrowserOverrideImportSmoke({
+      browserOverrideImportStatus = await runTimedLanePhase(
         lane,
-        env,
-        prefixDir: lane.prefixDir,
-        logPath: join(params.logsDir, "fresh-windows-browser-override-import.log"),
-      });
+        "windows-browser-override-import",
+        () =>
+          runInstalledBrowserOverrideImportSmoke({
+            lane,
+            env,
+            prefixDir: lane.prefixDir,
+            logPath: join(params.logsDir, "fresh-windows-browser-override-import.log"),
+          }),
+      );
     }
 
-    logLanePhase(lane, "onboard");
-    await runOnboard({
-      lane,
-      env,
-      providerConfig: params.providerConfig,
-      logPath: join(params.logsDir, "fresh-onboard.log"),
+    await runTimedLanePhase(lane, "onboard", async () => {
+      await runOnboard({
+        lane,
+        env,
+        providerConfig: params.providerConfig,
+        logPath: join(params.logsDir, "fresh-onboard.log"),
+      });
     });
 
-    logLanePhase(lane, "models-set");
-    await runModelsSet({
-      lane,
-      env,
-      providerConfig: params.providerConfig,
-      logPath: join(params.logsDir, "fresh-models-set.log"),
+    await runTimedLanePhase(lane, "models-set", async () => {
+      await runModelsSet({
+        lane,
+        env,
+        providerConfig: params.providerConfig,
+        logPath: join(params.logsDir, "fresh-models-set.log"),
+      });
     });
 
-    logLanePhase(lane, "start-gateway");
-    const gateway = await startGateway({
-      lane,
-      env,
-      logPath: join(params.logsDir, "fresh-gateway.log"),
-    });
+    const gateway = await runTimedLanePhase(lane, "start-gateway", () =>
+      startGateway({
+        lane,
+        env,
+        logPath: join(params.logsDir, "fresh-gateway.log"),
+      }),
+    );
     cleanup.push(() => stopGateway(gateway));
 
-    logLanePhase(lane, "wait-gateway");
-    await waitForGateway({
-      lane,
-      env,
-      logPath: join(params.logsDir, "fresh-gateway-status.log"),
+    await runTimedLanePhase(lane, "wait-gateway", async () => {
+      await waitForGateway({
+        lane,
+        env,
+        logPath: join(params.logsDir, "fresh-gateway-status.log"),
+      });
     });
 
-    logLanePhase(lane, "dashboard");
-    await runDashboardSmoke({
-      lane,
-      logPath: join(params.logsDir, "fresh-dashboard.log"),
+    await runTimedLanePhase(lane, "dashboard", async () => {
+      await runDashboardSmoke({
+        lane,
+        logPath: join(params.logsDir, "fresh-dashboard.log"),
+      });
     });
 
-    logLanePhase(lane, "agent-turn");
-    const agent = await runAgentTurn({
-      lane,
-      env,
-      label: "fresh",
-      logPath: join(params.logsDir, "fresh-agent.log"),
-    });
+    const agent = await runTimedLanePhase(lane, "agent-turn", () =>
+      runAgentTurn({
+        lane,
+        env,
+        label: "fresh",
+        logPath: join(params.logsDir, "fresh-agent.log"),
+      }),
+    );
 
     return {
       status: "pass",
@@ -867,6 +879,7 @@ async function runFreshLane(params) {
       gatewayPort: lane.gatewayPort,
       browserOverrideImportStatus,
       agentOutput: trimForSummary(agent.stdout),
+      phaseTimings: lane.phaseTimings,
     };
   } finally {
     await runCleanup(cleanup);
@@ -1075,62 +1088,72 @@ async function runInstallerFreshSuite(params) {
     const installTarget = candidateServer.url;
     const installerUrl = resolvePublishedInstallerUrl();
 
-    logLanePhase(lane, "installer-run");
-    await runInstallerSmoke({
-      lane,
-      env,
-      installerUrl,
-      installTarget,
-      logPath: join(params.logsDir, "installer-fresh-install.log"),
+    await runTimedLanePhase(lane, "installer-run", async () => {
+      await runInstallerSmoke({
+        lane,
+        env,
+        installerUrl,
+        installTarget,
+        logPath: join(params.logsDir, "installer-fresh-install.log"),
+      });
     });
 
-    logLanePhase(lane, "fresh-shell");
-    const freshShell = await verifyFreshShellCommand({
-      lane,
-      env,
-      expectedNeedle: params.build.candidateVersion,
-      logPath: join(params.logsDir, "installer-fresh-shell.log"),
-    });
+    const freshShell = await runTimedLanePhase(lane, "fresh-shell", () =>
+      verifyFreshShellCommand({
+        lane,
+        env,
+        expectedNeedle: params.build.candidateVersion,
+        logPath: join(params.logsDir, "installer-fresh-shell.log"),
+      }),
+    );
     const installed = readInstalledMetadataFromCliPath(freshShell.cliPath);
     verifyInstalledCandidate(installed, params.build);
 
     let browserOverrideImportStatus = "skipped";
     if (shouldRunWindowsInstalledBrowserOverrideImportSmoke()) {
-      logLanePhase(lane, "windows-browser-override-import");
-      browserOverrideImportStatus = await runInstalledBrowserOverrideImportSmoke({
+      browserOverrideImportStatus = await runTimedLanePhase(
         lane,
-        env,
-        prefixDir: resolveInstalledPrefixDirFromCliPath(freshShell.cliPath),
-        logPath: join(params.logsDir, "installer-fresh-windows-browser-override-import.log"),
-      });
+        "windows-browser-override-import",
+        () =>
+          runInstalledBrowserOverrideImportSmoke({
+            lane,
+            env,
+            prefixDir: resolveInstalledPrefixDirFromCliPath(freshShell.cliPath),
+            logPath: join(params.logsDir, "installer-fresh-windows-browser-override-import.log"),
+          }),
+      );
     }
 
-    logLanePhase(lane, "onboard");
-    await runOnboardWithInstalledCli({
-      lane,
-      cliPath: freshShell.cliPath,
-      env,
-      providerConfig: params.providerConfig,
-      installDaemon: usesManagedGateway,
-      logPath: join(params.logsDir, "installer-fresh-onboard.log"),
-    });
-
-    if (shouldExerciseManagedGatewayLifecycleAfterInstall()) {
-      await exerciseManagedGatewayLifecycle({
+    await runTimedLanePhase(lane, "onboard", async () => {
+      await runOnboardWithInstalledCli({
         lane,
         cliPath: freshShell.cliPath,
         env,
-        logPrefix: join(params.logsDir, "installer-fresh-gateway"),
+        providerConfig: params.providerConfig,
+        installDaemon: usesManagedGateway,
+        logPath: join(params.logsDir, "installer-fresh-onboard.log"),
+      });
+    });
+
+    if (shouldExerciseManagedGatewayLifecycleAfterInstall()) {
+      await runTimedLanePhase(lane, "managed-gateway-lifecycle", async () => {
+        await exerciseManagedGatewayLifecycle({
+          lane,
+          cliPath: freshShell.cliPath,
+          env,
+          logPrefix: join(params.logsDir, "installer-fresh-gateway"),
+        });
       });
     }
 
-    logLanePhase(lane, "models-set");
-    await runInstalledModelsSet({
-      cliPath: freshShell.cliPath,
-      env,
-      providerConfig: params.providerConfig,
-      cwd: lane.homeDir,
-      logPath: join(params.logsDir, "installer-fresh-models-set.log"),
+    await runTimedLanePhase(lane, "models-set", async () => {
+      await runInstalledModelsSet({
+        cliPath: freshShell.cliPath,
+        env,
+        providerConfig: params.providerConfig,
+        cwd: lane.homeDir,
+        logPath: join(params.logsDir, "installer-fresh-models-set.log"),
+      });
     });
 
     if (!useManagedGatewayAfterInstall) {
@@ -1139,66 +1162,74 @@ async function runInstallerFreshSuite(params) {
       // checks after that so the installer validation does not depend on the more
       // failure-prone managed Windows session state for the remainder of the lane.
       if (shouldStopManagedGatewayBeforeManualFallback()) {
-        logLanePhase(lane, "gateway-stop-managed");
-        await runInstalledCli({
-          cliPath: freshShell.cliPath,
-          args: ["gateway", "stop"],
-          env,
-          cwd: lane.homeDir,
-          logPath: join(params.logsDir, "installer-fresh-gateway-stop-managed.log"),
-          timeoutMs: 2 * 60 * 1000,
-          check: false,
+        await runTimedLanePhase(lane, "gateway-stop-managed", async () => {
+          await runInstalledCli({
+            cliPath: freshShell.cliPath,
+            args: ["gateway", "stop"],
+            env,
+            cwd: lane.homeDir,
+            logPath: join(params.logsDir, "installer-fresh-gateway-stop-managed.log"),
+            timeoutMs: 2 * 60 * 1000,
+            check: false,
+          });
         });
-        await waitForInstalledGatewayToStop({
+        await runTimedLanePhase(lane, "wait-gateway-stop-managed", async () => {
+          await waitForInstalledGatewayToStop({
+            lane,
+            cliPath: freshShell.cliPath,
+            env,
+            logPath: join(params.logsDir, "installer-fresh-gateway-stop-managed-status.log"),
+          });
+        });
+      }
+      const gateway = await runTimedLanePhase(lane, "gateway-start", () =>
+        startManualGatewayFromInstalledCli({
           lane,
           cliPath: freshShell.cliPath,
           env,
-          logPath: join(params.logsDir, "installer-fresh-gateway-stop-managed-status.log"),
-        });
-      }
-      logLanePhase(lane, "gateway-start");
-      const gateway = await startManualGatewayFromInstalledCli({
-        lane,
-        cliPath: freshShell.cliPath,
-        env,
-        logPath: join(params.logsDir, "installer-fresh-gateway.log"),
-      });
+          logPath: join(params.logsDir, "installer-fresh-gateway.log"),
+        }),
+      );
       manualGateway.current = gateway;
       cleanup.push(() => stopGateway(manualGateway.current));
-      logLanePhase(lane, "gateway-status");
-      await waitForInstalledGateway({
-        lane,
-        cliPath: freshShell.cliPath,
-        env,
-        logPath: join(params.logsDir, "installer-fresh-gateway-status.log"),
+      await runTimedLanePhase(lane, "gateway-status", async () => {
+        await waitForInstalledGateway({
+          lane,
+          cliPath: freshShell.cliPath,
+          env,
+          logPath: join(params.logsDir, "installer-fresh-gateway-status.log"),
+        });
       });
     }
 
-    logLanePhase(lane, "dashboard");
-    await runDashboardSmoke({
-      lane,
-      logPath: join(params.logsDir, "installer-fresh-dashboard.log"),
+    await runTimedLanePhase(lane, "dashboard", async () => {
+      await runDashboardSmoke({
+        lane,
+        logPath: join(params.logsDir, "installer-fresh-dashboard.log"),
+      });
     });
 
-    logLanePhase(lane, "agent-turn");
-    const agent = await runInstalledAgentTurn({
-      cliPath: freshShell.cliPath,
-      env,
-      cwd: lane.homeDir,
-      label: "installer-fresh",
-      logPath: join(params.logsDir, "installer-fresh-agent.log"),
-    });
+    const agent = await runTimedLanePhase(lane, "agent-turn", () =>
+      runInstalledAgentTurn({
+        cliPath: freshShell.cliPath,
+        env,
+        cwd: lane.homeDir,
+        label: "installer-fresh",
+        logPath: join(params.logsDir, "installer-fresh-agent.log"),
+      }),
+    );
 
     let discordStatus = "skipped";
     if (params.runDiscordRoundtrip && process.platform === "darwin") {
-      logLanePhase(lane, "discord-roundtrip");
-      discordStatus = await maybeRunDiscordRoundtrip({
-        lane,
-        cliPath: freshShell.cliPath,
-        env,
-        gatewayHolder: manualGateway,
-        logPath: join(params.logsDir, "installer-fresh-discord.log"),
-      });
+      discordStatus = await runTimedLanePhase(lane, "discord-roundtrip", () =>
+        maybeRunDiscordRoundtrip({
+          lane,
+          cliPath: freshShell.cliPath,
+          env,
+          gatewayHolder: manualGateway,
+          logPath: join(params.logsDir, "installer-fresh-discord.log"),
+        }),
+      );
     }
 
     return {
@@ -1213,6 +1244,7 @@ async function runInstallerFreshSuite(params) {
       browserOverrideImportStatus,
       discordStatus,
       agentOutput: trimForSummary(agent.stdout),
+      phaseTimings: lane.phaseTimings,
     };
   } finally {
     await runCleanup(cleanup);
