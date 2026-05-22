@@ -676,6 +676,24 @@ describe("noteSecurityWarnings gateway exposure", () => {
     expect(message).toContain("Run: openclaw security audit --deep");
   });
 
+  it("skips setup fallback plugins during deferred package update doctors", async () => {
+    const env = {
+      ...process.env,
+      OPENCLAW_UPDATE_IN_PROGRESS: "1",
+      OPENCLAW_UPDATE_DEFER_CONFIGURED_PLUGIN_INSTALL_REPAIR: "1",
+    };
+
+    await noteSecurityWarnings({} as OpenClawConfig, env);
+
+    expect(listReadOnlyChannelPluginsForConfigMock).toHaveBeenCalledWith(
+      {},
+      {
+        includePersistedAuthState: true,
+        includeSetupFallbackPlugins: false,
+      },
+    );
+  });
+
   it("skips heartbeat directPolicy warning when delivery is internal-only or explicit", async () => {
     const cfg = {
       agents: {

@@ -17,6 +17,7 @@ import { collectExecFilesystemPolicyDriftHits } from "../security/exec-filesyste
 import { normalizeOptionalString } from "../shared/string-coerce.js";
 import { note } from "../terminal/note.js";
 import { resolveDefaultChannelAccountContext } from "./channel-account-context.js";
+import { shouldDeferConfiguredPluginInstallRepair } from "./doctor/shared/update-phase.js";
 
 function collectImplicitHeartbeatDirectPolicyWarnings(cfg: OpenClawConfig): string[] {
   const warnings: string[] = [];
@@ -380,7 +381,7 @@ export async function collectSecurityWarnings(
 
   for (const plugin of listReadOnlyChannelPluginsForConfig(cfg, {
     includePersistedAuthState: true,
-    includeSetupFallbackPlugins: true,
+    includeSetupFallbackPlugins: !shouldDeferConfiguredPluginInstallRepair(env),
   })) {
     if (!plugin.security) {
       continue;
@@ -431,8 +432,11 @@ export async function collectSecurityWarnings(
   return warnings;
 }
 
-export async function noteSecurityWarnings(cfg: OpenClawConfig) {
-  const warnings = await collectSecurityWarnings(cfg);
+export async function noteSecurityWarnings(
+  cfg: OpenClawConfig,
+  env: NodeJS.ProcessEnv = process.env,
+) {
+  const warnings = await collectSecurityWarnings(cfg, env);
   const auditHint = `- Run: ${formatCliCommand("openclaw security audit --deep")}`;
 
   const lines = warnings.length > 0 ? warnings : ["- No channel security warnings detected."];

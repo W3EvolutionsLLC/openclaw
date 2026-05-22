@@ -462,7 +462,7 @@ async function runStartupChannelMaintenanceHealth(ctx: DoctorHealthFlowContext):
 
 async function runSecurityHealth(ctx: DoctorHealthFlowContext): Promise<void> {
   const { noteSecurityWarnings } = await import("../commands/doctor-security.js");
-  await noteSecurityWarnings(ctx.cfg);
+  await noteSecurityWarnings(ctx.cfg, ctx.env ?? process.env);
 }
 
 async function runBrowserHealth(ctx: DoctorHealthFlowContext): Promise<void> {
