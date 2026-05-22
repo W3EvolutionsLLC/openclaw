@@ -404,6 +404,53 @@ describe("loadPluginRegistrySnapshotWithMetadata", () => {
     expect(result.diagnostics).toStrictEqual([]);
   });
 
+  it("treats stale disabled bundled setup entries as stale", () => {
+    const tempRoot = makeTempDir();
+    const stateDir = path.join(tempRoot, "state");
+    const env = createHermeticEnv(tempRoot);
+    const config = {
+      plugins: {
+        entries: {
+          telegram: { enabled: false },
+        },
+      },
+    };
+    const rootDir = path.join(env.OPENCLAW_BUNDLED_PLUGINS_DIR!, "telegram");
+    const setupSource = path.join(rootDir, "setup-entry.ts");
+    fs.mkdirSync(rootDir, { recursive: true });
+    fs.writeFileSync(setupSource, "export default { register() {} };\n", "utf8");
+    const candidate: PluginCandidate = {
+      ...createCandidate(rootDir, "telegram"),
+      origin: "bundled",
+      setupSource,
+    };
+    const index = loadInstalledPluginIndex({ config, env, candidates: [candidate] });
+    const plugin = requirePluginRecord(index.plugins, "telegram");
+    expect(plugin.enabled).toBe(false);
+    const staleSetupSource = path.join(tempRoot, "old-bundled", "telegram", "setup-entry.ts");
+    const staleIndex: InstalledPluginIndex = {
+      ...index,
+      plugins: [
+        {
+          ...plugin,
+          setupSource: staleSetupSource,
+        },
+      ],
+    };
+    writePersistedInstalledPluginIndexSync(staleIndex, { stateDir });
+
+    const result = loadPluginRegistrySnapshotWithMetadata({
+      config,
+      env,
+      stateDir,
+      candidates: [candidate],
+    });
+
+    expect(result.source).toBe("derived");
+    expectDiagnosticsContainCode(result.diagnostics, "persisted-registry-stale-source");
+    expect(requirePluginRecord(result.snapshot.plugins, "telegram").setupSource).toBe(setupSource);
+  });
+
   it("keeps persisted manifestless Claude bundles on the fast path", () => {
     const tempRoot = makeTempDir();
     const rootDir = path.join(tempRoot, "workspace");

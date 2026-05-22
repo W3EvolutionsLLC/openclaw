@@ -108,7 +108,7 @@ function loadCurrentPluginRegistrySnapshotResult(
 
 function hasMissingPersistedPluginSource(index: InstalledPluginIndex): boolean {
   return index.plugins.some((plugin) => {
-    if (!plugin.enabled) {
+    if (!plugin.enabled && plugin.origin !== "bundled") {
       return false;
     }
     return (
