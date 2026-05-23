@@ -49,6 +49,11 @@ function formatDuration(value?: number): string {
   return `${(value / 1000).toFixed(2)} s`;
 }
 
+function formatCount(value: number | undefined, singular: string, plural = `${singular}s`): string {
+  const count = value ?? 0;
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -132,6 +137,14 @@ function formatMessageContent(value: unknown): string {
   return stringifyReadable(value);
 }
 
+function formatJsonString(value: string): string {
+  try {
+    return JSON.stringify(JSON.parse(value), null, 2);
+  } catch {
+    return value;
+  }
+}
+
 type ReadableMessage = {
   role: string;
   name?: string;
@@ -144,15 +157,38 @@ function normalizeMessage(value: unknown, fallbackRole: string): ReadableMessage
     const content = stringifyReadable(value);
     return content ? { content, raw: value, role: fallbackRole } : null;
   }
-  const role = readableRole(value.role ?? value.type, fallbackRole);
+  if (value.type === "function_call") {
+    const name = typeof value.name === "string" && value.name ? value.name : undefined;
+    const args = typeof value.arguments === "string" ? formatJsonString(value.arguments) : "{}";
+    return {
+      content: name ? `${name}(\n${args}\n)` : args,
+      raw: value,
+      role: "tool call",
+      ...(name ? { name } : {}),
+    };
+  }
+  const role = readableRole(
+    value.role ?? (value.type === "function_call_output" ? "tool" : value.type),
+    fallbackRole,
+  );
   const content = formatMessageContent(
-    value.content ?? value.text ?? value.input ?? value.message ?? value,
+    value.content ??
+      value.text ??
+      value.input ??
+      value.message ??
+      value.output ??
+      value.arguments ??
+      value,
   );
   return {
     content,
     raw: value,
     role,
-    ...(typeof value.name === "string" && value.name ? { name: value.name } : {}),
+    ...(typeof value.name === "string" && value.name
+      ? { name: value.name }
+      : typeof value.call_id === "string" && value.call_id
+        ? { name: value.call_id }
+        : {}),
   };
 }
 
@@ -161,14 +197,28 @@ function requestMessages(trace: LlmTraceDetail | null): ReadableMessage[] {
   if (!isRecord(payload)) {
     return [];
   }
+  const normalizedMessages: ReadableMessage[] = [];
+  if (typeof payload.instructions === "string" && payload.instructions.trim()) {
+    normalizedMessages.push({
+      content: payload.instructions,
+      raw: { instructions: payload.instructions },
+      role: "instructions",
+    });
+  }
   const messages = payload.messages ?? payload.input;
   if (Array.isArray(messages)) {
-    return messages
-      .map((message, index) => normalizeMessage(message, `input ${index + 1}`))
-      .filter((message): message is ReadableMessage => Boolean(message));
+    normalizedMessages.push(
+      ...messages
+        .map((message, index) => normalizeMessage(message, `input ${index + 1}`))
+        .filter((message): message is ReadableMessage => Boolean(message)),
+    );
+    return normalizedMessages;
   }
   const normalized = normalizeMessage(messages, "input");
-  return normalized ? [normalized] : [];
+  if (normalized) {
+    normalizedMessages.push(normalized);
+  }
+  return normalizedMessages;
 }
 
 function requestInputs(trace: LlmTraceDetail | null): unknown {
@@ -243,6 +293,7 @@ function requestParams(trace: LlmTraceDetail | null): unknown {
   }
   const {
     input: _input,
+    instructions: _instructions,
     messages: _messages,
     tools: _tools,
     functions: _functions,
@@ -359,7 +410,7 @@ function renderTraceRows(
               <span class="trace-meta mono">${entry.callId}</span>
               <span class="trace-row-facts">
                 <span>${formatDuration(entry.durationMs)}</span>
-                <span>${entry.toolCount ?? 0} tools</span>
+                <span>${formatCount(entry.toolCount, "tool")}</span>
               </span>
             </span>
           </button>
@@ -452,16 +503,23 @@ function renderParams(params: unknown) {
   if (!isRecord(params) || Object.keys(params).length === 0) {
     return html`<div class="muted">No invocation parameters captured.</div>`;
   }
+  const paramsJson = formatJson(params);
   return html`
-    <div class="trace-param-list">
-      ${Object.entries(params).map(
-        ([key, value]) => html`
-          <div class="trace-param">
-            <span>${key}</span>
-            <code>${typeof value === "string" ? value : formatJson(value)}</code>
-          </div>
-        `,
-      )}
+    <div>
+      <div class="trace-param-list">
+        ${Object.entries(params).map(
+          ([key, value]) => html`
+            <div class="trace-param">
+              <span>${key}</span>
+              <code>${typeof value === "string" ? value : formatJson(value)}</code>
+            </div>
+          `,
+        )}
+      </div>
+      <details class="trace-raw-disclosure">
+        <summary>Raw parameters</summary>
+        <pre class="mono traces-json compact">${paramsJson}</pre>
+      </details>
     </div>
   `;
 }
@@ -496,7 +554,11 @@ function renderTraceDetail(trace: LlmTraceDetail | null, capability: TraceCapabi
       <div class="traces-detail-meta">
         <span><strong>${formatDuration(trace.durationMs)}</strong> duration</span>
         <span><strong>${formatDuration(trace.timeToFirstByteMs)}</strong> TTFB</span>
-        <span><strong>${trace.toolCount ?? 0}</strong> tools</span>
+        <span
+          ><strong>${trace.toolCount ?? 0}</strong> ${trace.toolCount === 1
+            ? "tool"
+            : "tools"}</span
+        >
         <span><strong>${formatBytes(trace.requestPayloadBytes)}</strong> request</span>
         <span><strong>${formatBytes(trace.responseStreamBytes)}</strong> response</span>
         <span>${formatTime(trace.startedAt)}</span>

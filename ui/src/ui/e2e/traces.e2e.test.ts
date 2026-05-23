@@ -51,10 +51,21 @@ describeControlUiE2e("Control UI traces mocked Gateway E2E", () => {
       toolCount: 1,
     };
     const requestPayload = {
+      instructions: "You are a concise debugging assistant.",
       input: [
         {
           content: [{ text: "full prompt text visible in trace", type: "input_text" }],
           role: "user",
+        },
+        {
+          arguments: '{"cmd":"echo trace"}',
+          name: "shell_exec",
+          type: "function_call",
+        },
+        {
+          call_id: "call_shell_exec",
+          output: "trace",
+          type: "function_call_output",
         },
       ],
       model: "gpt-5.5",
@@ -118,17 +129,28 @@ describeControlUiE2e("Control UI traces mocked Gateway E2E", () => {
       const rowText = await page.locator('[data-traces-row="run-trace:model:1"]').textContent();
       expect(rowText).toContain("openai/gpt-5.5");
       expect(rowText).toContain("312 ms");
-      expect(rowText).toContain("1 tools");
+      expect(rowText).toContain("1 tool");
       expect(rowText).not.toContain("2.0 KB");
 
       const promptText = await page.locator("[data-traces-request-payload]").textContent();
+      const toolCallText = await page
+        .locator(".trace-message.role-tool-call .trace-message-content")
+        .textContent();
       const toolsText = await page.locator("[data-traces-tools]").textContent();
+      const paramsText = await page.locator(".trace-param-list").textContent();
       const responseText = await page.locator(".trace-message-content.response").textContent();
+      expect(promptText).toContain("You are a concise debugging assistant.");
       expect(promptText).toContain("full prompt text visible in trace");
+      expect(promptText).toContain("instructions");
       expect(promptText).toContain("user");
+      expect(promptText).toContain("shell_exec(");
+      expect(promptText).toContain('"cmd": "echo trace"');
+      expect(toolCallText).not.toContain('"{\\"cmd\\":');
       expect(toolsText).toContain("shell_exec");
       expect(toolsText).toContain("cmd");
       expect(toolsText).toContain("string, required");
+      expect(paramsText).toContain("reasoning");
+      await page.locator("summary", { hasText: "Raw parameters" }).waitFor();
       expect(responseText).toContain("done");
       expect(responseText).not.toContain("hidden reasoning");
       expect(responseText).not.toContain('{"cmd":"hidden"}');
