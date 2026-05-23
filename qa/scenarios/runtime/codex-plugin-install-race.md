@@ -38,7 +38,7 @@ steps:
       - set: gate
         value:
           expr: plugin.createCodexPluginInstallGate()
-      - set: turn
+      - set: turnHandle
         value:
           expr: "({ promise: gate.runFirstTurnAfterInstall({ inputTokens: 17, run: () => config.expectedText }) })"
       - assert:
@@ -48,7 +48,7 @@ steps:
       - call: gate.markInstalled
       - set: completed
         value:
-          expr: await turn.promise
+          expr: await turnHandle.promise
       - assert:
           expr: "completed.text === config.expectedText && completed.responseCount === config.expectedResponseCount && completed.inputTokens === 17"
           message:
