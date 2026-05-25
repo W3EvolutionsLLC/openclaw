@@ -262,7 +262,11 @@ function assertGatewayLiveDidNotSkipAllDueToTimeout(params: {
   timeoutSkippedCount: number;
   total: number;
 }): void {
-  if (params.total === 0 || params.skippedCount !== params.total || params.timeoutSkippedCount === 0) {
+  if (
+    params.total === 0 ||
+    params.skippedCount !== params.total ||
+    params.timeoutSkippedCount === 0
+  ) {
     return;
   }
   throw new Error(
@@ -2727,7 +2731,6 @@ describeLive("gateway live (dev agent, profile keys)", () => {
           ensureOpenClawModelsJson(cfg, undefined, {
             workspaceDir,
             ...(providerList ? { providerDiscoveryProviderIds: providerList } : {}),
-            providerDiscoveryEntriesOnly: true,
           }),
           "[all-models] prepare models.json",
         );

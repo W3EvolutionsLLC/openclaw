@@ -1,5 +1,6 @@
 import { buildChannelInboundEventContext } from "openclaw/plugin-sdk/channel-inbound";
 import type { BuildTelegramMessageContextParams, TelegramMediaRef } from "./bot-message-context.js";
+import { setTelegramTopicNameStoreFactoryForTest } from "./topic-name-cache.js";
 
 export const baseTelegramMessageContextConfig = {
   agents: { defaults: { model: "anthropic/claude-opus-4-5", workspace: "/tmp/openclaw" } },
@@ -103,6 +104,15 @@ let buildTelegramMessageContextLoader:
   | undefined;
 let vitestModuleLoader: Promise<typeof import("vitest")> | undefined;
 let messageContextMocksInstalled = false;
+let topicNameTestStores:
+  | Map<
+      string,
+      Map<
+        string,
+        NonNullable<Awaited<ReturnType<typeof import("./topic-name-cache.js").getTopicEntry>>>
+      >
+    >
+  | undefined;
 
 async function loadBuildTelegramMessageContext() {
   await installMessageContextTestMocks();
@@ -123,4 +133,23 @@ async function installMessageContextTestMocks() {
     return;
   }
   messageContextMocksInstalled = true;
+  topicNameTestStores = new Map();
+  setTelegramTopicNameStoreFactoryForTest((namespace) => {
+    const entries = topicNameTestStores?.get(namespace) ?? new Map();
+    topicNameTestStores?.set(namespace, entries);
+    return {
+      async register(key, value) {
+        entries.set(key, value);
+      },
+      async entries() {
+        return Array.from(entries, ([key, value]) => ({ key, value }));
+      },
+      async delete(key) {
+        return entries.delete(key);
+      },
+      async clear() {
+        entries.clear();
+      },
+    };
+  });
 }
