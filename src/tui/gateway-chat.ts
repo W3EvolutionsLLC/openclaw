@@ -10,6 +10,7 @@ import {
 import { startGatewayClientWhenEventLoopReady } from "../gateway/client-start-readiness.js";
 import { GatewayClient, GatewayClientRequestError } from "../gateway/client.js";
 import { isLoopbackHost } from "../gateway/net.js";
+import { WRITE_SCOPE } from "../gateway/operator-scopes.js";
 import {
   GATEWAY_CLIENT_CAPS,
   GATEWAY_CLIENT_MODES,
@@ -27,6 +28,7 @@ import {
   type SessionsPatchParams,
 } from "../gateway/protocol/index.js";
 import { formatErrorMessage } from "../infra/errors.js";
+import { roleScopesAllow } from "../shared/operator-scope-compat.js";
 import { VERSION } from "../version.js";
 import { TUI_SETUP_AUTH_SOURCE_CONFIG, TUI_SETUP_AUTH_SOURCE_ENV } from "./setup-launch-env.js";
 import type {
@@ -49,6 +51,18 @@ export type GatewayEvent = TuiEvent;
 const STARTUP_CHAT_HISTORY_RETRY_TIMEOUT_MS = 60_000;
 const STARTUP_CHAT_HISTORY_DEFAULT_RETRY_MS = 500;
 const STARTUP_CHAT_HISTORY_MAX_RETRY_MS = 5_000;
+const AGENT_RUNTIME_PREWARM_REQUEST_TIMEOUT_MS = 75_000;
+const CHAT_PREWARM_AGENT_RUNTIME_METHOD = "chat.prewarm_agent_runtime";
+
+function canUseWriteScopedGatewayMethods(hello: HelloOk | undefined): boolean {
+  return hello
+    ? roleScopesAllow({
+        role: hello.auth.role,
+        requestedScopes: [WRITE_SCOPE],
+        allowedScopes: hello.auth.scopes,
+      })
+    : false;
+}
 
 type ResolvedGatewayConnection = {
   url: string;
@@ -219,6 +233,38 @@ export class GatewayChatClient implements TuiBackend {
         const withinStartupRetryWindow =
           Date.now() - startedAt < STARTUP_CHAT_HISTORY_RETRY_TIMEOUT_MS;
         if (withinStartupRetryWindow && isRetryableStartupUnavailable(err, "chat.history")) {
+          await sleep(resolveStartupRetryDelayMs(err));
+          continue;
+        }
+        throw err;
+      }
+    }
+  }
+
+  async prewarmAgentRuntime(opts: { sessionKey: string }) {
+    if (
+      !this.hello?.features.methods.includes(CHAT_PREWARM_AGENT_RUNTIME_METHOD) ||
+      !canUseWriteScopedGatewayMethods(this.hello)
+    ) {
+      return { agentRuntimePrewarm: { status: "unsupported", harnessId: "gateway" } };
+    }
+    const startedAt = Date.now();
+    for (;;) {
+      try {
+        return await this.client.request(
+          CHAT_PREWARM_AGENT_RUNTIME_METHOD,
+          {
+            sessionKey: opts.sessionKey,
+          },
+          { timeoutMs: AGENT_RUNTIME_PREWARM_REQUEST_TIMEOUT_MS },
+        );
+      } catch (err) {
+        const withinStartupRetryWindow =
+          Date.now() - startedAt < STARTUP_CHAT_HISTORY_RETRY_TIMEOUT_MS;
+        if (
+          withinStartupRetryWindow &&
+          isRetryableStartupUnavailable(err, CHAT_PREWARM_AGENT_RUNTIME_METHOD)
+        ) {
           await sleep(resolveStartupRetryDelayMs(err));
           continue;
         }

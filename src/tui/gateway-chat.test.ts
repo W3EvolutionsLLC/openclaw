@@ -42,6 +42,20 @@ async function fileExists(filePath: string): Promise<boolean> {
   }
 }
 
+function setGatewayHelloForTest(
+  client: InstanceType<typeof GatewayChatClient>,
+  opts: { methods: string[]; scopes?: string[] },
+) {
+  (
+    client as unknown as {
+      hello: { features: { methods: string[] }; auth: { role: string; scopes: string[] } };
+    }
+  ).hello = {
+    features: { methods: opts.methods },
+    auth: { role: "operator", scopes: opts.scopes ?? ["operator.write"] },
+  };
+}
+
 type ModeExecProviderFixture = {
   tokenMarker: string;
   passwordMarker: string;
@@ -624,5 +638,93 @@ describe("GatewayChatClient", () => {
       provider: "discord",
       scope: "text",
     });
+  });
+
+  it("can request runtime prewarm through the write-scoped prewarm method", async () => {
+    const client = new GatewayChatClient({
+      url: "ws://127.0.0.1:18789",
+      token: "test-token",
+      allowInsecureLocalOperatorUi: true,
+    });
+    const request = vi.fn().mockResolvedValue({ agentRuntimePrewarm: { status: "warmed" } });
+    (client as unknown as { client: { request: typeof request } }).client.request = request;
+    setGatewayHelloForTest(client, { methods: ["chat.prewarm_agent_runtime"] });
+
+    await expect(client.prewarmAgentRuntime({ sessionKey: "main" })).resolves.toEqual({
+      agentRuntimePrewarm: { status: "warmed" },
+    });
+    expect(request).toHaveBeenCalledWith(
+      "chat.prewarm_agent_runtime",
+      {
+        sessionKey: "main",
+      },
+      { timeoutMs: 75_000 },
+    );
+  });
+
+  it("retries runtime prewarm while the gateway finishes booting", async () => {
+    vi.useFakeTimers();
+    const client = new GatewayChatClient({
+      url: "ws://127.0.0.1:18789",
+      token: "test-token",
+      allowInsecureLocalOperatorUi: true,
+    });
+    const request = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new GatewayClientRequestError({
+          code: "UNAVAILABLE",
+          message: "chat.prewarm_agent_runtime unavailable during gateway startup",
+          details: { method: "chat.prewarm_agent_runtime" },
+          retryable: true,
+          retryAfterMs: 250,
+        }),
+      )
+      .mockResolvedValueOnce({ agentRuntimePrewarm: { status: "warmed" } });
+    (client as unknown as { client: { request: typeof request } }).client.request = request;
+    setGatewayHelloForTest(client, { methods: ["chat.prewarm_agent_runtime"] });
+
+    const prewarmPromise = client.prewarmAgentRuntime({ sessionKey: "main" });
+    await vi.advanceTimersByTimeAsync(250);
+
+    await expect(prewarmPromise).resolves.toEqual({
+      agentRuntimePrewarm: { status: "warmed" },
+    });
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+
+  it("skips runtime prewarm when the connected gateway does not advertise the method", async () => {
+    const client = new GatewayChatClient({
+      url: "ws://127.0.0.1:18789",
+      token: "test-token",
+      allowInsecureLocalOperatorUi: true,
+    });
+    const request = vi.fn();
+    (client as unknown as { client: { request: typeof request } }).client.request = request;
+    setGatewayHelloForTest(client, { methods: ["chat.history"] });
+
+    await expect(client.prewarmAgentRuntime({ sessionKey: "main" })).resolves.toEqual({
+      agentRuntimePrewarm: { status: "unsupported", harnessId: "gateway" },
+    });
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it("skips runtime prewarm when the connected gateway token is read-only", async () => {
+    const client = new GatewayChatClient({
+      url: "ws://127.0.0.1:18789",
+      token: "test-token",
+      allowInsecureLocalOperatorUi: true,
+    });
+    const request = vi.fn();
+    (client as unknown as { client: { request: typeof request } }).client.request = request;
+    setGatewayHelloForTest(client, {
+      methods: ["chat.prewarm_agent_runtime"],
+      scopes: ["operator.read"],
+    });
+
+    await expect(client.prewarmAgentRuntime({ sessionKey: "main" })).resolves.toEqual({
+      agentRuntimePrewarm: { status: "unsupported", harnessId: "gateway" },
+    });
+    expect(request).not.toHaveBeenCalled();
   });
 });

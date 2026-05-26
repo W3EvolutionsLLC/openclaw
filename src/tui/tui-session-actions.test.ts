@@ -216,6 +216,9 @@ describe("tui session actions", () => {
       sessionId: "session-2",
       messages: [],
     });
+    const prewarmAgentRuntime = vi.fn().mockResolvedValue({
+      agentRuntimePrewarm: { status: "warmed" },
+    });
     const btw = createBtwPresenter();
 
     const state = createBaseState({
@@ -232,6 +235,7 @@ describe("tui session actions", () => {
       client: {
         listSessions,
         loadHistory,
+        prewarmAgentRuntime,
       } as unknown as TuiBackend,
       btw,
       state,
@@ -245,6 +249,7 @@ describe("tui session actions", () => {
       sessionKey: "agent:main:other",
       limit: 200,
     });
+    expect(prewarmAgentRuntime).toHaveBeenCalledWith({ sessionKey: "agent:main:other" });
     expect(state.currentSessionKey).toBe("agent:main:other");
     expect(state.sessionInfo.model).toBe("session-model");
     expect(state.sessionInfo.modelProvider).toBe("openai");
@@ -491,5 +496,86 @@ describe("tui session actions", () => {
 
     expect(state.currentSessionId).toBe("session-main");
     expect(rememberSessionKey).toHaveBeenCalledWith("agent:main:main");
+  });
+
+  it("requests runtime prewarm while loading the first history snapshot", async () => {
+    const loadHistory = vi.fn().mockResolvedValue({
+      sessionId: "session-main",
+      messages: [],
+    });
+    const prewarmAgentRuntime = vi.fn().mockResolvedValue({
+      agentRuntimePrewarm: { status: "warmed" },
+    });
+    const setActivityStatus = vi.fn();
+    const state = createBaseState({ historyLoaded: false });
+
+    const { loadHistory: runLoadHistory } = createTestSessionActions({
+      client: {
+        listSessions: vi.fn().mockResolvedValue({
+          ts: Date.now(),
+          path: "/tmp/sessions.json",
+          count: 0,
+          defaults: {},
+          sessions: [],
+        }),
+        loadHistory,
+        prewarmAgentRuntime,
+      } as unknown as TuiBackend,
+      state,
+      setActivityStatus,
+    });
+
+    await runLoadHistory();
+
+    expect(loadHistory).toHaveBeenCalledWith({
+      sessionKey: "agent:main:main",
+      limit: 200,
+    });
+    expect(prewarmAgentRuntime).toHaveBeenCalledWith({ sessionKey: "agent:main:main" });
+    expect(setActivityStatus).toHaveBeenNthCalledWith(1, "warming runtime");
+    expect(setActivityStatus).toHaveBeenLastCalledWith("idle");
+  });
+
+  it("renders loaded history before a slow runtime prewarm resolves", async () => {
+    const loadHistory = vi.fn().mockResolvedValue({
+      sessionId: "session-main",
+      messages: [],
+    });
+    let resolvePrewarm: ((value: unknown) => void) | undefined;
+    const prewarmAgentRuntime = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          resolvePrewarm = resolve;
+        }),
+    );
+    const requestRender = vi.fn();
+    const state = createBaseState({ historyLoaded: false });
+
+    const { loadHistory: runLoadHistory } = createTestSessionActions({
+      client: {
+        listSessions: vi.fn().mockResolvedValue({
+          ts: Date.now(),
+          path: "/tmp/sessions.json",
+          count: 0,
+          defaults: {},
+          sessions: [],
+        }),
+        loadHistory,
+        prewarmAgentRuntime,
+      } as unknown as TuiBackend,
+      tui: { requestRender } as unknown as import("@earendil-works/pi-tui").TUI,
+      state,
+    });
+
+    const loadPromise = runLoadHistory();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(state.historyLoaded).toBe(true);
+    expect(state.currentSessionId).toBe("session-main");
+    expect(requestRender).toHaveBeenCalled();
+
+    resolvePrewarm?.({ agentRuntimePrewarm: { status: "warmed" } });
+    await loadPromise;
   });
 });

@@ -3,6 +3,8 @@ import { TALK_TEST_PROVIDER_ID } from "../../test-utils/talk-test-provider.js";
 import * as protocol from "./index.js";
 import {
   formatValidationErrors,
+  validateChatHistoryParams,
+  validateChatPrewarmAgentRuntimeParams,
   validateChatEvent,
   validateCommandsListParams,
   validateConnectParams,
@@ -49,6 +51,12 @@ describe("lazy protocol validators", () => {
     expect(validateCommandsListParams({ includeArgs: true })).toBe(true);
     expect(validateCommandsListParams({ includeArgs: "yes" })).toBe(false);
     expect(formatValidationErrors(validateCommandsListParams.errors)).toContain("must be boolean");
+    expect(
+      validateChatHistoryParams({
+        sessionKey: "agent:main:main",
+      }),
+    ).toBe(true);
+    expect(validateChatPrewarmAgentRuntimeParams({ sessionKey: "agent:main:main" })).toBe(true);
   });
 
   it("keeps validation errors readable on the exported validator", () => {

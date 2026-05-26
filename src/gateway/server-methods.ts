@@ -271,7 +271,13 @@ export const coreGatewayHandlers: GatewayRequestHandlers = {
     loadHandlers: loadChannelsHandlers,
   }),
   ...createLazyCoreHandlers({
-    methods: ["chat.history", "chat.abort", "chat.send", "chat.inject"],
+    methods: [
+      "chat.history",
+      "chat.prewarm_agent_runtime",
+      "chat.abort",
+      "chat.send",
+      "chat.inject",
+    ],
     loadHandlers: loadChatHandlers,
   }),
   ...createLazyCoreHandlers({

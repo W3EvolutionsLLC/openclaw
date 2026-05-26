@@ -9,7 +9,12 @@ import {
   isReplyPayloadTtsSupplement,
   resolveSendableOutboundReplyParts,
 } from "openclaw/plugin-sdk/reply-payload";
-import { resolveAgentWorkspaceDir, resolveSessionAgentId } from "../../agents/agent-scope.js";
+import {
+  resolveAgentDir,
+  resolveAgentWorkspaceDir,
+  resolveSessionAgentId,
+} from "../../agents/agent-scope.js";
+import { prewarmAgentHarnessRuntime } from "../../agents/harness/prewarm.js";
 import { rewriteTranscriptEntriesInSessionFile } from "../../agents/pi-embedded-runner/transcript-rewrite.js";
 import { resolveProviderIdForAuth } from "../../agents/provider-auth-aliases.js";
 import { ensureSandboxWorkspaceForSession } from "../../agents/sandbox/context.js";
@@ -110,6 +115,7 @@ import {
   validateChatAbortParams,
   validateChatHistoryParams,
   validateChatInjectParams,
+  validateChatPrewarmAgentRuntimeParams,
   validateChatSendParams,
 } from "../protocol/index.js";
 import { CHAT_SEND_SESSION_KEY_MAX_LENGTH } from "../protocol/schema/primitives.js";
@@ -2182,6 +2188,52 @@ export const chatHandlers: GatewayRequestHandlers = {
       fastMode: entry?.fastMode,
       verboseLevel,
     });
+  },
+  "chat.prewarm_agent_runtime": async ({ params, respond }) => {
+    if (!validateChatPrewarmAgentRuntimeParams(params)) {
+      respond(
+        false,
+        undefined,
+        errorShape(
+          ErrorCodes.INVALID_REQUEST,
+          `invalid chat.prewarm_agent_runtime params: ${formatValidationErrors(validateChatPrewarmAgentRuntimeParams.errors)}`,
+        ),
+      );
+      return;
+    }
+    const { sessionKey } = params as { sessionKey: string };
+    const { cfg, entry } = loadSessionEntry(sessionKey);
+    const sessionId = entry?.sessionId;
+    const sessionAgentId = resolveSessionAgentId({ sessionKey, config: cfg });
+    const resolvedSessionModel = resolveSessionModelRef(cfg, entry, sessionAgentId);
+    const agentRuntimePrewarm = await measureDiagnosticsTimelineSpan(
+      "gateway.chat.prewarm_agent_runtime",
+      () =>
+        prewarmAgentHarnessRuntime({
+          cfg,
+          provider: resolvedSessionModel.provider,
+          modelId: resolvedSessionModel.model,
+          agentId: sessionAgentId,
+          sessionKey,
+          sessionId,
+          sessionFile: entry?.sessionFile,
+          agentDir: resolveAgentDir(cfg, sessionAgentId),
+          workspaceDir: entry?.spawnedWorkspaceDir ?? resolveAgentWorkspaceDir(cfg, sessionAgentId),
+          authProfileId: entry?.authProfileOverride,
+          authProfileIdSource: entry?.authProfileOverrideSource,
+          reason: "tui-startup",
+        }),
+      {
+        phase: "agent-turn",
+        config: cfg,
+        attributes: {
+          provider: resolvedSessionModel.provider,
+          model: resolvedSessionModel.model,
+          sessionKey,
+        },
+      },
+    );
+    respond(true, { agentRuntimePrewarm });
   },
   "chat.abort": async ({ params, respond, context, client }) => {
     if (!validateChatAbortParams(params)) {

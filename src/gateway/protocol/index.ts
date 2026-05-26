@@ -130,6 +130,8 @@ import {
   ChatHistoryParamsSchema,
   type ChatInjectParams,
   ChatInjectParamsSchema,
+  type ChatPrewarmAgentRuntimeParams,
+  ChatPrewarmAgentRuntimeParamsSchema,
   ChatSendParamsSchema,
   type ConfigApplyParams,
   ConfigApplyParamsSchema,
@@ -794,6 +796,8 @@ export const validateExecApprovalsNodeSetParams = lazyCompile<ExecApprovalsNodeS
 );
 export const validateLogsTailParams = lazyCompile<LogsTailParams>(LogsTailParamsSchema);
 export const validateChatHistoryParams = lazyCompile(ChatHistoryParamsSchema);
+export const validateChatPrewarmAgentRuntimeParams =
+  lazyCompile<ChatPrewarmAgentRuntimeParams>(ChatPrewarmAgentRuntimeParamsSchema);
 export const validateChatSendParams = lazyCompile(ChatSendParamsSchema);
 export const validateChatAbortParams = lazyCompile<ChatAbortParams>(ChatAbortParamsSchema);
 export const validateChatInjectParams = lazyCompile<ChatInjectParams>(ChatInjectParamsSchema);
@@ -1047,6 +1051,7 @@ export {
   ExecApprovalRequestParamsSchema,
   ExecApprovalResolveParamsSchema,
   ChatHistoryParamsSchema,
+  ChatPrewarmAgentRuntimeParamsSchema,
   ChatSendParamsSchema,
   ChatInjectParamsSchema,
   UpdateRunParamsSchema,
@@ -1075,6 +1080,7 @@ export type {
   AgentIdentityParams,
   AgentIdentityResult,
   AgentWaitParams,
+  ChatPrewarmAgentRuntimeParams,
   ChatEvent,
   TickEvent,
   ShutdownEvent,
