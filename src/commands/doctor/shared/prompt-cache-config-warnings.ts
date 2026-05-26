@@ -4,6 +4,10 @@ import {
   type ModelRef,
 } from "../../../agents/model-selection-normalize.js";
 import {
+  findNormalizedProviderValue,
+  normalizeProviderId,
+} from "../../../agents/provider-id.js";
+import {
   buildModelAliasIndex,
   resolveModelRefFromString,
 } from "../../../agents/model-selection-shared.js";
@@ -363,12 +367,18 @@ function resolveConfiguredModelApi(
   provider: string,
   modelId: string,
 ): string | undefined {
-  const providerConfig = cfg.models?.providers?.[provider];
+  const providerConfig = findNormalizedProviderValue(cfg.models?.providers, provider);
   const normalizedModelId = normalizeLowercaseStringOrEmpty(modelId);
   const modelConfig = providerConfig?.models?.find((model) => {
-    const id = normalizeLowercaseStringOrEmpty(model.id);
+    const normalizedId = normalizeLowercaseStringOrEmpty(model.id);
+    if (normalizedId === normalizedModelId) {
+      return true;
+    }
+    const split = splitModelRef(model.id);
     return (
-      id === normalizedModelId || id === normalizeLowercaseStringOrEmpty(`${provider}/${modelId}`)
+      split &&
+      normalizeProviderId(split.provider) === normalizeProviderId(provider) &&
+      normalizeLowercaseStringOrEmpty(split.modelId) === normalizedModelId
     );
   });
   return (

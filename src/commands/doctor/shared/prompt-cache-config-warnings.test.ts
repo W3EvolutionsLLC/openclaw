@@ -414,6 +414,37 @@ describe("collectPromptCacheConfigWarnings", () => {
     ]);
   });
 
+  it("uses normalized provider keys when reading configured provider APIs", () => {
+    const cfg: OpenClawConfig = {
+      agents: {
+        defaults: {
+          model: { primary: "myproxy/claude-sonnet-4-6" },
+          contextPruning: { mode: "cache-ttl", ttl: "5m" },
+          heartbeat: { every: "4m" },
+        },
+      },
+      models: {
+        providers: {
+          MyProxy: {
+            baseUrl: "https://myproxy.example.test",
+            models: [
+              {
+                ...anthropicConfiguredModel("MyProxy/claude-sonnet-4-6"),
+                api: "anthropic-messages",
+              },
+            ],
+          },
+        },
+      },
+    };
+
+    expect(collectPromptCacheConfigWarnings(cfg)).toEqual([
+      expect.stringContaining(
+        "myproxy/claude-sonnet-4-6, but this provider/model needs explicit cacheRetention or cacheControlTtl",
+      ),
+    ]);
+  });
+
   it("warns when Bedrock Claude cache-ttl models omit explicit cache retention", () => {
     const cfg: OpenClawConfig = {
       agents: {
