@@ -1,7 +1,7 @@
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.js";
 import { isRecord } from "../utils.js";
-import { isNonSecretApiKeyMarker } from "./model-auth-markers.js";
+import { CONFIG_MANAGED_API_KEY_MARKER, isNonSecretApiKeyMarker } from "./model-auth-markers.js";
 import {
   mergeProviders,
   mergeWithExistingProviderSecrets,
@@ -113,7 +113,7 @@ function shouldPersistApiKeyMarker(value: unknown): value is string {
 function stripPlaintextProviderApiKeys(
   providers: Record<string, ProviderConfig>,
   opts?: {
-    preservePlaintextApiKeyProviders?: ReadonlySet<string>;
+    preservePlaintextApiKeys?: ReadonlyMap<string, string>;
     secretRefManagedProviders?: ReadonlySet<string>;
   },
 ): Record<string, ProviderConfig> {
@@ -134,13 +134,15 @@ function stripPlaintextProviderApiKeys(
       sanitized[providerKey] = provider;
       continue;
     }
-    if (opts?.preservePlaintextApiKeyProviders?.has(providerKey)) {
+    if (opts?.preservePlaintextApiKeys?.get(providerKey) === apiKey) {
       sanitized[providerKey] = provider;
       continue;
     }
 
-    const safeProvider = { ...provider } as { apiKey?: unknown };
-    delete safeProvider.apiKey;
+    const safeProvider = {
+      ...provider,
+      apiKey: CONFIG_MANAGED_API_KEY_MARKER,
+    } as { apiKey?: unknown };
     sanitized[providerKey] = safeProvider as ProviderConfig;
     mutated = true;
   }
@@ -148,23 +150,23 @@ function stripPlaintextProviderApiKeys(
   return mutated ? sanitized : providers;
 }
 
-function collectExistingPlaintextApiKeyProviders(existingParsed: unknown): ReadonlySet<string> {
+function collectExistingPlaintextApiKeys(existingParsed: unknown): ReadonlyMap<string, string> {
   const providers =
     isRecord(existingParsed) && isRecord(existingParsed.providers)
       ? (existingParsed.providers as Record<string, ExistingProviderConfig>)
       : undefined;
   if (!providers) {
-    return new Set();
+    return new Map();
   }
 
-  const providerKeys = new Set<string>();
+  const providerKeys = new Map<string, string>();
   for (const [providerKey, provider] of Object.entries(providers)) {
     if (
       typeof provider?.apiKey === "string" &&
       provider.apiKey.length > 0 &&
       !shouldPersistApiKeyMarker(provider.apiKey)
     ) {
-      providerKeys.add(providerKey);
+      providerKeys.set(providerKey, provider.apiKey);
     }
   }
   return providerKeys;
@@ -248,8 +250,8 @@ export async function planOpenClawModelsJsonWithDeps(
     }) ?? normalizedMergedProviders;
   const finalProviders = applyNativeStreamingUsageCompat(secretEnforcedProviders);
   const persistedProviders = stripPlaintextProviderApiKeys(finalProviders, {
-    preservePlaintextApiKeyProviders:
-      mode === "merge" ? collectExistingPlaintextApiKeyProviders(params.existingParsed) : undefined,
+    preservePlaintextApiKeys:
+      mode === "merge" ? collectExistingPlaintextApiKeys(params.existingParsed) : undefined,
     secretRefManagedProviders,
   });
   const nextContents = `${JSON.stringify({ providers: persistedProviders }, null, 2)}\n`;

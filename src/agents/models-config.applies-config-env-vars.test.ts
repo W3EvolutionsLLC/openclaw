@@ -1,13 +1,18 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
 import { createConfigRuntimeEnv } from "../config/env-vars.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.js";
+import { CONFIG_MANAGED_API_KEY_MARKER } from "./model-auth-markers.js";
 import { unsetEnv, withTempEnv } from "./models-config.e2e-harness.js";
 import {
   planOpenClawModelsJsonWithDeps,
   resolveProvidersForModelsJsonWithDeps,
 } from "./models-config.plan.js";
 import type { ProviderConfig } from "./models-config.providers.secrets.js";
+import { discoverAuthStorage, discoverModels } from "./pi-model-discovery.js";
 
 const TEST_ENV_VAR = "OPENCLAW_MODELS_CONFIG_TEST_ENV";
 
@@ -340,10 +345,22 @@ describe("models-config", () => {
     const parsed = JSON.parse(plan.contents) as {
       providers?: Record<string, { apiKey?: string }>;
     };
-    expect(parsed.providers?.custom?.apiKey).toBeUndefined();
+    expect(parsed.providers?.custom?.apiKey).toBe(CONFIG_MANAGED_API_KEY_MARKER);
     expect(parsed.providers?.existing?.apiKey).toBe("sk-existing-plaintext");
     expect(parsed.providers?.litellm?.apiKey).toBe("OPENCLAW_MODEL_LITELLM_API_KEY"); // pragma: allowlist secret
     expect(parsed.providers?.openai?.apiKey).toBe("OPENAI_API_KEY"); // pragma: allowlist secret
+
+    const agentDir = await mkdtemp(join(tmpdir(), "openclaw-models-config-env-vars-"));
+    try {
+      await writeFile(join(agentDir, "models.json"), plan.contents);
+      const registry = discoverModels(discoverAuthStorage(agentDir), agentDir, {
+        normalizeModels: false,
+      });
+      expect(registry.getError()).toBeUndefined();
+      expect(registry.find("custom", "config-model")?.id).toBe("config-model");
+    } finally {
+      await rm(agentDir, { recursive: true, force: true });
+    }
   });
 
   it("uses config env.vars entries for implicit provider discovery without mutating process.env", async () => {
