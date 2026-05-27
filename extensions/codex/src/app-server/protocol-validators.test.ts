@@ -51,6 +51,15 @@ describe("Codex thread response validators", () => {
   });
 });
 
+function defineThrowingProperty(target: object, key: string, message: string): void {
+  Object.defineProperty(target, key, {
+    enumerable: true,
+    get() {
+      throw new Error(message);
+    },
+  });
+}
+
 describe("assertCodexThreadStartResponse", () => {
   it("accepts response with both id and sessionId", () => {
     const response = makeMinimalResponse();
@@ -69,6 +78,13 @@ describe("assertCodexThreadStartResponse", () => {
 
   it("throws on invalid response", () => {
     expect(() => assertCodexThreadStartResponse({})).toThrow("Invalid Codex app-server");
+  });
+
+  it("rejects unreadable synthetic response fields without leaking the getter error", () => {
+    const response = makeMinimalResponse();
+    defineThrowingProperty(response, "thread", "fuzzplugin thread read failed");
+
+    expect(() => assertCodexThreadStartResponse(response)).toThrow("Invalid Codex app-server");
   });
 });
 
@@ -133,5 +149,17 @@ describe("readCodexTurn", () => {
       id: "item-1",
       type: "dynamicToolCall",
     });
+  });
+
+  it("ignores unreadable synthetic turn item lists without throwing", () => {
+    const value = {
+      id: "turn-1",
+      status: "completed",
+    };
+    defineThrowingProperty(value, "items", "fuzzplugin turn items read failed");
+
+    const turn = readCodexTurn(value);
+
+    expect(turn?.items).toEqual([]);
   });
 });
