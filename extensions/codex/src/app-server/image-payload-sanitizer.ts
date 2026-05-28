@@ -37,6 +37,14 @@ function cloneReadableRecord(record: Record<string, unknown>): Record<string, un
   return Object.fromEntries(readableRecordEntries(record));
 }
 
+function hasOwnReadableKey(record: Record<string, unknown>, key: string): boolean {
+  try {
+    return Object.hasOwn(record, key);
+  } catch {
+    return false;
+  }
+}
+
 export function sanitizeInlineImageDataUrl(imageUrl: string): string | undefined {
   return sanitizeSharedInlineImageDataUrl(imageUrl);
 }
@@ -50,8 +58,11 @@ function sanitizeImageContentRecord(
   label: string,
 ): Record<string, unknown> | undefined {
   const type = readRecordValue(record, "type");
-  const data = readRecordValue(record, "data");
   if (type === "image") {
+    if (!hasOwnReadableKey(record, "data")) {
+      return undefined;
+    }
+    const data = readRecordValue(record, "data");
     if (typeof data !== "string") {
       return { type: "text", text: invalidInlineImageText(label) };
     }
