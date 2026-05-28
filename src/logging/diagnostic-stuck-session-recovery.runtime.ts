@@ -87,12 +87,23 @@ function formatRecoveryContext(
 function clearRecoveredDiagnosticActivity(
   params: StuckSessionRecoveryParams,
   reason: string,
+  extra?: { activeSessionId?: string },
 ): void {
   const result = clearDiagnosticSessionActivity({
     sessionId: params.sessionId,
     sessionKey: params.sessionKey,
     reason,
   });
+  if (extra?.activeSessionId && extra.activeSessionId !== params.sessionId) {
+    const activeResult = clearDiagnosticSessionActivity({
+      sessionId: extra.activeSessionId,
+      reason,
+    });
+    result.activeEmbeddedRunsCleared += activeResult.activeEmbeddedRunsCleared;
+    result.activeToolsCleared += activeResult.activeToolsCleared;
+    result.activeModelCallsCleared += activeResult.activeModelCallsCleared;
+    result.activitiesCleared += activeResult.activitiesCleared;
+  }
   if (
     result.activeEmbeddedRunsCleared === 0 &&
     result.activeToolsCleared === 0 &&
@@ -103,7 +114,11 @@ function clearRecoveredDiagnosticActivity(
   diag.warn(
     `stuck session recovery cleared diagnostic activity: sessionId=${
       params.sessionId ?? "unknown"
-    } sessionKey=${params.sessionKey ?? "unknown"} reason=${reason} activeEmbeddedRunsCleared=${
+    } sessionKey=${params.sessionKey ?? "unknown"}${
+      extra?.activeSessionId && extra.activeSessionId !== params.sessionId
+        ? ` activeSessionId=${extra.activeSessionId}`
+        : ""
+    } reason=${reason} activeEmbeddedRunsCleared=${
       result.activeEmbeddedRunsCleared
     } activeToolsCleared=${result.activeToolsCleared} activeModelCallsCleared=${
       result.activeModelCallsCleared
@@ -282,7 +297,7 @@ export async function recoverStuckDiagnosticSession(
 
     if (aborted || forceCleared || released > 0 || clearStaleQueuedSession) {
       const action = aborted || forceCleared ? "abort_embedded_run" : "release_lane";
-      clearRecoveredDiagnosticActivity(params, `stuck_recovery:${action}`);
+      clearRecoveredDiagnosticActivity(params, `stuck_recovery:${action}`, { activeSessionId });
       const stoppedFields = formatStoppedCronSessionDiagnosticFields(
         resolveCronSessionDiagnosticContext({ sessionKey: params.sessionKey, activeSessionId }),
       );
@@ -320,7 +335,7 @@ export async function recoverStuckDiagnosticSession(
       diag.warn(`stuck session recovery outcome: ${formatRecoveryOutcome(outcome)}`);
       return outcome;
     }
-    clearRecoveredDiagnosticActivity(params, "stuck_recovery:no_active_work");
+    clearRecoveredDiagnosticActivity(params, "stuck_recovery:no_active_work", { activeSessionId });
     const outcome: StuckSessionRecoveryOutcome = {
       status: "noop",
       action: "none",

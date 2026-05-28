@@ -188,6 +188,57 @@ describe("stuck session recovery", () => {
     expect(outcome.status).toBe("aborted");
     expect(warnLogMessages().some((m) => m.includes("reclaiming stale active run"))).toBe(true);
   });
+
+  it("clears diagnostic activity for a stale active session resolved from the session file", async () => {
+    mocks.resolveActiveEmbeddedRunHandleSessionId.mockReturnValue(undefined);
+    mocks.resolveActiveEmbeddedRunHandleSessionIdBySessionFile.mockReturnValue("session-file-run");
+    mocks.getDiagnosticSessionActivitySnapshot.mockReturnValue({
+      lastProgressAgeMs: 10 * 60_000,
+    });
+    mocks.abortEmbeddedAgentRun.mockReturnValue(true);
+    mocks.waitForEmbeddedAgentRunEnd.mockResolvedValue(true);
+    mocks.clearDiagnosticSessionActivity
+      .mockReturnValueOnce({
+        activeEmbeddedRunsCleared: 0,
+        activeToolsCleared: 0,
+        activeModelCallsCleared: 0,
+        activitiesCleared: 0,
+      })
+      .mockReturnValueOnce({
+        activeEmbeddedRunsCleared: 1,
+        activeToolsCleared: 0,
+        activeModelCallsCleared: 0,
+        activitiesCleared: 1,
+      });
+
+    const outcome = await recoverStuckDiagnosticSession({
+      sessionId: "fallback-session",
+      sessionKey: "agent:main:fallback",
+      sessionFile: "/tmp/openclaw-shared-session.jsonl",
+      ageMs: 180_000,
+      queueDepth: 1,
+    });
+
+    expect(outcome).toMatchObject({
+      status: "aborted",
+      action: "abort_embedded_run",
+      activeSessionId: "session-file-run",
+    });
+    expect(mocks.abortEmbeddedAgentRun).toHaveBeenCalledWith("session-file-run");
+    expect(mocks.clearDiagnosticSessionActivity).toHaveBeenNthCalledWith(1, {
+      sessionId: "fallback-session",
+      sessionKey: "agent:main:fallback",
+      reason: "stuck_recovery:abort_embedded_run",
+    });
+    expect(mocks.clearDiagnosticSessionActivity).toHaveBeenNthCalledWith(2, {
+      sessionId: "session-file-run",
+      reason: "stuck_recovery:abort_embedded_run",
+    });
+    expect(warnLogMessages()).toContain(
+      "stuck session recovery cleared diagnostic activity: sessionId=fallback-session sessionKey=agent:main:fallback activeSessionId=session-file-run reason=stuck_recovery:abort_embedded_run activeEmbeddedRunsCleared=1 activeToolsCleared=0 activeModelCallsCleared=0",
+    );
+  });
+
   it("aborts an active embedded run when active abort recovery is enabled", async () => {
     mocks.resolveActiveEmbeddedRunHandleSessionId.mockReturnValue("session-1");
     mocks.abortEmbeddedAgentRun.mockReturnValue(true);
