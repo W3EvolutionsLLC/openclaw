@@ -246,13 +246,12 @@ function parseRetryAfterSeconds(headers: Headers): number | undefined {
     return undefined;
   }
 
-  const trimmedRetryAfter = retryAfter.trim();
-  const seconds = Number(trimmedRetryAfter);
-  if (/^\d+(?:\.\d+)?$/.test(trimmedRetryAfter) && Number.isFinite(seconds)) {
+  const seconds = Number.parseFloat(retryAfter);
+  if (Number.isFinite(seconds) && seconds >= 0) {
     return seconds;
   }
 
-  const retryAt = Date.parse(trimmedRetryAfter);
+  const retryAt = Date.parse(retryAfter);
   if (Number.isNaN(retryAt)) {
     return undefined;
   }
