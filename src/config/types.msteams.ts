@@ -22,7 +22,7 @@ export type MSTeamsWebhookConfig = {
 };
 
 /** Teams SDK cloud environment. Public cloud is the default. */
-export type MSTeamsCloudName = "Public" | "USGov" | "USGovDoD" | "China";
+export type MSTeamsCloudName = "Public" | "USGov" | "USGovDoD";
 
 /**
  * Bot Framework OAuth SSO configuration for Microsoft Teams.

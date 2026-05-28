@@ -84,7 +84,7 @@ describe("validateMSTeamsProactiveServiceUrlBoundary", () => {
   it("allows configured serviceUrl host matches with different paths", () => {
     expect(() =>
       validateMSTeamsProactiveServiceUrlBoundary({
-        cloud: "China",
+        cloud: "USGov",
         conversationId: "19:conversation@thread.tacv2",
         storedServiceUrl: "https://connector.example.cn/teams-region/",
         configuredServiceUrl: "https://connector.example.cn/teams",

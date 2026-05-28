@@ -272,6 +272,13 @@ export async function monitorMSTeamsProvider(
   // the request — the SDK's later `json()` is then a no-op, and our limit
   // applies before either the bearer gate or the SDK's authorize step run.
   expressApp.use(express.json({ limit: DEFAULT_WEBHOOK_MAX_BODY_BYTES }));
+  expressApp.use((err: unknown, _req: Request, res: Response, next: (err?: unknown) => void) => {
+    if (err && typeof err === "object" && "status" in err && err.status === 413) {
+      res.status(413).json({ error: "Payload too large" });
+      return;
+    }
+    next(err);
+  });
 
   // Cheap auth-presence gate: reject requests without a Bearer token after the
   // bounded JSON parser above, but before SDK route dispatch and full JWT

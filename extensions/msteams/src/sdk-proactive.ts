@@ -37,13 +37,11 @@ type MSTeamsSdkConversationReference = {
   aadObjectId?: string;
 };
 
-type MSTeamsActivitySender = {
-  send(activity: unknown, ref: MSTeamsSdkConversationReference): Promise<{ id?: string }>;
-};
-
 type MSTeamsActivitiesClient = {
   create(activity: unknown): Promise<{ id?: string }>;
+  createTargeted?(activity: unknown): Promise<{ id?: string }>;
   update(activityId: string, activity: unknown): Promise<unknown>;
+  updateTargeted?(activityId: string, activity: unknown): Promise<unknown>;
   delete(activityId: string): Promise<unknown>;
 };
 
@@ -140,11 +138,6 @@ function buildSdkConversationReference(
   };
 }
 
-function getAppActivitySender(app: MSTeamsApp): MSTeamsActivitySender | null {
-  const sender = (app as unknown as { activitySender?: MSTeamsActivitySender }).activitySender;
-  return typeof sender?.send === "function" ? sender : null;
-}
-
 function getStructuralApiClient(app: MSTeamsApp): MSTeamsApiClient {
   return app.api as MSTeamsApiClient;
 }
@@ -171,17 +164,36 @@ async function getApiClientForReference(
 
   const appInternals = app as unknown as {
     client?: unknown;
-    api?: { http?: unknown; _apiClientSettings?: unknown };
+    api?: { http?: unknown };
   };
   const httpClient = appInternals.api?.http ?? appInternals.client;
-  const apiClientSettings = appInternals.api?.["_apiClientSettings"];
 
   if (!httpClient) {
     return api;
   }
 
   const { Client } = await loadMSTeamsApiModule();
-  return new Client(ref.serviceUrl, httpClient, apiClientSettings) as MSTeamsApiClient;
+  return new Client(ref.serviceUrl, httpClient) as MSTeamsApiClient;
+}
+
+function mergeReferenceIntoActivity(
+  activity: unknown,
+  ref: MSTeamsSdkConversationReference,
+): Record<string, unknown> {
+  const source =
+    activity && typeof activity === "object" && !Array.isArray(activity)
+      ? (activity as Record<string, unknown>)
+      : { type: "message", text: String(activity ?? "") };
+  return {
+    ...source,
+    channelId: ref.channelId,
+    from: ref.bot,
+    recipient: ref.user,
+    conversation: ref.conversation,
+    locale: ref.locale,
+    ...(ref.tenantId ? { tenantId: ref.tenantId } : {}),
+    ...(ref.aadObjectId ? { aadObjectId: ref.aadObjectId } : {}),
+  };
 }
 
 export async function sendMSTeamsActivityWithReference(
@@ -191,11 +203,29 @@ export async function sendMSTeamsActivityWithReference(
   options?: MSTeamsProactiveOptions,
 ): Promise<{ id?: string }> {
   const ref = buildSdkConversationReference(source, options);
-  const sender = getAppActivitySender(app);
-  if (!sender) {
-    throw new Error("Microsoft Teams SDK app is missing activitySender");
+  const api = await getApiClientForReference(app, ref);
+  const activities = api.conversations.activities(ref.conversation.id);
+  const activityWithRef = mergeReferenceIntoActivity(activity, ref);
+  const isTargeted =
+    (activityWithRef.recipient as { isTargeted?: unknown } | undefined)?.isTargeted === true;
+  if (isTargeted && ref.conversation.conversationType === "personal") {
+    throw new Error("Targeted messages are not supported in 1:1 (personal) chats.");
   }
-  return sender.send(activity, ref);
+
+  const activityId = typeof activityWithRef.id === "string" ? activityWithRef.id : undefined;
+  if (activityId) {
+    const res =
+      isTargeted && activities.updateTargeted
+        ? await activities.updateTargeted(activityId, activityWithRef)
+        : await activities.update(activityId, activityWithRef);
+    return { ...activityWithRef, ...(res && typeof res === "object" ? res : {}) };
+  }
+
+  const res =
+    isTargeted && activities.createTargeted
+      ? await activities.createTargeted(activityWithRef)
+      : await activities.create(activityWithRef);
+  return { ...activityWithRef, ...res };
 }
 
 export async function updateMSTeamsActivityWithReference(

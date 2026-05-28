@@ -10,6 +10,8 @@ type CommandCase = {
   name: string;
   args: string[];
   presets: readonly string[];
+  expectedExitCodes?: readonly number[];
+  expectedNonzeroOutputIncludes?: readonly string[];
   firstOutputBudgetMs?: number;
   exitBudgetMs?: number;
 };
@@ -46,6 +48,8 @@ type SuiteResult = {
     id: string;
     name: string;
     args: string[];
+    expectedExitCodes?: number[];
+    expectedNonzeroOutputIncludes?: string[];
     contract: {
       firstOutputBudgetMs: number | null;
       exitBudgetMs: number | null;
@@ -307,8 +311,22 @@ const COMMAND_CASES: readonly CommandCase[] = [
     firstOutputBudgetMs: 2_500,
     exitBudgetMs: 6_000,
   },
-  { id: "health", name: "health", args: ["health"], presets: ["startup", "real"] },
-  { id: "healthJson", name: "health --json", args: ["health", "--json"], presets: ["startup"] },
+  {
+    id: "health",
+    name: "health",
+    args: ["health"],
+    presets: ["startup", "real"],
+    expectedExitCodes: [0, 1],
+    expectedNonzeroOutputIncludes: ["Gateway target:"],
+  },
+  {
+    id: "healthJson",
+    name: "health --json",
+    args: ["health", "--json"],
+    presets: ["startup"],
+    expectedExitCodes: [0, 1],
+    expectedNonzeroOutputIncludes: ['"ok"', '"gateway_transport_error"'],
+  },
   {
     id: "statusJson",
     name: "status --json",
@@ -364,12 +382,16 @@ const COMMAND_CASES: readonly CommandCase[] = [
     name: "gateway health --json",
     args: ["gateway", "health", "--json"],
     presets: ["real"],
+    expectedExitCodes: [0, 1],
+    expectedNonzeroOutputIncludes: ['"ok"', '"gateway_transport_error"'],
   },
   {
     id: "configGetGatewayPort",
     name: "config get gateway.port",
     args: ["config", "get", "gateway.port"],
     presets: ["real"],
+    expectedExitCodes: [0, 1],
+    expectedNonzeroOutputIncludes: ["Config path not found: gateway.port"],
   },
 ] as const;
 
@@ -509,6 +531,22 @@ function collectExitSummary(samples: Sample[]): string {
   return [...buckets.entries()].map(([key, count]) => `${key}x${count}`).join(", ");
 }
 
+function buildConfigFixture(commandCase: CommandCase): Record<string, unknown> | null {
+  if (commandCase.id !== "configGetGatewayPort" && commandCase.id !== "gatewayHealthJson") {
+    return null;
+  }
+  const envPort = Number.parseInt(process.env.OPENCLAW_GATEWAY_PORT ?? "", 10);
+  const port = Number.isFinite(envPort) && envPort > 0 ? envPort : 32123;
+  return {
+    gateway: {
+      auth: { mode: "none" },
+      bind: "loopback",
+      mode: "local",
+      port,
+    },
+  };
+}
+
 function buildRssHook(tmpDir: string): string {
   const rssHookPath = path.join(tmpDir, "measure-rss.mjs");
   writeFileSync(
@@ -561,6 +599,11 @@ async function runSample(params: {
   const runRoot = mkdtempSync(path.join(os.tmpdir(), "openclaw-cli-bench-home-"));
   const stateDir = path.join(runRoot, ".openclaw");
   const configPath = path.join(stateDir, "openclaw.json");
+  const configFixture = buildConfigFixture(params.commandCase);
+  if (configFixture) {
+    mkdirSync(stateDir, { recursive: true });
+    writeFileSync(configPath, `${JSON.stringify(configFixture, null, 2)}\n`, "utf8");
+  }
   const nodeArgs = [
     "--import",
     params.rssHookPath,
@@ -759,10 +802,23 @@ export function collectFailedSamples(result: SuiteResult): string[] {
     }
     for (const [sampleIndex, sample] of commandCase.samples.entries()) {
       const label = `${result.entry} ${commandCase.id} sample ${sampleIndex + 1}`;
+      const expectedExitCodes = new Set(commandCase.expectedExitCodes ?? [0]);
       if (sample.signal !== null) {
         failures.push(`${label}: exited via signal ${sample.signal}`);
-      } else if (sample.exitCode !== 0) {
+      } else if (!expectedExitCodes.has(sample.exitCode ?? -1)) {
         failures.push(`${label}: exited with code ${String(sample.exitCode)}`);
+      } else if (sample.exitCode !== 0) {
+        const output = `${sample.stdoutTail ?? ""}\n${sample.stderrTail ?? ""}`;
+        const missing = (commandCase.expectedNonzeroOutputIncludes ?? []).filter(
+          (snippet) => !output.includes(snippet),
+        );
+        if (missing.length > 0) {
+          failures.push(
+            `${label}: exited with expected code ${String(
+              sample.exitCode,
+            )} but output did not match expected clean-state markers (${missing.join(", ")})`,
+          );
+        }
       }
     }
   }
@@ -790,6 +846,12 @@ async function buildSuiteResult(params: {
       id: commandCase.id,
       name: commandCase.name,
       args: commandCase.args,
+      ...(commandCase.expectedExitCodes && commandCase.expectedExitCodes.some((code) => code !== 0)
+        ? { expectedExitCodes: [...commandCase.expectedExitCodes] }
+        : {}),
+      ...(commandCase.expectedNonzeroOutputIncludes
+        ? { expectedNonzeroOutputIncludes: [...commandCase.expectedNonzeroOutputIncludes] }
+        : {}),
       contract:
         commandCase.firstOutputBudgetMs != null || commandCase.exitBudgetMs != null
           ? {
@@ -819,11 +881,7 @@ function parseOptions(): CliOptions {
     entrySecondary: parseFlagValue("--entry-secondary"),
     runs: parsePositiveInt(parseFlagValue("--runs"), DEFAULT_RUNS, "--runs"),
     warmup: parseNonNegativeInt(parseFlagValue("--warmup"), DEFAULT_WARMUP, "--warmup"),
-    timeoutMs: parsePositiveInt(
-      parseFlagValue("--timeout-ms"),
-      DEFAULT_TIMEOUT_MS,
-      "--timeout-ms",
-    ),
+    timeoutMs: parsePositiveInt(parseFlagValue("--timeout-ms"), DEFAULT_TIMEOUT_MS, "--timeout-ms"),
     json: hasFlag("--json"),
     output: parseFlagValue("--output"),
     cpuProfDir: parseFlagValue("--cpu-prof-dir"),
@@ -944,6 +1002,7 @@ async function main(): Promise<void> {
 }
 
 export const testing = {
+  buildConfigFixture,
   collectFailedSamples,
   parseNonNegativeInt,
   parsePositiveInt,

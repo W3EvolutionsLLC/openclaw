@@ -1,6 +1,6 @@
 import type { MSTeamsConfig } from "../runtime-api.js";
 
-export type MSTeamsCloudName = "Public" | "USGov" | "USGovDoD" | "China";
+export type MSTeamsCloudName = "Public" | "USGov" | "USGovDoD";
 
 export const DEFAULT_MSTEAMS_CLOUD: MSTeamsCloudName = "Public";
 

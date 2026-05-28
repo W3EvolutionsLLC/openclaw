@@ -85,10 +85,11 @@ vi.mock("express", () => {
     };
   });
 
-  const factory = () => ({
-    use: vi.fn(),
-    post: vi.fn(),
-    listen: vi.fn((_port: number) => {
+  const factory = () => {
+    const app = vi.fn();
+    app.use = vi.fn();
+    app.post = vi.fn();
+    app.listen = vi.fn((_port: number) => {
       const server = new EventEmitter() as FakeServer;
       server.setTimeout = vi.fn((_msecs: number) => server);
       server.requestTimeout = 0;
@@ -107,8 +108,9 @@ vi.mock("express", () => {
         server.emit("listening");
       });
       return server;
-    }),
-  });
+    });
+    return app;
+  };
 
   const wrappedFactory = () => {
     const app = factory();
@@ -333,13 +335,14 @@ describe("monitorMSTeamsProvider lifecycle", () => {
 
     const app = expressControl.apps.at(-1);
     expect(app).toBeDefined();
-    // Two middlewares are installed before the SDK route registers:
+    // Three middlewares are installed before the SDK route registers:
     // [0] = `express.json({ limit })` — caps inbound bodies before any handler
     //       parses them (forces the SDK's later json() to be a no-op).
-    // [1] = bearer-presence gate — rejects unauthenticated requests cheaply.
-    expect(app!.use.mock.calls.length).toBeGreaterThanOrEqual(2);
+    // [1] = JSON parser error handler — keeps 413 responses JSON-shaped.
+    // [2] = bearer-presence gate — rejects unauthenticated requests cheaply.
+    expect(app!.use.mock.calls.length).toBeGreaterThanOrEqual(3);
 
-    const bearerMiddleware = app!.use.mock.calls[1]?.[0] as (
+    const bearerMiddleware = app!.use.mock.calls[2]?.[0] as (
       req: Request,
       res: Response,
       next: (err?: unknown) => void,
@@ -360,6 +363,83 @@ describe("monitorMSTeamsProvider lifecycle", () => {
       next2,
     );
     expect(next2).toHaveBeenCalledTimes(1);
+
+    abort.abort();
+    await task;
+  });
+
+  it("keeps oversized webhook parse failures JSON-shaped", async () => {
+    const abort = new AbortController();
+    const task = monitorMSTeamsProvider({
+      cfg: createConfig(0),
+      runtime: createRuntime(),
+      abortSignal: abort.signal,
+      conversationStore: createStores().conversationStore,
+      pollStore: createStores().pollStore,
+    });
+
+    await vi.waitFor(() => {
+      expect(expressControl.apps.length).toBeGreaterThan(0);
+    });
+
+    const app = expressControl.apps.at(-1);
+    const jsonErrorMiddleware = app!.use.mock.calls[1]?.[0] as (
+      err: unknown,
+      req: Request,
+      res: Response,
+      next: (err?: unknown) => void,
+    ) => void;
+    const json = vi.fn();
+    const status = vi.fn(() => ({ json }));
+    const next = vi.fn();
+
+    jsonErrorMiddleware({ status: 413 }, {} as Request, { status } as unknown as Response, next);
+
+    expect(status).toHaveBeenCalledWith(413);
+    expect(json).toHaveBeenCalledWith({ error: "Payload too large" });
+    expect(next).not.toHaveBeenCalled();
+
+    abort.abort();
+    await task;
+  });
+
+  it("forwards legacy /api/messages requests to a custom webhook path", async () => {
+    const abort = new AbortController();
+    const cfg = createConfig(0);
+    updateMSTeamsConfig(cfg, {
+      webhook: { port: 0, path: "/teams/events" },
+    });
+    const task = monitorMSTeamsProvider({
+      cfg,
+      runtime: createRuntime(),
+      abortSignal: abort.signal,
+      conversationStore: createStores().conversationStore,
+      pollStore: createStores().pollStore,
+    });
+
+    await vi.waitFor(() => {
+      expect(expressControl.apps.length).toBeGreaterThan(0);
+    });
+
+    const app = expressControl.apps.at(-1);
+    expect(loadMSTeamsSdkWithAuth.mock.calls[0]?.[1]).toMatchObject({
+      messagingEndpoint: "/teams/events",
+    });
+    const legacyForwarder = app!.post.mock.calls.find(
+      (call: [string, unknown]) => call[0] === "/api/messages",
+    )?.[1];
+    expect(typeof legacyForwarder).toBe("function");
+    if (typeof legacyForwarder !== "function") {
+      throw new Error("expected legacy /api/messages forwarder");
+    }
+
+    const req = { url: "/api/messages", headers: { authorization: "Bearer valid" } } as Request;
+    const res = {} as Response;
+    const next = vi.fn();
+    legacyForwarder(req, res, next);
+
+    expect(req.url).toBe("/teams/events");
+    expect(app).toHaveBeenCalledWith(req, res, next);
 
     abort.abort();
     await task;

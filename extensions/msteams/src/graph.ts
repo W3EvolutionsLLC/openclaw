@@ -2,13 +2,14 @@ import { readProviderJsonResponse } from "openclaw/plugin-sdk/provider-http";
 import { fetchWithSsrFGuard, type MSTeamsConfig } from "../runtime-api.js";
 import { GRAPH_ROOT } from "./attachments/shared.js";
 import { resolveMSTeamsSdkCloudOptions } from "./cloud.js";
+import { createMSTeamsHttpError } from "./http-error.js";
 import { createMSTeamsTokenProvider, loadMSTeamsSdkWithAuth } from "./sdk.js";
-
-const GRAPH_BETA = "https://graph.microsoft.com/beta";
-const NULL_BODY_STATUSES = new Set([101, 204, 205, 304]);
 import { readAccessToken } from "./token-response.js";
 import { resolveDelegatedAccessToken, resolveMSTeamsCredentials } from "./token.js";
 import { buildUserAgent } from "./user-agent.js";
+
+const GRAPH_BETA = "https://graph.microsoft.com/beta";
+const NULL_BODY_STATUSES = new Set([101, 204, 205, 304]);
 
 export type GraphUser = {
   id?: string;
@@ -66,9 +67,9 @@ async function requestGraph(params: {
   });
   try {
     if (!response.ok) {
-      const text = await response.text().catch(() => "");
-      throw new Error(
-        `${params.errorPrefix ?? "Graph"} ${params.path} failed (${response.status}): ${text || "unknown error"}`,
+      throw await createMSTeamsHttpError(
+        response,
+        `${params.errorPrefix ?? "Graph"} ${params.path} failed`,
       );
     }
     const body = NULL_BODY_STATUSES.has(response.status) ? null : await response.arrayBuffer();
@@ -132,10 +133,7 @@ export async function fetchGraphAbsoluteUrl<T>(params: {
   });
   try {
     if (!response.ok) {
-      const text = await response.text().catch(() => "");
-      throw new Error(
-        `Graph ${params.url} failed (${response.status}): ${text || "unknown error"}`,
-      );
+      throw await createMSTeamsHttpError(response, `Graph ${params.url} failed`);
     }
     return await readProviderJsonResponse<T>(response, `Graph ${params.url} failed`);
   } finally {

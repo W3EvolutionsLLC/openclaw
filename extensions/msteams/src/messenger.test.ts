@@ -124,7 +124,9 @@ function createMockApp(opts?: MockAppOptions): MSTeamsApp {
       const text = (activity as Record<string, unknown>)?.text;
       return { id: typeof text === "string" ? `id:${text}` : "created" };
     });
+  const apiServiceUrl = "https://smba.trafficmanager.net/amer";
   return {
+    client: { request: vi.fn() },
     tokenManager: {
       getBotToken: async () => ({ toString: () => "bot-token" }),
       getGraphToken: async () => ({ toString: () => "graph-token" }),
@@ -154,11 +156,15 @@ function createMockApp(opts?: MockAppOptions): MSTeamsApp {
       return await createFn(activity);
     },
     api: {
+      serviceUrl: apiServiceUrl,
       conversations: {
         activities: (conversationId: string) => {
-          opts?.onClientCreated?.("", conversationId);
+          opts?.onClientCreated?.(apiServiceUrl, conversationId);
           return {
-            create: createFn,
+            create: async (activity: unknown) => {
+              opts?.onReference?.({ serviceUrl: apiServiceUrl, ...(activity as object) });
+              return createFn(activity);
+            },
             update: async (_id: string, activity: unknown) => ({
               id: (activity as Record<string, unknown>)?.id ?? "updated",
             }),
@@ -885,7 +891,7 @@ describe("msteams messenger", () => {
             id: "19:abc@thread.tacv2",
             tenantId: "tenant-abc",
           }),
-          user: expect.objectContaining({ aadObjectId: "aad-user-123" }),
+          recipient: expect.objectContaining({ aadObjectId: "aad-user-123" }),
         }),
       ]);
       const ref = buildConversationReference(storedWithChannelDataTenant);

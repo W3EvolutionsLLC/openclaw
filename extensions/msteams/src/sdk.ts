@@ -106,10 +106,8 @@ type MSTeamsAppOn = {
     name: "file.consent.accept" | "file.consent.decline",
     cb: (ctx: FileConsentCtx) => void | Promise<void>,
   ): MSTeamsApp;
-  // SSO sign-in invokes. The production monitor intentionally leaves the SDK's
-  // system defaults registered so Teams gets the SDK's 200/412 response
-  // semantics. These overloads remain for route-name validation if a caller ever
-  // needs an explicit replacement route.
+  // SSO sign-in invokes. The monitor registers guarded replacement routes and
+  // delegates back into the SDK handlers after OpenClaw sender policy passes.
   (name: "signin.token-exchange", cb: (ctx: SigninTokenExchangeCtx) => unknown): MSTeamsApp;
   (name: "signin.verify-state", cb: (ctx: SigninVerifyStateCtx) => unknown): MSTeamsApp;
   // Feedback (thumbs up/down) on AI-generated messages — Teams delivers

@@ -102,6 +102,9 @@ const ChannelStreamingProgressSchema = z
     commandText: z.enum(["raw", "status"]).optional(),
   })
   .strict();
+const SlackStreamingProgressSchema = ChannelStreamingProgressSchema.extend({
+  nativeTaskCards: z.boolean().optional(),
+}).strict();
 const ChannelPreviewStreamingConfigSchema = z
   .object({
     mode: UnifiedStreamingModeSchema.optional(),
@@ -116,6 +119,7 @@ const TelegramPreviewStreamingConfigSchema = ChannelPreviewStreamingConfigSchema
 }).strict();
 const SlackStreamingConfigSchema = ChannelPreviewStreamingConfigSchema.extend({
   nativeTransport: z.boolean().optional(),
+  progress: SlackStreamingProgressSchema.optional(),
 }).strict();
 const SlackCapabilitiesSchema = z.union([
   z.array(z.string()),
@@ -1514,7 +1518,7 @@ export const MSTeamsConfigSchema = z
     appId: z.string().optional(),
     appPassword: SecretInputSchema.optional().register(sensitive),
     tenantId: z.string().optional(),
-    cloud: z.enum(["Public", "USGov", "USGovDoD", "China"]).optional(),
+    cloud: z.enum(["Public", "USGov", "USGovDoD"]).optional(),
     serviceUrl: z.string().url().optional(),
     authType: z.enum(["secret", "federated"]).optional(),
     certificatePath: z.string().optional(),

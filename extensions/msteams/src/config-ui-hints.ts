@@ -11,7 +11,7 @@ export const msTeamsChannelConfigUiHints = {
   },
   cloud: {
     label: "MS Teams Cloud",
-    help: 'Teams SDK cloud environment for auth, token validation, and token services: "Public", "USGov", "USGovDoD", or "China" (default: Public).',
+    help: 'Teams SDK cloud environment for auth, token validation, and token services: "Public", "USGov", or "USGovDoD" (default: Public).',
   },
   serviceUrl: {
     label: "MS Teams Service URL",

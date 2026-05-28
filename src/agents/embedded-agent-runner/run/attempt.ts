@@ -179,10 +179,8 @@ import {
   buildEmptyExplicitToolAllowlistError,
   collectExplicitToolAllowlistSources,
 } from "../../tool-allowlist-guard.js";
-import {
-  filterRuntimeCompatibleTools,
-  type RuntimeToolSchemaDiagnostic,
-} from "../../tool-schema-projection.js";
+import { filterRuntimeCompatibleTools } from "../../tool-schema-projection.js";
+import { logRuntimeToolSchemaQuarantine } from "../../tool-schema-quarantine.js";
 import {
   addClientToolsToToolSearchCatalog,
   applyToolSearchCatalog,
@@ -232,6 +230,7 @@ import { createEmbeddedAgentResourceLoader } from "../resource-loader.js";
 import {
   clearActiveEmbeddedRun,
   type EmbeddedAgentQueueHandle,
+  markActiveEmbeddedRunAbandoned,
   setActiveEmbeddedRun,
   updateActiveEmbeddedRunSessionFile,
   updateActiveEmbeddedRunSnapshot,
@@ -458,39 +457,6 @@ export {
   resolveEmbeddedAgentStreamFn,
 };
 
-function logRuntimeToolSchemaQuarantine(params: {
-  diagnostics: readonly RuntimeToolSchemaDiagnostic[];
-  tools: readonly Parameters<typeof getPluginToolMeta>[0][];
-  runId: string;
-  sessionKey?: string;
-  sessionId?: string;
-}): void {
-  if (params.diagnostics.length === 0) {
-    return;
-  }
-  const summary = params.diagnostics
-    .map((diagnostic) => {
-      const tool = params.tools[diagnostic.toolIndex];
-      const pluginId = tool ? getPluginToolMeta(tool)?.pluginId : undefined;
-      const owner = pluginId ? ` plugin=${pluginId}` : "";
-      emitTrustedDiagnosticEvent({
-        type: "tool.execution.blocked",
-        runId: params.runId,
-        ...(params.sessionKey ? { sessionKey: params.sessionKey } : {}),
-        ...(params.sessionId ? { sessionId: params.sessionId } : {}),
-        toolName: diagnostic.toolName,
-        toolSource: pluginId ? "plugin" : "core",
-        ...(pluginId ? { toolOwner: pluginId } : {}),
-        deniedReason: "unsupported_tool_schema",
-        reason: diagnostic.violations.join(", "),
-      });
-      return `${diagnostic.toolName}${owner}: ${diagnostic.violations.join(", ")}`;
-    })
-    .join("; ");
-  log.warn(
-    `[tools] quarantined ${params.diagnostics.length} unsupported tool schema${params.diagnostics.length === 1 ? "" : "s"} before model runtime projection: ${summary}. Run openclaw doctor for details.`,
-  );
-}
 const MAX_BTW_SNAPSHOT_MESSAGES = 100;
 
 function summarizeMessagePayload(msg: AgentMessage): { textChars: number; imageBlocks: number } {
@@ -2892,6 +2858,7 @@ export async function runEmbeddedAttempt(
           }
         }
       };
+      let queueHandleForAbandonment: EmbeddedAgentQueueHandle | undefined;
       const abortRun = (isTimeout = false, reason?: unknown) => {
         aborted = true;
         if (isTimeout) {
@@ -2907,7 +2874,14 @@ export async function runEmbeddedAttempt(
         }
         abortCompaction();
         void abortActiveSession();
-        if (isTimeout) {
+        if (isTimeout && queueHandleForAbandonment) {
+          markActiveEmbeddedRunAbandoned({
+            sessionId: params.sessionId,
+            handle: queueHandleForAbandonment,
+            sessionKey: params.sessionKey,
+            sessionFile: params.sessionFile,
+            reason: "timeout",
+          });
           void sessionLockController.releaseHeldLockForAbort().catch((err) => {
             log.warn(
               `failed to release session lock on timeout abort: runId=${params.runId} ${String(err)}`,
@@ -3092,6 +3066,7 @@ export async function runEmbeddedAttempt(
       if (params.replyOperation) {
         params.replyOperation.attachBackend(queueHandle);
       }
+      queueHandleForAbandonment = queueHandle;
       setActiveEmbeddedRun(params.sessionId, queueHandle, params.sessionKey, params.sessionFile);
 
       let abortWarnTimer: NodeJS.Timeout | undefined;
@@ -4549,6 +4524,7 @@ export async function runEmbeddedAttempt(
           acceptedSessionSpawns,
           lastToolError,
           lastAssistant,
+          itemLifecycle: getItemLifecycle(),
           toolMetas: toolMetasNormalized,
           replayMetadata,
           promptErrorSource,
