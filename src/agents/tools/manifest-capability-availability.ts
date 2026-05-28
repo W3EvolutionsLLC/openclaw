@@ -24,6 +24,48 @@ type CapabilityProviderMetadataKey =
   | "imageGenerationProviderMetadata"
   | "videoGenerationProviderMetadata"
   | "musicGenerationProviderMetadata";
+type CapabilityConfigSignal = Parameters<typeof manifestConfigSignalPasses>[0]["signal"];
+type CapabilityProviderBaseUrl = Parameters<typeof manifestProviderBaseUrlGuardPasses>[0]["guard"];
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function readRecordValue(record: unknown, key: string): unknown {
+  if (!isRecord(record)) {
+    return undefined;
+  }
+  try {
+    return record[key];
+  } catch {
+    return undefined;
+  }
+}
+
+function copyArrayEntries(value: unknown): unknown[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  let length = 0;
+  try {
+    length = value.length;
+  } catch {
+    return [];
+  }
+  const entries: unknown[] = [];
+  for (let index = 0; index < length; index += 1) {
+    try {
+      entries.push(value[index]);
+    } catch {
+      // Skip unreadable manifest metadata entries; later providers can still prove availability.
+    }
+  }
+  return entries;
+}
+
+function copyStringArrayEntries(value: unknown): string[] {
+  return copyArrayEntries(value).filter((entry): entry is string => typeof entry === "string");
+}
 
 type CapabilityMetadataSnapshot = Pick<PluginMetadataSnapshot, "index" | "plugins">;
 
@@ -53,13 +95,51 @@ function listCapabilityAuthSignals(params: {
     NonNullable<PluginManifestRecord["imageGenerationProviderMetadata"]>[string]["authSignals"]
   >[number]["providerBaseUrl"];
 }> {
-  const metadataKey = metadataKeyForCapabilityContract(params.key);
-  const metadata = metadataKey ? params.plugin[metadataKey]?.[params.providerId] : undefined;
-  if (metadata?.authSignals?.length) {
-    return metadata.authSignals;
+  const metadata = readCapabilityProviderMetadata(params.plugin, params.key, params.providerId);
+  const authSignals = copyArrayEntries(readRecordValue(metadata, "authSignals"))
+    .filter(isRecord)
+    .flatMap((signal) => {
+      const provider = readRecordValue(signal, "provider");
+      if (typeof provider !== "string") {
+        return [];
+      }
+      const providerBaseUrl = readRecordValue(signal, "providerBaseUrl") as
+        | CapabilityProviderBaseUrl
+        | undefined;
+      return [{ provider, ...(providerBaseUrl ? { providerBaseUrl } : {}) }];
+    });
+  if (authSignals.length > 0) {
+    return authSignals;
   }
-  return [params.providerId, ...(metadata?.aliases ?? []), ...(metadata?.authProviders ?? [])].map(
-    (provider) => ({ provider }),
+  return [
+    params.providerId,
+    ...copyStringArrayEntries(readRecordValue(metadata, "aliases")),
+    ...copyStringArrayEntries(readRecordValue(metadata, "authProviders")),
+  ].map((provider) => ({ provider }));
+}
+
+function readCapabilityProviderMetadata(
+  plugin: PluginManifestRecord,
+  key: CapabilityContractKey,
+  providerId: string,
+): Record<string, unknown> | undefined {
+  const metadataKey = metadataKeyForCapabilityContract(key);
+  const metadata = metadataKey
+    ? readRecordValue(readRecordValue(plugin, metadataKey), providerId)
+    : undefined;
+  return isRecord(metadata) ? metadata : undefined;
+}
+
+function listCapabilityProviderIds(
+  plugin: PluginManifestRecord,
+  key: CapabilityContractKey,
+): string[] {
+  return copyStringArrayEntries(readRecordValue(readRecordValue(plugin, "contracts"), key));
+}
+
+function listCapabilityConfigSignals(metadata: unknown): CapabilityConfigSignal[] {
+  return copyArrayEntries(readRecordValue(metadata, "configSignals")).filter(
+    (signal): signal is CapabilityConfigSignal => isRecord(signal),
   );
 }
 
@@ -102,6 +182,44 @@ function hasAvailableCapabilityPlugin(
   return false;
 }
 
+function capabilityConfigSignalPasses(params: {
+  config?: OpenClawConfig;
+  env: NodeJS.ProcessEnv;
+  signal: CapabilityConfigSignal;
+}): boolean {
+  try {
+    return manifestConfigSignalPasses(params);
+  } catch {
+    return false;
+  }
+}
+
+function providerBaseUrlGuardPasses(params: {
+  config?: OpenClawConfig;
+  guard: CapabilityProviderBaseUrl;
+}): boolean {
+  try {
+    return manifestProviderBaseUrlGuardPasses(params);
+  } catch {
+    return false;
+  }
+}
+
+function hasManifestProviderEnvSignal(
+  env: NodeJS.ProcessEnv,
+  plugin: PluginManifestRecord,
+  providerId: string,
+): boolean {
+  try {
+    return hasNonEmptyManifestEnvCandidate(
+      env,
+      manifestPluginSetupProviderEnvVars(plugin, providerId),
+    );
+  } catch {
+    return false;
+  }
+}
+
 function hasConfiguredCapabilityProviderSignal(params: {
   plugin: PluginManifestRecord;
   key: CapabilityContractKey;
@@ -109,11 +227,10 @@ function hasConfiguredCapabilityProviderSignal(params: {
   config?: OpenClawConfig;
   authStore?: AuthProfileStore;
 }): boolean {
-  const metadataKey = metadataKeyForCapabilityContract(params.key);
-  const metadata = metadataKey ? params.plugin[metadataKey]?.[params.providerId] : undefined;
+  const metadata = readCapabilityProviderMetadata(params.plugin, params.key, params.providerId);
   if (
-    metadata?.configSignals?.some((signal) =>
-      manifestConfigSignalPasses({
+    listCapabilityConfigSignals(metadata).some((signal) =>
+      capabilityConfigSignalPasses({
         config: params.config,
         env: process.env,
         signal,
@@ -128,7 +245,7 @@ function hasConfiguredCapabilityProviderSignal(params: {
     providerId: params.providerId,
   })) {
     if (
-      !manifestProviderBaseUrlGuardPasses({
+      !providerBaseUrlGuardPasses({
         config: params.config,
         guard: signal.providerBaseUrl,
       })
@@ -138,12 +255,7 @@ function hasConfiguredCapabilityProviderSignal(params: {
     if (params.authStore && listProfilesForProvider(params.authStore, signal.provider).length > 0) {
       return true;
     }
-    if (
-      hasNonEmptyManifestEnvCandidate(
-        process.env,
-        manifestPluginSetupProviderEnvVars(params.plugin, signal.provider),
-      )
-    ) {
+    if (hasManifestProviderEnvSignal(process.env, params.plugin, signal.provider)) {
       return true;
     }
   }
@@ -181,7 +293,7 @@ export function hasSnapshotCapabilityAvailability(params: {
   authStore?: AuthProfileStore;
 }): boolean {
   return hasAvailableCapabilityPlugin(params, (plugin) =>
-    (plugin.contracts?.[params.key] ?? []).some((providerId) =>
+    listCapabilityProviderIds(plugin, params.key).some((providerId) =>
       hasConfiguredCapabilityProviderSignal({
         plugin,
         key: params.key,
@@ -199,10 +311,7 @@ export function hasSnapshotProviderEnvAvailability(params: {
   config?: OpenClawConfig;
 }): boolean {
   return hasAvailableCapabilityPlugin(params, (plugin) =>
-    hasNonEmptyManifestEnvCandidate(
-      process.env,
-      manifestPluginSetupProviderEnvVars(plugin, params.providerId),
-    ),
+    hasManifestProviderEnvSignal(process.env, plugin, params.providerId),
   );
 }
 
@@ -214,7 +323,7 @@ export function hasSnapshotCapabilityProviderAvailability(params: {
   authStore?: AuthProfileStore;
 }): boolean {
   return hasAvailableCapabilityPlugin(params, (plugin) => {
-    if (!plugin.contracts?.[params.key]?.includes(params.providerId)) {
+    if (!listCapabilityProviderIds(plugin, params.key).includes(params.providerId)) {
       return false;
     }
     return hasConfiguredCapabilityProviderSignal({
