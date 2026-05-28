@@ -6,6 +6,7 @@ import {
 } from "../../infra/system-events.js";
 import {
   getDiagnosticSessionActivitySnapshot,
+  markDiagnosticModelStartedForTest,
   markDiagnosticToolStartedForTest,
   resetDiagnosticRunActivityForTest,
 } from "../../logging/diagnostic-run-activity.js";
@@ -37,7 +38,7 @@ describe("clearSessionResetRuntimeState", () => {
     expect(peekSystemEvents("gamma")).toEqual(["fresh gamma"]);
   });
 
-  it("clears stale diagnostic tool activity for reset session refs", () => {
+  it("clears stale diagnostic activity for reset session refs", () => {
     markDiagnosticToolStartedForTest({
       sessionId: "session-old",
       sessionKey: "agent:main:telegram:chat-1",
@@ -45,13 +46,20 @@ describe("clearSessionResetRuntimeState", () => {
       toolName: "bash",
       toolCallId: "tool-old",
     });
+    markDiagnosticModelStartedForTest({
+      sessionId: "session-old",
+      sessionKey: "agent:main:telegram:chat-1",
+      runId: "run-old",
+      provider: "openai",
+      model: "gpt-5.5",
+    });
 
     const result = clearSessionResetRuntimeState(["agent:main:telegram:chat-1", "session-old"]);
 
     expect(result.diagnosticActivityCleared).toEqual({
       activeEmbeddedRunsCleared: 0,
       activeToolsCleared: 1,
-      activeModelCallsCleared: 0,
+      activeModelCallsCleared: 1,
       activitiesCleared: 1,
     });
     expect(
