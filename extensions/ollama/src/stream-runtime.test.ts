@@ -1376,6 +1376,35 @@ describe("parseNdjsonStream", () => {
     expect(chunks[2].done).toBe(true);
   });
 
+  it("yields to timers while parsing dense NDJSON bursts", async () => {
+    const reader = mockNdjsonReader(
+      Array.from(
+        { length: 128 },
+        (_, index) =>
+          `{"model":"m","created_at":"t","message":{"role":"assistant","content":"${index}"},"done":false}`,
+      ),
+    );
+    let timerFired = false;
+    const timer = new Promise<void>((resolve) => {
+      setTimeout(() => {
+        timerFired = true;
+        resolve();
+      }, 0);
+    });
+
+    let chunks = 0;
+    for await (const chunk of parseNdjsonStream(reader)) {
+      expect(chunk.message.role).toBe("assistant");
+      chunks += 1;
+      if (chunks === 65) {
+        expect(timerFired).toBe(true);
+      }
+    }
+
+    await timer;
+    expect(chunks).toBe(128);
+  });
+
   it("parses tool_calls from intermediate chunk (not final)", async () => {
     // Ollama sends tool_calls in done:false chunk, final done:true has no tool_calls
     const reader = mockNdjsonReader([

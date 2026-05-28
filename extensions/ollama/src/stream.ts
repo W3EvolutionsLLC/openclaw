@@ -54,6 +54,8 @@ const GARBLED_VISIBLE_TEXT_MODEL_RE = /\b(?:glm|kimi)\b/i;
 const GARBLED_VISIBLE_TEXT_MIN_CHARS = 80;
 const GARBLED_VISIBLE_TEXT_SYMBOL_RE = /[$#%&="'_~`^|\\/*+\-[\]{}()<>:;,.!?]/gu;
 const LETTER_OR_DIGIT_RE = /[\p{L}\p{N}]/gu;
+const OLLAMA_NDJSON_COOPERATIVE_YIELD_MAX_RECORDS = 64;
+const OLLAMA_NDJSON_COOPERATIVE_YIELD_INTERVAL_MS = 12;
 
 function countMatches(text: string, re: RegExp): number {
   re.lastIndex = 0;
@@ -1022,6 +1024,24 @@ export async function* parseNdjsonStream(
 ): AsyncGenerator<OllamaChatResponse> {
   const decoder = new TextDecoder();
   let buffer = "";
+  let recordsSinceYield = 0;
+  let lastYieldedAt = Date.now();
+
+  const maybeYieldToEventLoop = async () => {
+    recordsSinceYield += 1;
+    const now = Date.now();
+    if (
+      recordsSinceYield < OLLAMA_NDJSON_COOPERATIVE_YIELD_MAX_RECORDS &&
+      now - lastYieldedAt < OLLAMA_NDJSON_COOPERATIVE_YIELD_INTERVAL_MS
+    ) {
+      return;
+    }
+    recordsSinceYield = 0;
+    lastYieldedAt = now;
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 0);
+    });
+  };
 
   while (true) {
     const { done, value } = await reader.read();
@@ -1039,6 +1059,7 @@ export async function* parseNdjsonStream(
       }
       try {
         yield parseJsonPreservingUnsafeIntegers(trimmed) as OllamaChatResponse;
+        await maybeYieldToEventLoop();
       } catch {
         log.warn(`Skipping malformed NDJSON line: ${trimmed.slice(0, 120)}`);
       }
