@@ -24,7 +24,6 @@ export function clearSessionResetRuntimeState(
     (acc, key) => {
       const result = clearDiagnosticSessionActivity({
         sessionId: key,
-        sessionKey: key,
         reason: "session_reset",
       });
       acc.activeEmbeddedRunsCleared += result.activeEmbeddedRunsCleared;

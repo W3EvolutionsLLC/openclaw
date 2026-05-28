@@ -69,4 +69,29 @@ describe("clearSessionResetRuntimeState", () => {
       }).activeWorkKind,
     ).toBeUndefined();
   });
+
+  it("keeps diagnostic activity for key-only cleanup without a retired session id", () => {
+    markDiagnosticToolStartedForTest({
+      sessionId: "session-active",
+      sessionKey: "agent:main:telegram:chat-1",
+      runId: "run-active",
+      toolName: "bash",
+      toolCallId: "tool-active",
+    });
+
+    const result = clearSessionResetRuntimeState(["agent:main:telegram:chat-1"]);
+
+    expect(result.diagnosticActivityCleared).toEqual({
+      activeEmbeddedRunsCleared: 0,
+      activeToolsCleared: 0,
+      activeModelCallsCleared: 0,
+      activitiesCleared: 0,
+    });
+    expect(
+      getDiagnosticSessionActivitySnapshot({
+        sessionId: "session-active",
+        sessionKey: "agent:main:telegram:chat-1",
+      }).activeWorkKind,
+    ).toBe("tool_call");
+  });
 });
