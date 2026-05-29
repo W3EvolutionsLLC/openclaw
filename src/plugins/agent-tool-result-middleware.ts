@@ -34,10 +34,30 @@ function normalizeAgentToolResultMiddlewareRuntime(
     : undefined;
 }
 
+function copyRequestedAgentToolResultMiddlewareRuntimes(value: unknown): string[] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  try {
+    return Array.isArray(value)
+      ? Array.from(value).filter((entry): entry is string => typeof entry === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
 export function normalizeAgentToolResultMiddlewareRuntimes(
   options?: AgentToolResultMiddlewareOptions,
 ): AgentToolResultMiddlewareRuntime[] {
-  const requested = options?.runtimes ?? options?.harnesses;
+  let requested: string[] | undefined;
+  try {
+    requested =
+      copyRequestedAgentToolResultMiddlewareRuntimes(options?.runtimes) ??
+      copyRequestedAgentToolResultMiddlewareRuntimes(options?.harnesses);
+  } catch {
+    return [];
+  }
   if (!requested) {
     return [...AGENT_TOOL_RESULT_MIDDLEWARE_RUNTIMES];
   }

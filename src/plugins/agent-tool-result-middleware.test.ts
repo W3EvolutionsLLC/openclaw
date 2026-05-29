@@ -24,4 +24,31 @@ describe("normalizeAgentToolResultMiddlewareRuntimes", () => {
       }),
     ).toEqual(["codex"]);
   });
+
+  it("fails closed on unreadable runtime option containers", () => {
+    const unreadableRuntimes: Record<string, unknown> = {};
+    Object.defineProperty(unreadableRuntimes, "runtimes", {
+      enumerable: true,
+      get() {
+        throw new Error("fuzzplugin middleware runtimes are unreadable");
+      },
+    });
+    const revokedRuntimes = Proxy.revocable(["codex"], {});
+    revokedRuntimes.revoke();
+
+    expect(normalizeAgentToolResultMiddlewareRuntimes(unreadableRuntimes as never)).toEqual([]);
+    expect(
+      normalizeAgentToolResultMiddlewareRuntimes({
+        runtimes: revokedRuntimes.proxy as never,
+      }),
+    ).toEqual([]);
+  });
+
+  it("ignores malformed runtime entries before normalizing", () => {
+    expect(
+      normalizeAgentToolResultMiddlewareRuntimes({
+        runtimes: [{} as never, " codex ", 1 as never, "openclaw"],
+      }),
+    ).toEqual(["codex", "openclaw"]);
+  });
 });

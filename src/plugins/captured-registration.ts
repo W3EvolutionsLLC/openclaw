@@ -214,6 +214,9 @@ export function createCapturedPluginRegistration(params?: {
           options?: AgentToolResultMiddlewareOptions,
         ) {
           const runtimes = normalizeAgentToolResultMiddlewareRuntimes(options);
+          if (runtimes.length === 0) {
+            return;
+          }
           agentToolResultMiddlewares.push({
             pluginId,
             pluginName,

@@ -151,4 +151,42 @@ describe("captured plugin registration", () => {
       },
     ]);
   });
+
+  it("skips unreadable agent tool result middleware captures without aborting registration", () => {
+    const unreadableRuntimes: Record<string, unknown> = {};
+    Object.defineProperty(unreadableRuntimes, "runtimes", {
+      enumerable: true,
+      get() {
+        throw new Error("fuzzplugin captured middleware runtimes are unreadable");
+      },
+    });
+    const revokedRuntimes = Proxy.revocable(["codex"], {});
+    revokedRuntimes.revoke();
+
+    const captured = capturePluginRegistration({
+      id: "fuzzplugin",
+      name: "Fuzz Plugin",
+      register(api) {
+        api.registerAgentToolResultMiddleware(() => undefined, unreadableRuntimes as never);
+        api.registerAgentToolResultMiddleware(() => undefined, {
+          runtimes: revokedRuntimes.proxy as never,
+        });
+        api.registerAgentToolResultMiddleware(() => undefined, {
+          runtimes: [{} as never],
+        });
+        api.registerAgentToolResultMiddleware(() => undefined, {
+          harnesses: ["codex-app-server"],
+        });
+        api.registerTool({
+          name: "mockplugin-captured-tool",
+          description: "Captured healthy tool sibling",
+          parameters: {},
+          execute: async () => ({ content: [] }),
+        } as unknown as AnyAgentTool);
+      },
+    });
+
+    expect(captured.agentToolResultMiddlewares.map((entry) => entry.runtimes)).toEqual([["codex"]]);
+    expect(captured.tools.map((tool) => tool.name)).toEqual(["mockplugin-captured-tool"]);
+  });
 });
