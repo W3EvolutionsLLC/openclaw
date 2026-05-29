@@ -187,6 +187,7 @@ import type {
   PluginHookRegistration as TypedPluginHookRegistration,
   PluginLogger,
   PluginRegistrationMode,
+  PluginTextReplacement,
   ProviderPlugin,
   RealtimeTranscriptionProviderPlugin,
   RealtimeVoiceProviderPlugin,
@@ -1508,6 +1509,20 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
     const prepareExecution = readHostHookFieldValue(prepareExecutionValue);
     const resolveExecutionArgs = readHostHookFieldValue(resolveExecutionArgsValue);
     const nativeToolMode = readHostHookFieldValue(nativeToolModeValue);
+    const normalizedTextTransforms = normalizePluginTextTransforms(
+      textTransforms,
+      "cli backend textTransforms",
+    );
+    if (!normalizedTextTransforms.ok) {
+      pushDiagnostic({
+        level: "error",
+        pluginId: record.id,
+        source: record.source,
+        message: normalizedTextTransforms.message,
+      });
+      return;
+    }
+
     const normalizedBackend: CliBackendPlugin = {
       id,
       config: config as CliBackendPlugin["config"],
@@ -1541,8 +1556,8 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
               ).call(backend, ctx),
           }
         : {}),
-      ...(textTransforms !== undefined
-        ? { textTransforms: textTransforms as CliBackendPlugin["textTransforms"] }
+      ...(normalizedTextTransforms.transforms !== undefined
+        ? { textTransforms: normalizedTextTransforms.transforms }
         : {}),
       ...(typeof defaultAuthProfileId === "string" ? { defaultAuthProfileId } : {}),
       ...(authEpochMode !== undefined
@@ -1584,10 +1599,17 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
     record: PluginRecord,
     transforms: PluginTextTransformsRegistration["transforms"],
   ) => {
-    if (
-      (!transforms.input || transforms.input.length === 0) &&
-      (!transforms.output || transforms.output.length === 0)
-    ) {
+    const normalized = normalizePluginTextTransforms(transforms, "text transform registration");
+    if (!normalized.ok) {
+      pushDiagnostic({
+        level: "error",
+        pluginId: record.id,
+        source: record.source,
+        message: normalized.message,
+      });
+      return;
+    }
+    if (!normalized.transforms) {
       pushDiagnostic({
         level: "warn",
         pluginId: record.id,
@@ -1599,7 +1621,7 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
     registry.textTransforms.push({
       pluginId: record.id,
       pluginName: record.name,
-      transforms,
+      transforms: normalized.transforms,
       source: record.source,
       rootDir: record.rootDir,
     });
@@ -2729,6 +2751,107 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
 
   const readHostHookFieldValue = (field: ReturnType<typeof readHostHookField>): unknown =>
     field.ok ? field.value : undefined;
+
+  const normalizePluginTextReplacementFrom = (
+    value: unknown,
+  ): { ok: true; from: PluginTextReplacement["from"] } | { ok: false } => {
+    if (typeof value === "string") {
+      return { ok: true, from: value };
+    }
+    try {
+      return value instanceof RegExp
+        ? { ok: true, from: new RegExp(value.source, value.flags) }
+        : { ok: false };
+    } catch {
+      return { ok: false };
+    }
+  };
+
+  const normalizePluginTextReplacementList = (
+    value: unknown,
+    field: "input" | "output",
+    messagePrefix: string,
+  ): { ok: true; replacements: PluginTextReplacement[] } | { ok: false; message: string } => {
+    if (value === undefined) {
+      return { ok: true, replacements: [] };
+    }
+    let isArray = false;
+    try {
+      isArray = Array.isArray(value);
+    } catch {
+      return { ok: false, message: `${messagePrefix} has unreadable field: ${field}` };
+    }
+    if (!isArray) {
+      return { ok: false, message: `${messagePrefix} has invalid ${field} replacements` };
+    }
+
+    let entries: unknown[];
+    try {
+      entries = Array.from(value as readonly unknown[]);
+    } catch {
+      return { ok: false, message: `${messagePrefix} has unreadable field: ${field}` };
+    }
+
+    const replacements: PluginTextReplacement[] = [];
+    for (const entry of entries) {
+      if (!entry || typeof entry !== "object") {
+        return { ok: false, message: `${messagePrefix} has invalid ${field} replacements` };
+      }
+      const fromValue = readHostHookField(entry, "from");
+      const toValue = readHostHookField(entry, "to");
+      if (!fromValue.ok || !toValue.ok) {
+        return { ok: false, message: `${messagePrefix} has unreadable field: ${field}` };
+      }
+      const from = normalizePluginTextReplacementFrom(fromValue.value);
+      if (!from.ok || typeof toValue.value !== "string") {
+        return { ok: false, message: `${messagePrefix} has invalid ${field} replacements` };
+      }
+      replacements.push({ from: from.from, to: toValue.value });
+    }
+    return { ok: true, replacements };
+  };
+
+  const normalizePluginTextTransforms = (
+    transforms: unknown,
+    messagePrefix: string,
+  ):
+    | { ok: true; transforms: PluginTextTransformsRegistration["transforms"] | undefined }
+    | { ok: false; message: string } => {
+    if (transforms === undefined) {
+      return { ok: true, transforms: undefined };
+    }
+    if (!transforms || typeof transforms !== "object") {
+      return { ok: false, message: `${messagePrefix} must be an object` };
+    }
+
+    const inputValue = readHostHookField(transforms, "input");
+    const outputValue = readHostHookField(transforms, "output");
+    if (!inputValue.ok) {
+      return { ok: false, message: `${messagePrefix} has unreadable field: input` };
+    }
+    if (!outputValue.ok) {
+      return { ok: false, message: `${messagePrefix} has unreadable field: output` };
+    }
+
+    const input = normalizePluginTextReplacementList(inputValue.value, "input", messagePrefix);
+    if (!input.ok) {
+      return input;
+    }
+    const output = normalizePluginTextReplacementList(outputValue.value, "output", messagePrefix);
+    if (!output.ok) {
+      return output;
+    }
+    if (input.replacements.length === 0 && output.replacements.length === 0) {
+      return { ok: true, transforms: undefined };
+    }
+    return {
+      ok: true,
+      transforms: {
+        ...(input.replacements.length > 0 ? { input: input.replacements } : {}),
+        ...(output.replacements.length > 0 ? { output: output.replacements } : {}),
+      },
+    };
+  };
 
   const isToolMetadataRisk = (
     value: unknown,
