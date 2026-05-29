@@ -164,6 +164,73 @@ describe("host-hook fixture plugin contract", () => {
     });
   });
 
+  it("fails closed on unreadable agent tool registration options without aborting plugin registration", () => {
+    const { config, registry } = createPluginRegistryFixture();
+    const revokedNames = Proxy.revocable(["mockplugin_revoked"], {});
+    revokedNames.revoke();
+    const unreadableNames: Record<string, unknown> = {};
+    Object.defineProperty(unreadableNames, "names", {
+      enumerable: true,
+      get() {
+        throw new Error("fuzzplugin tool option names are unreadable");
+      },
+    });
+    const unreadableName: Record<string, unknown> = {};
+    Object.defineProperty(unreadableName, "name", {
+      enumerable: true,
+      get() {
+        throw new Error("fuzzplugin tool option name is unreadable");
+      },
+    });
+    const unreadableOptional: Record<string, unknown> = {};
+    Object.defineProperty(unreadableOptional, "optional", {
+      enumerable: true,
+      get() {
+        throw new Error("fuzzplugin tool option optional is unreadable");
+      },
+    });
+    const createTool = (name: string) => ({
+      name,
+      description: `${name} tool`,
+      parameters: { type: "object", properties: {} },
+      execute: async () => ({ content: [{ type: "text", text: "ok" }] }),
+    });
+
+    registerTestPlugin({
+      registry,
+      config,
+      record: createPluginRecord({
+        id: "fuzzplugin",
+        name: "Fuzz Plugin",
+        origin: "workspace",
+        contracts: { tools: ["mockplugin_status"] },
+      }),
+      register(api) {
+        api.registerTool(createTool("mockplugin_unreadable_names"), unreadableNames as never);
+        api.registerTool(createTool("mockplugin_revoked_names"), {
+          names: revokedNames.proxy as never,
+        });
+        api.registerTool(createTool("mockplugin_unreadable_name"), unreadableName as never);
+        api.registerTool(createTool("mockplugin_unreadable_optional"), unreadableOptional as never);
+        api.registerTool(createTool("mockplugin_status"));
+      },
+    });
+
+    expect(registry.registry.tools.flatMap((entry) => entry.names)).toEqual(["mockplugin_status"]);
+    expect(diagnosticSummaries(registry.registry.diagnostics)).toContainEqual({
+      pluginId: "fuzzplugin",
+      message: "plugin tool registration has unreadable field: names",
+    });
+    expect(diagnosticSummaries(registry.registry.diagnostics)).toContainEqual({
+      pluginId: "fuzzplugin",
+      message: "plugin tool registration has unreadable field: name",
+    });
+    expect(diagnosticSummaries(registry.registry.diagnostics)).toContainEqual({
+      pluginId: "fuzzplugin",
+      message: "plugin tool registration has unreadable field: optional",
+    });
+  });
+
   it("fails closed on unreadable Control UI descriptors without aborting plugin registration", () => {
     const { config, registry } = createPluginRegistryFixture();
     const descriptor: Record<string, unknown> = {

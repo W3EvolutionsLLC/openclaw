@@ -611,8 +611,55 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
       });
       return;
     }
-    const names = [...(opts?.names ?? []), ...(opts?.name ? [opts.name] : [])];
-    const optional = opts?.optional === true;
+    const pushUnreadableDiagnostic = (field: string) => {
+      pushDiagnostic({
+        level: "error",
+        pluginId: record.id,
+        source: record.source,
+        message: `plugin tool registration has unreadable field: ${field}`,
+      });
+    };
+    const names: string[] = [];
+    let optional = false;
+    if (opts && (typeof opts === "object" || typeof opts === "function")) {
+      const namesValue = readHostHookField(opts, "names");
+      const nameValue = readHostHookField(opts, "name");
+      const optionalValue = readHostHookField(opts, "optional");
+      if (!namesValue.ok) {
+        pushUnreadableDiagnostic("names");
+        return;
+      }
+      if (!nameValue.ok) {
+        pushUnreadableDiagnostic("name");
+        return;
+      }
+      if (!optionalValue.ok) {
+        pushUnreadableDiagnostic("optional");
+        return;
+      }
+      if (namesValue.value !== undefined) {
+        try {
+          if (!Array.isArray(namesValue.value)) {
+            pushDiagnostic({
+              level: "error",
+              pluginId: record.id,
+              source: record.source,
+              message: "plugin tool registration has invalid field: names",
+            });
+            return;
+          }
+          names.push(...normalizeStringEntries(Array.from(namesValue.value)));
+        } catch {
+          pushUnreadableDiagnostic("names");
+          return;
+        }
+      }
+      const name = normalizeOptionalString(nameValue.value);
+      if (name) {
+        names.push(name);
+      }
+      optional = optionalValue.value === true;
+    }
     let overrideStaticToolName = false;
 
     if (typeof tool !== "function") {
