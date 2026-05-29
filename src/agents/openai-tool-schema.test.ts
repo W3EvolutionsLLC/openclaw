@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   clearOpenAIToolSchemaCacheForTest,
+  findOpenAIStrictToolSchemaDiagnostics,
   isStrictOpenAIJsonSchemaCompatible,
   normalizeStrictOpenAIJsonSchema,
   resolveOpenAIStrictToolFlagForInventory,
@@ -90,5 +91,48 @@ describe("OpenAI strict tool schema normalization", () => {
         unsupportedToolSchemaKeywords: ["minimum"],
       }),
     ).toBe(third);
+  });
+
+  it("treats unreadable synthetic tool schemas as strict-incompatible diagnostics", () => {
+    const unreadableParametersTool = Object.defineProperty(
+      {
+        name: "fuzzplugin_unreadable_parameters",
+        parameters: undefined as unknown,
+      },
+      "parameters",
+      {
+        get() {
+          throw new Error("fuzzplugin parameters exploded");
+        },
+      },
+    );
+    const unreadableNestedSchemaTool = {
+      name: "fuzzplugin_nested_schema",
+      parameters: Object.defineProperty({ type: "object" }, "properties", {
+        enumerable: true,
+        get() {
+          throw new Error("fuzzplugin schema exploded");
+        },
+      }),
+    };
+    const healthyTool = {
+      name: "mockplugin_lookup",
+      parameters: { type: "object", properties: {}, additionalProperties: false },
+    };
+    const tools = [unreadableParametersTool, unreadableNestedSchemaTool, healthyTool];
+
+    expect(resolveOpenAIStrictToolFlagForInventory(tools, true)).toBe(false);
+    expect(findOpenAIStrictToolSchemaDiagnostics(tools)).toEqual([
+      {
+        toolIndex: 0,
+        toolName: "fuzzplugin_unreadable_parameters",
+        violations: ["fuzzplugin_unreadable_parameters.parameters"],
+      },
+      {
+        toolIndex: 1,
+        toolName: "fuzzplugin_nested_schema",
+        violations: ["fuzzplugin_nested_schema.parameters"],
+      },
+    ]);
   });
 });
