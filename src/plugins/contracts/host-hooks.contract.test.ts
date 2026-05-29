@@ -263,6 +263,77 @@ describe("host-hook fixture plugin contract", () => {
     });
   });
 
+  it("fails closed on unreadable internal hook registration metadata without aborting plugin registration", () => {
+    const { config, registry } = createPluginRegistryFixture();
+    const revokedEvents = Proxy.revocable(["gateway:startup"], {});
+    revokedEvents.revoke();
+    const unreadableOptions: Record<string, unknown> = {
+      name: "mockplugin-options-hook",
+    };
+    Object.defineProperty(unreadableOptions, "description", {
+      enumerable: true,
+      get() {
+        throw new Error("fuzzplugin hook options description is unreadable");
+      },
+    });
+    const unreadableEntry = {
+      hook: {
+        name: "mockplugin-entry-hook",
+        description: "Mock entry hook",
+      },
+      metadata: {},
+      frontmatter: {},
+      invocation: { enabled: true },
+    };
+    Object.defineProperty(unreadableEntry, "metadata", {
+      enumerable: true,
+      get() {
+        throw new Error("fuzzplugin hook entry metadata is unreadable");
+      },
+    });
+
+    registerTestPlugin({
+      registry,
+      config,
+      record: createPluginRecord({
+        id: "fuzzplugin",
+        name: "Fuzz Plugin",
+        origin: "workspace",
+      }),
+      register(api) {
+        api.registerHook(revokedEvents.proxy as never, () => undefined, {
+          name: "mockplugin-revoked-hook",
+        });
+        api.registerHook("gateway:startup", () => undefined, unreadableOptions as never);
+        api.registerHook("gateway:startup", () => undefined, {
+          entry: unreadableEntry as never,
+        });
+        api.registerCommand({
+          name: "mockplugin-hooks",
+          description: "Healthy command sibling",
+          handler: async () => ({ text: "ok" }),
+        });
+      },
+    });
+
+    expect(registry.registry.hooks).toHaveLength(0);
+    expect(registry.registry.commands.map((entry) => entry.command.name)).toEqual([
+      "mockplugin-hooks",
+    ]);
+    expect(diagnosticSummaries(registry.registry.diagnostics)).toContainEqual({
+      pluginId: "fuzzplugin",
+      message: "hook registration has unreadable field: events",
+    });
+    expect(diagnosticSummaries(registry.registry.diagnostics)).toContainEqual({
+      pluginId: "fuzzplugin",
+      message: "hook registration has unreadable field: options",
+    });
+    expect(diagnosticSummaries(registry.registry.diagnostics)).toContainEqual({
+      pluginId: "fuzzplugin",
+      message: "hook registration has unreadable field: entry",
+    });
+  });
+
   it("fails closed on unreadable scheduler and action hooks without aborting plugin registration", () => {
     const { config, registry } = createPluginRegistryFixture();
     const schedulerJob: Record<string, unknown> = {

@@ -680,10 +680,45 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
     config: OpenClawPluginApi["config"],
     pluginConfig: unknown,
   ) => {
-    const normalizedEvents = normalizeStringEntries(Array.isArray(events) ? events : [events]);
-    const entry = opts?.entry ?? null;
+    const pushUnreadableDiagnostic = (field: string) => {
+      pushDiagnostic({
+        level: "error",
+        pluginId: record.id,
+        source: record.source,
+        message: `hook registration has unreadable field: ${field}`,
+      });
+    };
+    let normalizedEvents: string[];
+    try {
+      normalizedEvents = normalizeStringEntries(Array.isArray(events) ? events : [events]);
+    } catch {
+      pushUnreadableDiagnostic("events");
+      return;
+    }
+    let entry: NonNullable<OpenClawPluginHookOptions["entry"]> | null = null;
+    let optionName: unknown;
+    let optionDescription: unknown;
+    let optionRegister: unknown;
+    try {
+      entry = opts?.entry ?? null;
+      optionName = opts?.name;
+      optionDescription = opts?.description;
+      optionRegister = opts?.register;
+    } catch {
+      pushUnreadableDiagnostic("options");
+      return;
+    }
+    let hookNameCandidate: unknown;
+    let descriptionCandidate: unknown;
+    try {
+      hookNameCandidate = entry?.hook.name ?? optionName;
+      descriptionCandidate = entry?.hook.description ?? optionDescription ?? "";
+    } catch {
+      pushUnreadableDiagnostic("entry");
+      return;
+    }
     const hookName = requireRegistrationValue(
-      entry?.hook.name ?? opts?.name?.trim(),
+      normalizeOptionalString(hookNameCandidate),
       "hook registration missing name",
     );
     const existingHook = registry.hooks.find((entry) => entry.entry.hook.name === hookName);
@@ -697,36 +732,42 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
       return;
     }
 
-    const description = entry?.hook.description ?? opts?.description ?? "";
-    const hookEntry: HookEntry = entry
-      ? {
-          ...entry,
-          hook: {
-            ...entry.hook,
-            name: hookName,
-            description,
-            source: "openclaw-plugin",
-            pluginId: record.id,
-          },
-          metadata: {
-            ...entry.metadata,
-            events: normalizedEvents,
-          },
-        }
-      : {
-          hook: {
-            name: hookName,
-            description,
-            source: "openclaw-plugin",
-            pluginId: record.id,
-            filePath: record.source,
-            baseDir: path.dirname(record.source),
-            handlerPath: record.source,
-          },
-          frontmatter: {},
-          metadata: { events: normalizedEvents },
-          invocation: { enabled: true },
-        };
+    const description = normalizeOptionalString(descriptionCandidate) ?? "";
+    let hookEntry: HookEntry;
+    try {
+      hookEntry = entry
+        ? {
+            ...entry,
+            hook: {
+              ...entry.hook,
+              name: hookName,
+              description,
+              source: "openclaw-plugin",
+              pluginId: record.id,
+            },
+            metadata: {
+              ...entry.metadata,
+              events: normalizedEvents,
+            },
+          }
+        : {
+            hook: {
+              name: hookName,
+              description,
+              source: "openclaw-plugin",
+              pluginId: record.id,
+              filePath: record.source,
+              baseDir: path.dirname(record.source),
+              handlerPath: record.source,
+            },
+            frontmatter: {},
+            metadata: { events: normalizedEvents },
+            invocation: { enabled: true },
+          };
+    } catch {
+      pushUnreadableDiagnostic("entry");
+      return;
+    }
 
     record.hookNames.push(hookName);
     registry.hooks.push({
@@ -740,7 +781,7 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
     if (
       !registryParams.activateGlobalSideEffects ||
       !hookSystemEnabled ||
-      opts?.register === false
+      optionRegister === false
     ) {
       return;
     }
