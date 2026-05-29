@@ -206,6 +206,63 @@ describe("host-hook fixture plugin contract", () => {
     });
   });
 
+  it("fails closed on unreadable lifecycle and event hooks without aborting plugin registration", () => {
+    const { config, registry } = createPluginRegistryFixture();
+    const lifecycle: Record<string, unknown> = {
+      id: "mockplugin-runtime",
+      cleanup: () => undefined,
+    };
+    Object.defineProperty(lifecycle, "description", {
+      enumerable: true,
+      get() {
+        throw new Error("fuzzplugin lifecycle description is unreadable");
+      },
+    });
+    const subscription: Record<string, unknown> = {
+      id: "mockplugin-events",
+      handle: () => undefined,
+    };
+    Object.defineProperty(subscription, "streams", {
+      enumerable: true,
+      get() {
+        throw new Error("fuzzplugin event streams are unreadable");
+      },
+    });
+
+    registerTestPlugin({
+      registry,
+      config,
+      record: createPluginRecord({
+        id: "fuzzplugin",
+        name: "Fuzz Plugin",
+        origin: "workspace",
+      }),
+      register(api) {
+        api.registerRuntimeLifecycle(lifecycle as never);
+        api.registerAgentEventSubscription(subscription as never);
+        api.registerCommand({
+          name: "mockplugin-hooks",
+          description: "Healthy command sibling",
+          handler: async () => ({ text: "ok" }),
+        });
+      },
+    });
+
+    expect(registry.registry.runtimeLifecycles ?? []).toHaveLength(0);
+    expect(registry.registry.agentEventSubscriptions ?? []).toHaveLength(0);
+    expect(registry.registry.commands.map((entry) => entry.command.name)).toEqual([
+      "mockplugin-hooks",
+    ]);
+    expect(diagnosticSummaries(registry.registry.diagnostics)).toContainEqual({
+      pluginId: "fuzzplugin",
+      message: "runtime lifecycle registration has unreadable field: description",
+    });
+    expect(diagnosticSummaries(registry.registry.diagnostics)).toContainEqual({
+      pluginId: "fuzzplugin",
+      message: "agent event subscription registration has unreadable field: streams",
+    });
+  });
+
   it("rejects external plugins from trusted policy and reserved command ownership", () => {
     const { config, registry } = createPluginRegistryFixture();
     registerTestPlugin({

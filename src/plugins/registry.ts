@@ -2337,7 +2337,31 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
     record: PluginRecord,
     lifecycle: PluginRuntimeLifecycleRegistration,
   ) => {
-    const id = normalizePluginHostHookId(lifecycle.id);
+    const idValue = readHostHookField(lifecycle, "id");
+    const descriptionValue = readHostHookField(lifecycle, "description");
+    const cleanupValue = readHostHookField(lifecycle, "cleanup");
+    const pushUnreadableDiagnostic = (field: keyof PluginRuntimeLifecycleRegistration) => {
+      pushDiagnostic({
+        level: "error",
+        pluginId: record.id,
+        source: record.source,
+        message: `runtime lifecycle registration has unreadable field: ${field}`,
+      });
+    };
+    if (!idValue.ok) {
+      pushUnreadableDiagnostic("id");
+      return;
+    }
+    if (!descriptionValue.ok) {
+      pushUnreadableDiagnostic("description");
+      return;
+    }
+    if (!cleanupValue.ok) {
+      pushUnreadableDiagnostic("cleanup");
+      return;
+    }
+    const id = normalizeHostHookString(idValue.value);
+    const description = normalizeOptionalHostHookString(descriptionValue.value);
     if (!id) {
       pushDiagnostic({
         level: "error",
@@ -2359,7 +2383,17 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
       });
       return;
     }
-    if (lifecycle.cleanup !== undefined && typeof lifecycle.cleanup !== "function") {
+    if (description === "") {
+      pushDiagnostic({
+        level: "error",
+        pluginId: record.id,
+        source: record.source,
+        message: `runtime lifecycle description must be a string: ${id}`,
+      });
+      return;
+    }
+    const cleanup = cleanupValue.value;
+    if (cleanup !== undefined && typeof cleanup !== "function") {
       pushDiagnostic({
         level: "error",
         pluginId: record.id,
@@ -2371,7 +2405,13 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
     (registry.runtimeLifecycles ??= []).push({
       pluginId: record.id,
       pluginName: record.name,
-      lifecycle: { ...lifecycle, id },
+      lifecycle: {
+        id,
+        ...(description !== undefined ? { description } : {}),
+        ...(cleanup !== undefined
+          ? { cleanup: cleanup as PluginRuntimeLifecycleRegistration["cleanup"] }
+          : {}),
+      },
       source: record.source,
       rootDir: record.rootDir,
     });
@@ -2381,8 +2421,38 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
     record: PluginRecord,
     subscription: PluginAgentEventSubscriptionRegistration,
   ) => {
-    const id = normalizePluginHostHookId(subscription.id);
-    if (!id || typeof subscription.handle !== "function") {
+    const idValue = readHostHookField(subscription, "id");
+    const descriptionValue = readHostHookField(subscription, "description");
+    const streamsValue = readHostHookField(subscription, "streams");
+    const handleValue = readHostHookField(subscription, "handle");
+    const pushUnreadableDiagnostic = (field: keyof PluginAgentEventSubscriptionRegistration) => {
+      pushDiagnostic({
+        level: "error",
+        pluginId: record.id,
+        source: record.source,
+        message: `agent event subscription registration has unreadable field: ${field}`,
+      });
+    };
+    if (!idValue.ok) {
+      pushUnreadableDiagnostic("id");
+      return;
+    }
+    if (!descriptionValue.ok) {
+      pushUnreadableDiagnostic("description");
+      return;
+    }
+    if (!streamsValue.ok) {
+      pushUnreadableDiagnostic("streams");
+      return;
+    }
+    if (!handleValue.ok) {
+      pushUnreadableDiagnostic("handle");
+      return;
+    }
+    const id = normalizeHostHookString(idValue.value);
+    const description = normalizeOptionalHostHookString(descriptionValue.value);
+    const handle = handleValue.value;
+    if (!id || typeof handle !== "function") {
       pushDiagnostic({
         level: "error",
         pluginId: record.id,
@@ -2391,7 +2461,16 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
       });
       return;
     }
-    const streams = normalizeHostHookStringList(subscription.streams);
+    if (description === "") {
+      pushDiagnostic({
+        level: "error",
+        pluginId: record.id,
+        source: record.source,
+        message: `agent event subscription description must be a string: ${id}`,
+      });
+      return;
+    }
+    const streams = normalizeHostHookStringList(streamsValue.value);
     if (streams === null) {
       pushDiagnostic({
         level: "error",
@@ -2416,7 +2495,12 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
     (registry.agentEventSubscriptions ??= []).push({
       pluginId: record.id,
       pluginName: record.name,
-      subscription: { ...subscription, id, ...(streams !== undefined ? { streams } : {}) },
+      subscription: {
+        id,
+        ...(description !== undefined ? { description } : {}),
+        ...(streams !== undefined ? { streams } : {}),
+        handle: handle as PluginAgentEventSubscriptionRegistration["handle"],
+      },
       source: record.source,
       rootDir: record.rootDir,
     });
