@@ -6,6 +6,7 @@ import {
   expandPolicyWithPluginGroups,
   expandToolGroups,
   normalizeToolList,
+  normalizeToolDescriptorName,
   normalizeToolName,
 } from "../../tool-policy.js";
 
@@ -110,7 +111,10 @@ export function applyEmbeddedAttemptToolsAllow<T extends { name: string }>(
   const policy = pluginGroups
     ? expandPolicyWithPluginGroups({ allow: toolsAllow }, pluginGroups)
     : { allow: toolsAllow };
-  return tools.filter((tool) => isToolAllowedByPolicyName(tool.name, policy));
+  return tools.filter((tool) => {
+    const name = normalizeToolDescriptorName(tool);
+    return name ? isToolAllowedByPolicyName(name, policy) : false;
+  });
 }
 
 export function mergeForcedEmbeddedAttemptToolsAllow(
