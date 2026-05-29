@@ -456,6 +456,110 @@ describe("host-hook fixture plugin contract", () => {
     });
   });
 
+  it("fails closed on unreadable service registrations without aborting plugin registration", () => {
+    const { config, registry } = createPluginRegistryFixture();
+    const service: Record<string, unknown> = {
+      start: () => undefined,
+    };
+    Object.defineProperty(service, "id", {
+      enumerable: true,
+      get() {
+        throw new Error("fuzzplugin service id is unreadable");
+      },
+    });
+    const discovery: Record<string, unknown> = {
+      id: "mockplugin-discovery",
+    };
+    Object.defineProperty(discovery, "advertise", {
+      enumerable: true,
+      get() {
+        throw new Error("fuzzplugin discovery advertise handler is unreadable");
+      },
+    });
+
+    registerTestPlugin({
+      registry,
+      config,
+      record: createPluginRecord({
+        id: "fuzzplugin",
+        name: "Fuzz Plugin",
+        origin: "workspace",
+      }),
+      register(api) {
+        api.registerService(service as never);
+        api.registerGatewayDiscoveryService(discovery as never);
+        api.registerCommand({
+          name: "mockplugin-service",
+          description: "Healthy command sibling",
+          handler: async () => ({ text: "ok" }),
+        });
+      },
+    });
+
+    expect(registry.registry.services ?? []).toHaveLength(0);
+    expect(registry.registry.gatewayDiscoveryServices ?? []).toHaveLength(0);
+    expect(registry.registry.commands.map((entry) => entry.command.name)).toEqual([
+      "mockplugin-service",
+    ]);
+    expect(diagnosticSummaries(registry.registry.diagnostics)).toContainEqual({
+      pluginId: "fuzzplugin",
+      message: "service registration has unreadable field: id",
+    });
+    expect(diagnosticSummaries(registry.registry.diagnostics)).toContainEqual({
+      pluginId: "fuzzplugin",
+      message: "gateway discovery service registration has unreadable field: advertise",
+    });
+  });
+
+  it("preserves original service receivers while storing sanitized registrations", async () => {
+    const { config, registry } = createPluginRegistryFixture();
+    const service = {
+      id: "mockplugin-service",
+      starts: 0,
+      stops: 0,
+      start() {
+        this.starts += 1;
+      },
+      stop() {
+        this.stops += 1;
+      },
+    };
+    const discovery = {
+      id: "mockplugin-discovery",
+      advertises: 0,
+      advertise() {
+        this.advertises += 1;
+      },
+    };
+
+    registerTestPlugin({
+      registry,
+      config,
+      record: createPluginRecord({
+        id: "fuzzplugin",
+        name: "Fuzz Plugin",
+        origin: "workspace",
+      }),
+      register(api) {
+        api.registerService(service);
+        api.registerGatewayDiscoveryService(discovery);
+      },
+    });
+
+    const registeredService = registry.registry.services[0]?.service;
+    const registeredDiscovery = registry.registry.gatewayDiscoveryServices[0]?.service;
+    expect(registeredService).toMatchObject({ id: "mockplugin-service" });
+    expect(registeredDiscovery).toMatchObject({ id: "mockplugin-discovery" });
+
+    await registeredService?.start({} as never);
+    await registeredService?.stop?.({} as never);
+    await registeredDiscovery?.advertise({} as never);
+
+    expect(service.starts).toBe(1);
+    expect(service.stops).toBe(1);
+    expect(discovery.advertises).toBe(1);
+  });
+
   it("rejects external plugins from trusted policy and reserved command ownership", () => {
     const { config, registry } = createPluginRegistryFixture();
     registerTestPlugin({

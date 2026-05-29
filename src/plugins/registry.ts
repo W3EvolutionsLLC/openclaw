@@ -1825,8 +1825,40 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
   };
 
   const registerService = (record: PluginRecord, service: OpenClawPluginService) => {
-    const id = service.id.trim();
+    const idValue = readHostHookField(service, "id");
+    const startValue = readHostHookField(service, "start");
+    const stopValue = readHostHookField(service, "stop");
+    const pushUnreadableDiagnostic = (field: keyof OpenClawPluginService) => {
+      pushDiagnostic({
+        level: "error",
+        pluginId: record.id,
+        source: record.source,
+        message: `service registration has unreadable field: ${field}`,
+      });
+    };
+    if (!idValue.ok) {
+      pushUnreadableDiagnostic("id");
+      return;
+    }
+    if (!startValue.ok) {
+      pushUnreadableDiagnostic("start");
+      return;
+    }
+    if (!stopValue.ok) {
+      pushUnreadableDiagnostic("stop");
+      return;
+    }
+    const id = typeof idValue.value === "string" ? idValue.value.trim() : "";
     if (!id) {
+      return;
+    }
+    if (typeof startValue.value !== "function") {
+      pushDiagnostic({
+        level: "error",
+        pluginId: record.id,
+        source: record.source,
+        message: `service registration missing start handler: ${id}`,
+      });
       return;
     }
     const existing = registry.services.find((entry) => entry.service.id === id);
@@ -1848,7 +1880,16 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
     registry.services.push({
       pluginId: record.id,
       pluginName: record.name,
-      service,
+      service: {
+        id,
+        start: (ctx) => (startValue.value as OpenClawPluginService["start"]).call(service, ctx),
+        ...(typeof stopValue.value === "function"
+          ? {
+              stop: (ctx) =>
+                (stopValue.value as NonNullable<OpenClawPluginService["stop"]>).call(service, ctx),
+            }
+          : {}),
+      },
       source: record.source,
       origin: record.origin,
       trustedOfficialInstall: record.trustedOfficialInstall,
@@ -1860,8 +1901,35 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
     record: PluginRecord,
     service: OpenClawGatewayDiscoveryService,
   ) => {
-    const id = service.id.trim();
+    const idValue = readHostHookField(service, "id");
+    const advertiseValue = readHostHookField(service, "advertise");
+    const pushUnreadableDiagnostic = (field: keyof OpenClawGatewayDiscoveryService) => {
+      pushDiagnostic({
+        level: "error",
+        pluginId: record.id,
+        source: record.source,
+        message: `gateway discovery service registration has unreadable field: ${field}`,
+      });
+    };
+    if (!idValue.ok) {
+      pushUnreadableDiagnostic("id");
+      return;
+    }
+    if (!advertiseValue.ok) {
+      pushUnreadableDiagnostic("advertise");
+      return;
+    }
+    const id = typeof idValue.value === "string" ? idValue.value.trim() : "";
     if (!id) {
+      return;
+    }
+    if (typeof advertiseValue.value !== "function") {
+      pushDiagnostic({
+        level: "error",
+        pluginId: record.id,
+        source: record.source,
+        message: `gateway discovery service registration missing advertise handler: ${id}`,
+      });
       return;
     }
     const existing = registry.gatewayDiscoveryServices.find((entry) => entry.service.id === id);
@@ -1881,7 +1949,11 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
     registry.gatewayDiscoveryServices.push({
       pluginId: record.id,
       pluginName: record.name,
-      service,
+      service: {
+        id,
+        advertise: (ctx) =>
+          (advertiseValue.value as OpenClawGatewayDiscoveryService["advertise"]).call(service, ctx),
+      },
       source: record.source,
       rootDir: record.rootDir,
     });
