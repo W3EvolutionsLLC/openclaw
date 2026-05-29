@@ -1158,7 +1158,78 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
   };
 
   const registerAgentHarness = (record: PluginRecord, harness: AgentHarness) => {
-    const id = normalizeOptionalString((harness as Partial<AgentHarness> | undefined)?.id) ?? "";
+    const idValue = readHostHookField(harness, "id");
+    const labelValue = readHostHookField(harness, "label");
+    const supportsValue = readHostHookField(harness, "supports");
+    const runAttemptValue = readHostHookField(harness, "runAttempt");
+    const runSideQuestionValue = readHostHookField(harness, "runSideQuestion");
+    const classifyValue = readHostHookField(harness, "classify");
+    const compactValue = readHostHookField(harness, "compact");
+    const resetValue = readHostHookField(harness, "reset");
+    const disposeValue = readHostHookField(harness, "dispose");
+    const contextEngineHostCapabilitiesValue = readHostHookField(
+      harness,
+      "contextEngineHostCapabilities",
+    );
+    const deliveryDefaultsValue = readHostHookField(harness, "deliveryDefaults");
+    const pluginIdValue = readHostHookField(harness, "pluginId");
+    const pushUnreadableDiagnostic = (field: keyof AgentHarness) => {
+      pushDiagnostic({
+        level: "error",
+        pluginId: record.id,
+        source: record.source,
+        message: `agent harness registration has unreadable field: ${field}`,
+      });
+    };
+    if (!idValue.ok) {
+      pushUnreadableDiagnostic("id");
+      return;
+    }
+    if (!labelValue.ok) {
+      pushUnreadableDiagnostic("label");
+      return;
+    }
+    if (!supportsValue.ok) {
+      pushUnreadableDiagnostic("supports");
+      return;
+    }
+    if (!runAttemptValue.ok) {
+      pushUnreadableDiagnostic("runAttempt");
+      return;
+    }
+    if (!runSideQuestionValue.ok) {
+      pushUnreadableDiagnostic("runSideQuestion");
+      return;
+    }
+    if (!classifyValue.ok) {
+      pushUnreadableDiagnostic("classify");
+      return;
+    }
+    if (!compactValue.ok) {
+      pushUnreadableDiagnostic("compact");
+      return;
+    }
+    if (!resetValue.ok) {
+      pushUnreadableDiagnostic("reset");
+      return;
+    }
+    if (!disposeValue.ok) {
+      pushUnreadableDiagnostic("dispose");
+      return;
+    }
+    if (!contextEngineHostCapabilitiesValue.ok) {
+      pushUnreadableDiagnostic("contextEngineHostCapabilities");
+      return;
+    }
+    if (!deliveryDefaultsValue.ok) {
+      pushUnreadableDiagnostic("deliveryDefaults");
+      return;
+    }
+    if (!pluginIdValue.ok) {
+      pushUnreadableDiagnostic("pluginId");
+      return;
+    }
+    const id = normalizeOptionalString(idValue.value) ?? "";
     if (!id) {
       pushDiagnostic({
         level: "error",
@@ -1168,7 +1239,7 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
       });
       return;
     }
-    if (typeof harness.supports !== "function" || typeof harness.runAttempt !== "function") {
+    if (typeof supportsValue.value !== "function" || typeof runAttemptValue.value !== "function") {
       pushDiagnostic({
         level: "error",
         pluginId: record.id,
@@ -1177,6 +1248,96 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
       });
       return;
     }
+    const pluginId = normalizeOptionalString(pluginIdValue.value) ?? record.id;
+    const normalizedHarness = {} as AgentHarness;
+    const reservedHarnessKeys = new Set<PropertyKey>([
+      "id",
+      "label",
+      "pluginId",
+      "contextEngineHostCapabilities",
+      "deliveryDefaults",
+      "supports",
+      "runAttempt",
+      "runSideQuestion",
+      "classify",
+      "compact",
+      "reset",
+      "dispose",
+    ]);
+    for (const key of Reflect.ownKeys(harness)) {
+      if (reservedHarnessKeys.has(key)) {
+        continue;
+      }
+      const descriptor = Object.getOwnPropertyDescriptor(harness, key);
+      if (descriptor && "value" in descriptor) {
+        Object.defineProperty(normalizedHarness, key, descriptor);
+      }
+    }
+    Object.assign(normalizedHarness, {
+      id,
+      label: normalizeOptionalString(labelValue.value) ?? id,
+      pluginId,
+      ...(contextEngineHostCapabilitiesValue.value
+        ? { contextEngineHostCapabilities: contextEngineHostCapabilitiesValue.value as never }
+        : {}),
+      ...(deliveryDefaultsValue.value
+        ? { deliveryDefaults: deliveryDefaultsValue.value as never }
+        : {}),
+    });
+    let methodReceiver: AgentHarness = harness;
+    try {
+      Object.defineProperty(harness, "id", {
+        value: id,
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
+      Object.defineProperty(harness, "pluginId", {
+        value: pluginId,
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
+    } catch {
+      const prototype = Object.getPrototypeOf(harness);
+      methodReceiver =
+        prototype === Object.prototype || prototype === null ? normalizedHarness : harness;
+    }
+    Object.assign(normalizedHarness, {
+      supports: (supportsValue.value as AgentHarness["supports"]).bind(methodReceiver),
+      runAttempt: (runAttemptValue.value as AgentHarness["runAttempt"]).bind(methodReceiver),
+      ...(typeof runSideQuestionValue.value === "function"
+        ? {
+            runSideQuestion: (
+              runSideQuestionValue.value as NonNullable<AgentHarness["runSideQuestion"]>
+            ).bind(methodReceiver),
+          }
+        : {}),
+      ...(typeof classifyValue.value === "function"
+        ? {
+            classify: (classifyValue.value as NonNullable<AgentHarness["classify"]>).bind(
+              methodReceiver,
+            ),
+          }
+        : {}),
+      ...(typeof compactValue.value === "function"
+        ? {
+            compact: (compactValue.value as NonNullable<AgentHarness["compact"]>).bind(
+              methodReceiver,
+            ),
+          }
+        : {}),
+      ...(typeof resetValue.value === "function"
+        ? { reset: (resetValue.value as NonNullable<AgentHarness["reset"]>).bind(methodReceiver) }
+        : {}),
+      ...(typeof disposeValue.value === "function"
+        ? {
+            dispose: (disposeValue.value as NonNullable<AgentHarness["dispose"]>).bind(
+              methodReceiver,
+            ),
+          }
+        : {}),
+    });
     const existing =
       registryParams.activateGlobalSideEffects === false
         ? registry.agentHarnesses.find((entry) => entry.harness.id === id)
@@ -1197,11 +1358,6 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
       });
       return;
     }
-    const normalizedHarness = {
-      ...harness,
-      id,
-      pluginId: harness.pluginId ?? record.id,
-    };
     if (registryParams.activateGlobalSideEffects !== false) {
       registerGlobalAgentHarness(normalizedHarness, { ownerPluginId: record.id });
     }
