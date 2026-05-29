@@ -281,8 +281,26 @@ function formatValidationPath(error: TLocalizedValidationError): string {
   return path || "root";
 }
 
+function readUsableToolName(tool: Pick<Tool, "name">): string | undefined {
+  try {
+    const name = tool.name;
+    return typeof name === "string" && name.trim() !== "" ? name : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function findToolByName(tools: readonly Tool[], name: string): Tool | undefined {
+  for (const tool of tools) {
+    if (readUsableToolName(tool) === name) {
+      return tool;
+    }
+  }
+  return undefined;
+}
+
 export function validateToolCall(tools: Tool[], toolCall: ToolCall): unknown {
-  const tool = tools.find((t) => t.name === toolCall.name);
+  const tool = findToolByName(tools, toolCall.name);
   if (!tool) {
     throw new Error(`Tool "${toolCall.name}" not found`);
   }
