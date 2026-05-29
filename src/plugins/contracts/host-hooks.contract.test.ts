@@ -122,6 +122,48 @@ describe("host-hook fixture plugin contract", () => {
     ]);
   });
 
+  it("fails closed on unreadable tool metadata without aborting plugin registration", () => {
+    const { config, registry } = createPluginRegistryFixture();
+    const metadata: Record<string, unknown> = {
+      toolName: "mockplugin_status",
+      displayName: "Mock Status",
+    };
+    Object.defineProperty(metadata, "description", {
+      enumerable: true,
+      get() {
+        throw new Error("fuzzplugin tool metadata description is unreadable");
+      },
+    });
+
+    registerTestPlugin({
+      registry,
+      config,
+      record: createPluginRecord({
+        id: "fuzzplugin",
+        name: "Fuzz Plugin",
+        origin: "workspace",
+        contracts: { tools: ["mockplugin_status"] },
+      }),
+      register(api) {
+        api.registerToolMetadata(metadata as never);
+        api.registerCommand({
+          name: "mockplugin-status",
+          description: "Healthy command sibling",
+          handler: async () => ({ text: "ok" }),
+        });
+      },
+    });
+
+    expect(registry.registry.toolMetadata ?? []).toHaveLength(0);
+    expect(registry.registry.commands.map((entry) => entry.command.name)).toEqual([
+      "mockplugin-status",
+    ]);
+    expect(diagnosticSummaries(registry.registry.diagnostics)).toContainEqual({
+      pluginId: "fuzzplugin",
+      message: "tool metadata registration has unreadable metadata: description",
+    });
+  });
+
   it("rejects external plugins from trusted policy and reserved command ownership", () => {
     const { config, registry } = createPluginRegistryFixture();
     registerTestPlugin({

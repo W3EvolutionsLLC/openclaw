@@ -1867,6 +1867,22 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
   const normalizeHostHookString = (value: unknown): string =>
     typeof value === "string" ? normalizePluginHostHookId(value) : "";
 
+  const readHostHookField = (
+    value: unknown,
+    key: keyof PluginToolMetadataRegistration,
+  ): { ok: true; value: unknown } | { ok: false } => {
+    try {
+      return { ok: true, value: (value as Record<string, unknown>)[key] };
+    } catch {
+      return { ok: false };
+    }
+  };
+
+  const isToolMetadataRisk = (
+    value: unknown,
+  ): value is NonNullable<PluginToolMetadataRegistration["risk"]> =>
+    value === "low" || value === "medium" || value === "high";
+
   const normalizeOptionalHostHookString = (value: unknown): string | undefined => {
     if (value === undefined) {
       return undefined;
@@ -2078,7 +2094,40 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
   };
 
   const registerToolMetadata = (record: PluginRecord, metadata: PluginToolMetadataRegistration) => {
-    const toolName = normalizeHostHookString(metadata.toolName);
+    const toolNameValue = readHostHookField(metadata, "toolName");
+    const displayNameValue = readHostHookField(metadata, "displayName");
+    const descriptionValue = readHostHookField(metadata, "description");
+    const riskValue = readHostHookField(metadata, "risk");
+    const tagsValue = readHostHookField(metadata, "tags");
+    const pushUnreadableDiagnostic = (field: keyof PluginToolMetadataRegistration) => {
+      pushDiagnostic({
+        level: "error",
+        pluginId: record.id,
+        source: record.source,
+        message: `tool metadata registration has unreadable metadata: ${field}`,
+      });
+    };
+    if (!toolNameValue.ok) {
+      pushUnreadableDiagnostic("toolName");
+      return;
+    }
+    if (!displayNameValue.ok) {
+      pushUnreadableDiagnostic("displayName");
+      return;
+    }
+    if (!descriptionValue.ok) {
+      pushUnreadableDiagnostic("description");
+      return;
+    }
+    if (!riskValue.ok) {
+      pushUnreadableDiagnostic("risk");
+      return;
+    }
+    if (!tagsValue.ok) {
+      pushUnreadableDiagnostic("tags");
+      return;
+    }
+    const toolName = normalizeHostHookString(toolNameValue.value);
     if (!toolName) {
       pushDiagnostic({
         level: "error",
@@ -2120,14 +2169,15 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
       });
       return;
     }
-    const displayName = normalizeOptionalHostHookString(metadata.displayName);
-    const description = normalizeOptionalHostHookString(metadata.description);
-    const tags = normalizeHostHookStringList(metadata.tags);
+    const displayName = normalizeOptionalHostHookString(displayNameValue.value);
+    const description = normalizeOptionalHostHookString(descriptionValue.value);
+    const tags = normalizeHostHookStringList(tagsValue.value);
+    const risk = riskValue.value;
     if (
       displayName === "" ||
       description === "" ||
       tags === null ||
-      (metadata.risk !== undefined && !["low", "medium", "high"].includes(metadata.risk))
+      (risk !== undefined && !isToolMetadataRisk(risk))
     ) {
       pushDiagnostic({
         level: "error",
@@ -2141,10 +2191,10 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
       pluginId: record.id,
       pluginName: record.name,
       metadata: {
-        ...metadata,
         toolName,
         ...(displayName !== undefined ? { displayName } : {}),
         ...(description !== undefined ? { description } : {}),
+        ...(risk !== undefined ? { risk } : {}),
         ...(tags !== undefined ? { tags } : {}),
       },
       source: record.source,
