@@ -1562,10 +1562,39 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
   ]);
 
   const registerReload = (record: PluginRecord, registration: OpenClawPluginReloadRegistration) => {
+    const restartPrefixesValue = readHostHookField(registration, "restartPrefixes");
+    const hotPrefixesValue = readHostHookField(registration, "hotPrefixes");
+    const noopPrefixesValue = readHostHookField(registration, "noopPrefixes");
+    const pushUnreadableDiagnostic = (field: keyof OpenClawPluginReloadRegistration) => {
+      pushDiagnostic({
+        level: "error",
+        pluginId: record.id,
+        source: record.source,
+        message: `reload registration has unreadable field: ${field}`,
+      });
+    };
+    if (!restartPrefixesValue.ok) {
+      pushUnreadableDiagnostic("restartPrefixes");
+      return;
+    }
+    if (!hotPrefixesValue.ok) {
+      pushUnreadableDiagnostic("hotPrefixes");
+      return;
+    }
+    if (!noopPrefixesValue.ok) {
+      pushUnreadableDiagnostic("noopPrefixes");
+      return;
+    }
     const normalized: OpenClawPluginReloadRegistration = {
-      restartPrefixes: normalizeStringEntries(registration.restartPrefixes),
-      hotPrefixes: normalizeStringEntries(registration.hotPrefixes),
-      noopPrefixes: normalizeStringEntries(registration.noopPrefixes),
+      restartPrefixes: normalizeStringEntries(
+        Array.isArray(restartPrefixesValue.value) ? restartPrefixesValue.value : undefined,
+      ),
+      hotPrefixes: normalizeStringEntries(
+        Array.isArray(hotPrefixesValue.value) ? hotPrefixesValue.value : undefined,
+      ),
+      noopPrefixes: normalizeStringEntries(
+        Array.isArray(noopPrefixesValue.value) ? noopPrefixesValue.value : undefined,
+      ),
     };
     if (
       (normalized.restartPrefixes?.length ?? 0) === 0 &&
@@ -1594,7 +1623,35 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
     record: PluginRecord,
     nodeCommand: OpenClawPluginNodeHostCommand,
   ) => {
-    const command = nodeCommand.command.trim();
+    const commandValue = readHostHookField(nodeCommand, "command");
+    const capValue = readHostHookField(nodeCommand, "cap");
+    const dangerousValue = readHostHookField(nodeCommand, "dangerous");
+    const handleValue = readHostHookField(nodeCommand, "handle");
+    const pushUnreadableDiagnostic = (field: keyof OpenClawPluginNodeHostCommand) => {
+      pushDiagnostic({
+        level: "error",
+        pluginId: record.id,
+        source: record.source,
+        message: `node host command registration has unreadable field: ${field}`,
+      });
+    };
+    if (!commandValue.ok) {
+      pushUnreadableDiagnostic("command");
+      return;
+    }
+    if (!capValue.ok) {
+      pushUnreadableDiagnostic("cap");
+      return;
+    }
+    if (!dangerousValue.ok) {
+      pushUnreadableDiagnostic("dangerous");
+      return;
+    }
+    if (!handleValue.ok) {
+      pushUnreadableDiagnostic("handle");
+      return;
+    }
+    const command = typeof commandValue.value === "string" ? commandValue.value.trim() : "";
     if (!command) {
       pushDiagnostic({
         level: "error",
@@ -1613,6 +1670,15 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
       });
       return;
     }
+    if (typeof handleValue.value !== "function") {
+      pushDiagnostic({
+        level: "error",
+        pluginId: record.id,
+        source: record.source,
+        message: `node host command registration missing handler: ${command}`,
+      });
+      return;
+    }
     registry.nodeHostCommands ??= [];
     const existing = registry.nodeHostCommands.find((entry) => entry.command.command === command);
     if (existing) {
@@ -1628,9 +1694,10 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
       pluginId: record.id,
       pluginName: record.name,
       command: {
-        ...nodeCommand,
         command,
-        cap: normalizeOptionalString(nodeCommand.cap),
+        handle: handleValue.value as OpenClawPluginNodeHostCommand["handle"],
+        cap: normalizeOptionalString(capValue.value),
+        ...(typeof dangerousValue.value === "boolean" ? { dangerous: dangerousValue.value } : {}),
       },
       source: record.source,
       rootDir: record.rootDir,
@@ -1642,8 +1709,41 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
     policy: OpenClawPluginNodeInvokePolicy,
     pluginConfig?: Record<string, unknown>,
   ) => {
+    const commandsValue = readHostHookField(policy, "commands");
+    const defaultPlatformsValue = readHostHookField(policy, "defaultPlatforms");
+    const dangerousValue = readHostHookField(policy, "dangerous");
+    const foregroundRestrictedOnIosValue = readHostHookField(policy, "foregroundRestrictedOnIos");
+    const handleValue = readHostHookField(policy, "handle");
+    const pushUnreadableDiagnostic = (field: keyof OpenClawPluginNodeInvokePolicy) => {
+      pushDiagnostic({
+        level: "error",
+        pluginId: record.id,
+        source: record.source,
+        message: `node invoke policy registration has unreadable field: ${field}`,
+      });
+    };
+    if (!commandsValue.ok) {
+      pushUnreadableDiagnostic("commands");
+      return;
+    }
+    if (!defaultPlatformsValue.ok) {
+      pushUnreadableDiagnostic("defaultPlatforms");
+      return;
+    }
+    if (!dangerousValue.ok) {
+      pushUnreadableDiagnostic("dangerous");
+      return;
+    }
+    if (!foregroundRestrictedOnIosValue.ok) {
+      pushUnreadableDiagnostic("foregroundRestrictedOnIos");
+      return;
+    }
+    if (!handleValue.ok) {
+      pushUnreadableDiagnostic("handle");
+      return;
+    }
     const commands = normalizeUniqueStringEntries(
-      Array.isArray(policy.commands) ? policy.commands : [],
+      Array.isArray(commandsValue.value) ? commandsValue.value : [],
     );
     if (commands.length === 0) {
       pushDiagnostic({
@@ -1654,7 +1754,7 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
       });
       return;
     }
-    if (typeof policy.handle !== "function") {
+    if (typeof handleValue.value !== "function") {
       pushDiagnostic({
         level: "error",
         pluginId: record.id,
@@ -1681,7 +1781,20 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
     registry.nodeInvokePolicies.push({
       pluginId: record.id,
       pluginName: record.name,
-      policy: { ...policy, commands },
+      policy: {
+        commands,
+        handle: handleValue.value as OpenClawPluginNodeInvokePolicy["handle"],
+        ...(Array.isArray(defaultPlatformsValue.value)
+          ? {
+              defaultPlatforms:
+                defaultPlatformsValue.value as OpenClawPluginNodeInvokePolicy["defaultPlatforms"],
+            }
+          : {}),
+        ...(typeof dangerousValue.value === "boolean" ? { dangerous: dangerousValue.value } : {}),
+        ...(typeof foregroundRestrictedOnIosValue.value === "boolean"
+          ? { foregroundRestrictedOnIos: foregroundRestrictedOnIosValue.value }
+          : {}),
+      },
       pluginConfig,
       source: record.source,
       rootDir: record.rootDir,
@@ -1692,6 +1805,15 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
     record: PluginRecord,
     collector: OpenClawPluginSecurityAuditCollector,
   ) => {
+    if (typeof collector !== "function") {
+      pushDiagnostic({
+        level: "error",
+        pluginId: record.id,
+        source: record.source,
+        message: "security audit collector registration missing collector",
+      });
+      return;
+    }
     registry.securityAuditCollectors ??= [];
     registry.securityAuditCollectors.push({
       pluginId: record.id,

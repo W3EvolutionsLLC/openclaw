@@ -380,6 +380,82 @@ describe("host-hook fixture plugin contract", () => {
     });
   });
 
+  it("fails closed on unreadable reload and node host registrations without aborting plugin registration", () => {
+    const { config, registry } = createPluginRegistryFixture();
+    const reload: Record<string, unknown> = {
+      hotPrefixes: ["mockplugin"],
+    };
+    Object.defineProperty(reload, "restartPrefixes", {
+      enumerable: true,
+      get() {
+        throw new Error("fuzzplugin reload prefixes are unreadable");
+      },
+    });
+    const nodeCommand: Record<string, unknown> = {
+      handle: async () => "ok",
+    };
+    Object.defineProperty(nodeCommand, "command", {
+      enumerable: true,
+      get() {
+        throw new Error("fuzzplugin node command name is unreadable");
+      },
+    });
+    const nodePolicy: Record<string, unknown> = {
+      handle: () => ({ ok: true }),
+    };
+    Object.defineProperty(nodePolicy, "commands", {
+      enumerable: true,
+      get() {
+        throw new Error("fuzzplugin node policy commands are unreadable");
+      },
+    });
+
+    registerTestPlugin({
+      registry,
+      config,
+      record: createPluginRecord({
+        id: "fuzzplugin",
+        name: "Fuzz Plugin",
+        origin: "workspace",
+      }),
+      register(api) {
+        api.registerReload(reload as never);
+        api.registerNodeHostCommand(nodeCommand as never);
+        api.registerNodeInvokePolicy(nodePolicy as never);
+        api.registerSecurityAuditCollector({} as never);
+        api.registerCommand({
+          name: "mockplugin-node",
+          description: "Healthy command sibling",
+          handler: async () => ({ text: "ok" }),
+        });
+      },
+    });
+
+    expect(registry.registry.reloads ?? []).toHaveLength(0);
+    expect(registry.registry.nodeHostCommands ?? []).toHaveLength(0);
+    expect(registry.registry.nodeInvokePolicies ?? []).toHaveLength(0);
+    expect(registry.registry.securityAuditCollectors ?? []).toHaveLength(0);
+    expect(registry.registry.commands.map((entry) => entry.command.name)).toEqual([
+      "mockplugin-node",
+    ]);
+    expect(diagnosticSummaries(registry.registry.diagnostics)).toContainEqual({
+      pluginId: "fuzzplugin",
+      message: "reload registration has unreadable field: restartPrefixes",
+    });
+    expect(diagnosticSummaries(registry.registry.diagnostics)).toContainEqual({
+      pluginId: "fuzzplugin",
+      message: "node host command registration has unreadable field: command",
+    });
+    expect(diagnosticSummaries(registry.registry.diagnostics)).toContainEqual({
+      pluginId: "fuzzplugin",
+      message: "node invoke policy registration has unreadable field: commands",
+    });
+    expect(diagnosticSummaries(registry.registry.diagnostics)).toContainEqual({
+      pluginId: "fuzzplugin",
+      message: "security audit collector registration missing collector",
+    });
+  });
+
   it("rejects external plugins from trusted policy and reserved command ownership", () => {
     const { config, registry } = createPluginRegistryFixture();
     registerTestPlugin({
