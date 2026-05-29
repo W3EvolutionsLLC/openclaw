@@ -1415,7 +1415,17 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
   };
 
   const registerCliBackend = (record: PluginRecord, backend: CliBackendPlugin) => {
-    const id = backend.id.trim();
+    const idValue = readHostHookField(backend, "id");
+    if (!idValue.ok) {
+      pushDiagnostic({
+        level: "error",
+        pluginId: record.id,
+        source: record.source,
+        message: "cli backend registration has unreadable field: id",
+      });
+      return;
+    }
+    const id = normalizeOptionalString(idValue.value) ?? "";
     if (!id) {
       pushDiagnostic({
         level: "error",
@@ -1425,7 +1435,10 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
       });
       return;
     }
-    const existing = (registry.cliBackends ?? []).find((entry) => entry.backend.id === id);
+    const existing = (registry.cliBackends ?? []).find((entry) => {
+      const entryId = readHostHookField(entry.backend, "id");
+      return entryId.ok && entryId.value === id;
+    });
     if (existing) {
       pushDiagnostic({
         level: "error",
@@ -1435,13 +1448,132 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
       });
       return;
     }
+    const configValue = readHostHookField(backend, "config");
+    const modelProviderValue = readHostHookField(backend, "modelProvider");
+    const contextEngineHostCapabilitiesValue = readHostHookField(
+      backend,
+      "contextEngineHostCapabilities",
+    );
+    const liveTestValue = readHostHookField(backend, "liveTest");
+    const bundleMcpValue = readHostHookField(backend, "bundleMcp");
+    const bundleMcpModeValue = readHostHookField(backend, "bundleMcpMode");
+    const normalizeConfigValue = readHostHookField(backend, "normalizeConfig");
+    const transformSystemPromptValue = readHostHookField(backend, "transformSystemPrompt");
+    const textTransformsValue = readHostHookField(backend, "textTransforms");
+    const defaultAuthProfileIdValue = readHostHookField(backend, "defaultAuthProfileId");
+    const authEpochModeValue = readHostHookField(backend, "authEpochMode");
+    const prepareExecutionValue = readHostHookField(backend, "prepareExecution");
+    const resolveExecutionArgsValue = readHostHookField(backend, "resolveExecutionArgs");
+    const nativeToolModeValue = readHostHookField(backend, "nativeToolMode");
+    const unreadableField = (
+      [
+        ["config", configValue],
+        ["modelProvider", modelProviderValue],
+        ["contextEngineHostCapabilities", contextEngineHostCapabilitiesValue],
+        ["liveTest", liveTestValue],
+        ["bundleMcp", bundleMcpValue],
+        ["bundleMcpMode", bundleMcpModeValue],
+        ["normalizeConfig", normalizeConfigValue],
+        ["transformSystemPrompt", transformSystemPromptValue],
+        ["textTransforms", textTransformsValue],
+        ["defaultAuthProfileId", defaultAuthProfileIdValue],
+        ["authEpochMode", authEpochModeValue],
+        ["prepareExecution", prepareExecutionValue],
+        ["resolveExecutionArgs", resolveExecutionArgsValue],
+        ["nativeToolMode", nativeToolModeValue],
+      ] satisfies Array<[string, ReturnType<typeof readHostHookField>]>
+    ).find(([, value]) => !value.ok)?.[0];
+    if (unreadableField) {
+      pushDiagnostic({
+        level: "error",
+        pluginId: record.id,
+        source: record.source,
+        message: `cli backend registration has unreadable field: ${unreadableField}`,
+      });
+      return;
+    }
+    const config = readHostHookFieldValue(configValue);
+    const modelProvider = readHostHookFieldValue(modelProviderValue);
+    const contextEngineHostCapabilities = readHostHookFieldValue(
+      contextEngineHostCapabilitiesValue,
+    );
+    const liveTest = readHostHookFieldValue(liveTestValue);
+    const bundleMcp = readHostHookFieldValue(bundleMcpValue);
+    const bundleMcpMode = readHostHookFieldValue(bundleMcpModeValue);
+    const normalizeConfig = readHostHookFieldValue(normalizeConfigValue);
+    const transformSystemPrompt = readHostHookFieldValue(transformSystemPromptValue);
+    const textTransforms = readHostHookFieldValue(textTransformsValue);
+    const defaultAuthProfileId = readHostHookFieldValue(defaultAuthProfileIdValue);
+    const authEpochMode = readHostHookFieldValue(authEpochModeValue);
+    const prepareExecution = readHostHookFieldValue(prepareExecutionValue);
+    const resolveExecutionArgs = readHostHookFieldValue(resolveExecutionArgsValue);
+    const nativeToolMode = readHostHookFieldValue(nativeToolModeValue);
+    const normalizedBackend: CliBackendPlugin = {
+      id,
+      config: config as CliBackendPlugin["config"],
+      ...(typeof modelProvider === "string" ? { modelProvider } : {}),
+      ...(contextEngineHostCapabilities !== undefined
+        ? {
+            contextEngineHostCapabilities:
+              contextEngineHostCapabilities as CliBackendPlugin["contextEngineHostCapabilities"],
+          }
+        : {}),
+      ...(liveTest !== undefined ? { liveTest: liveTest as CliBackendPlugin["liveTest"] } : {}),
+      ...(typeof bundleMcp === "boolean" ? { bundleMcp } : {}),
+      ...(bundleMcpMode !== undefined
+        ? { bundleMcpMode: bundleMcpMode as CliBackendPlugin["bundleMcpMode"] }
+        : {}),
+      ...(typeof normalizeConfig === "function"
+        ? {
+            normalizeConfig: (config, context) =>
+              (normalizeConfig as NonNullable<CliBackendPlugin["normalizeConfig"]>).call(
+                backend,
+                config,
+                context,
+              ),
+          }
+        : {}),
+      ...(typeof transformSystemPrompt === "function"
+        ? {
+            transformSystemPrompt: (ctx) =>
+              (
+                transformSystemPrompt as NonNullable<CliBackendPlugin["transformSystemPrompt"]>
+              ).call(backend, ctx),
+          }
+        : {}),
+      ...(textTransforms !== undefined
+        ? { textTransforms: textTransforms as CliBackendPlugin["textTransforms"] }
+        : {}),
+      ...(typeof defaultAuthProfileId === "string" ? { defaultAuthProfileId } : {}),
+      ...(authEpochMode !== undefined
+        ? { authEpochMode: authEpochMode as CliBackendPlugin["authEpochMode"] }
+        : {}),
+      ...(typeof prepareExecution === "function"
+        ? {
+            prepareExecution: (ctx) =>
+              (prepareExecution as NonNullable<CliBackendPlugin["prepareExecution"]>).call(
+                backend,
+                ctx,
+              ),
+          }
+        : {}),
+      ...(typeof resolveExecutionArgs === "function"
+        ? {
+            resolveExecutionArgs: (ctx) =>
+              (resolveExecutionArgs as NonNullable<CliBackendPlugin["resolveExecutionArgs"]>).call(
+                backend,
+                ctx,
+              ),
+          }
+        : {}),
+      ...(nativeToolMode !== undefined
+        ? { nativeToolMode: nativeToolMode as CliBackendPlugin["nativeToolMode"] }
+        : {}),
+    };
     (registry.cliBackends ??= []).push({
       pluginId: record.id,
       pluginName: record.name,
-      backend: {
-        ...backend,
-        id,
-      },
+      backend: normalizedBackend,
       source: record.source,
       rootDir: record.rootDir,
     });
@@ -1477,7 +1609,17 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
     record: PluginRecord,
     adapter: EmbeddingProviderAdapter,
   ) => {
-    const id = adapter.id.trim();
+    const idValue = readHostHookField(adapter, "id");
+    if (!idValue.ok) {
+      pushDiagnostic({
+        level: "error",
+        pluginId: record.id,
+        source: record.source,
+        message: "embedding provider registration has unreadable field: id",
+      });
+      return;
+    }
+    const id = normalizeOptionalString(idValue.value) ?? "";
     if (!id) {
       pushDiagnostic({
         level: "error",
@@ -1496,9 +1638,76 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
       });
       return;
     }
+    const createValue = readHostHookField(adapter, "create");
+    if (!createValue.ok) {
+      pushDiagnostic({
+        level: "error",
+        pluginId: record.id,
+        source: record.source,
+        message: "embedding provider registration has unreadable field: create",
+      });
+      return;
+    }
+    if (typeof createValue.value !== "function") {
+      pushDiagnostic({
+        level: "error",
+        pluginId: record.id,
+        source: record.source,
+        message: `embedding provider registration missing or invalid create: ${id}`,
+      });
+      return;
+    }
+    const defaultModelValue = readHostHookField(adapter, "defaultModel");
+    const transportValue = readHostHookField(adapter, "transport");
+    const authProviderIdValue = readHostHookField(adapter, "authProviderId");
+    const formatSetupErrorValue = readHostHookField(adapter, "formatSetupError");
+    const unreadableField = (
+      [
+        ["defaultModel", defaultModelValue],
+        ["transport", transportValue],
+        ["authProviderId", authProviderIdValue],
+        ["formatSetupError", formatSetupErrorValue],
+      ] satisfies Array<[string, ReturnType<typeof readHostHookField>]>
+    ).find(([, value]) => !value.ok)?.[0];
+    if (unreadableField) {
+      pushDiagnostic({
+        level: "error",
+        pluginId: record.id,
+        source: record.source,
+        message: `embedding provider registration has unreadable field: ${unreadableField}`,
+      });
+      return;
+    }
+    const defaultModel = readHostHookFieldValue(defaultModelValue);
+    const transport = readHostHookFieldValue(transportValue);
+    const authProviderId = readHostHookFieldValue(authProviderIdValue);
+    const formatSetupError = readHostHookFieldValue(formatSetupErrorValue);
+    const normalizedAdapter: EmbeddingProviderAdapter = {
+      id,
+      ...(typeof defaultModel === "string" ? { defaultModel } : {}),
+      ...(transport === "local" || transport === "remote" ? { transport } : {}),
+      ...(typeof authProviderId === "string" ? { authProviderId } : {}),
+      create: (options) =>
+        (createValue.value as NonNullable<EmbeddingProviderAdapter["create"]>).call(
+          adapter,
+          options,
+        ),
+      ...(typeof formatSetupError === "function"
+        ? {
+            formatSetupError: (err) =>
+              (formatSetupError as NonNullable<EmbeddingProviderAdapter["formatSetupError"]>).call(
+                adapter,
+                err,
+              ),
+          }
+        : {}),
+    };
     const existing =
       registryParams.activateGlobalSideEffects === false
-        ? registry.embeddingProviders.find((entry) => entry.provider.id === id)
+        ? registry.embeddingProviders.find((entry) => {
+            const entryId = readHostHookField(entry.provider, "id");
+            return entryId.ok && entryId.value === id;
+          })
         : getRegisteredEmbeddingProvider(id);
     if (existing) {
       const ownerPluginId =
@@ -1517,14 +1726,14 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
       return;
     }
     if (registryParams.activateGlobalSideEffects !== false) {
-      registerEmbeddingProvider(adapter, {
+      registerEmbeddingProvider(normalizedAdapter, {
         ownerPluginId: record.id,
       });
     }
     registry.embeddingProviders.push({
       pluginId: record.id,
       pluginName: record.name,
-      provider: adapter,
+      provider: normalizedAdapter,
       source: record.source,
       rootDir: record.rootDir,
     });
@@ -2517,6 +2726,9 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
       return { ok: false };
     }
   };
+
+  const readHostHookFieldValue = (field: ReturnType<typeof readHostHookField>): unknown =>
+    field.ok ? field.value : undefined;
 
   const isToolMetadataRisk = (
     value: unknown,
