@@ -10,6 +10,7 @@ import {
 } from "../../packages/speech-core/voice-models.js";
 import type {
   UnifiedModelCatalogEntry,
+  UnifiedModelCatalogKind,
   UnifiedModelCatalogSource,
 } from "../model-catalog/types.js";
 import { normalizeOptionalString } from "../shared/string-coerce.js";
@@ -24,6 +25,72 @@ import type {
 } from "./types.js";
 
 type UnifiedModelCatalogHook = NonNullable<UnifiedModelCatalogProviderPlugin["staticCatalog"]>;
+type ReadPluginFieldResult = { ok: true; value: unknown } | { ok: false };
+
+const allowedModelCatalogKinds = new Set<UnifiedModelCatalogKind>([
+  "text",
+  "voice",
+  "image_generation",
+  "video_generation",
+  "music_generation",
+]);
+
+function isUnifiedModelCatalogKind(value: string): value is UnifiedModelCatalogKind {
+  return allowedModelCatalogKinds.has(value as UnifiedModelCatalogKind);
+}
+
+function readPluginField(value: unknown, key: string): ReadPluginFieldResult {
+  try {
+    return { ok: true, value: (value as Record<string, unknown>)[key] };
+  } catch {
+    return { ok: false };
+  }
+}
+
+function normalizeCatalogKinds(
+  value: unknown,
+):
+  | { ok: true; kinds: UnifiedModelCatalogKind[] }
+  | { ok: false; reason: "invalid" | "unreadable" } {
+  let isArray = false;
+  try {
+    isArray = Array.isArray(value);
+  } catch {
+    return { ok: false, reason: "unreadable" };
+  }
+  if (!isArray) {
+    return { ok: false, reason: "invalid" };
+  }
+
+  let entries: unknown[];
+  try {
+    entries = Array.from(value as readonly unknown[]);
+  } catch {
+    return { ok: false, reason: "unreadable" };
+  }
+
+  const kinds: UnifiedModelCatalogKind[] = [];
+  for (const entry of entries) {
+    if (typeof entry !== "string" || !isUnifiedModelCatalogKind(entry)) {
+      return { ok: false, reason: "invalid" };
+    }
+    kinds.push(entry);
+  }
+  return { ok: true, kinds: uniqueValues(kinds) };
+}
+
+function normalizeCatalogHook(
+  provider: UnifiedModelCatalogProviderPlugin,
+  value: unknown,
+): UnifiedModelCatalogHook | undefined | null {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "function") {
+    return null;
+  }
+  return (ctx) => value.call(provider, ctx);
+}
 
 function mergeCatalogHookResults(
   source: UnifiedModelCatalogSource,
@@ -62,11 +129,21 @@ export function createModelCatalogRegistrationHandlers(params: {
   registry: PluginRegistry;
   pushDiagnostic: (diagnostic: PluginDiagnostic) => void;
 }) {
-  const registerModelCatalogProvider = (
+  const normalizeModelCatalogProvider = (
     record: PluginRecord,
     provider: UnifiedModelCatalogProviderPlugin,
-  ) => {
-    const providerId = normalizeOptionalString(provider.provider) ?? "";
+  ): UnifiedModelCatalogProviderPlugin | null => {
+    const providerValue = readPluginField(provider, "provider");
+    if (!providerValue.ok) {
+      params.pushDiagnostic({
+        level: "error",
+        pluginId: record.id,
+        source: record.source,
+        message: "model catalog provider registration has unreadable field: provider",
+      });
+      return null;
+    }
+    const providerId = normalizeOptionalString(providerValue.value) ?? "";
     if (!providerId) {
       params.pushDiagnostic({
         level: "error",
@@ -74,17 +151,94 @@ export function createModelCatalogRegistrationHandlers(params: {
         source: record.source,
         message: "model catalog provider registration missing provider",
       });
-      return;
+      return null;
     }
-    if (!provider.kinds || provider.kinds.length === 0) {
+
+    const kindsValue = readPluginField(provider, "kinds");
+    if (!kindsValue.ok) {
+      params.pushDiagnostic({
+        level: "error",
+        pluginId: record.id,
+        source: record.source,
+        message: `model catalog provider "${providerId}" registration has unreadable field: kinds`,
+      });
+      return null;
+    }
+    const normalizedKinds = normalizeCatalogKinds(kindsValue.value);
+    if (!normalizedKinds.ok) {
+      params.pushDiagnostic({
+        level: "error",
+        pluginId: record.id,
+        source: record.source,
+        message:
+          normalizedKinds.reason === "unreadable"
+            ? `model catalog provider "${providerId}" registration has unreadable field: kinds`
+            : `model catalog provider "${providerId}" registration missing kinds`,
+      });
+      return null;
+    }
+    if (normalizedKinds.kinds.length === 0) {
       params.pushDiagnostic({
         level: "error",
         pluginId: record.id,
         source: record.source,
         message: `model catalog provider "${providerId}" registration missing kinds`,
       });
+      return null;
+    }
+
+    const staticCatalogValue = readPluginField(provider, "staticCatalog");
+    const liveCatalogValue = readPluginField(provider, "liveCatalog");
+    if (!staticCatalogValue.ok) {
+      params.pushDiagnostic({
+        level: "error",
+        pluginId: record.id,
+        source: record.source,
+        message: `model catalog provider "${providerId}" registration has unreadable field: staticCatalog`,
+      });
+      return null;
+    }
+    if (!liveCatalogValue.ok) {
+      params.pushDiagnostic({
+        level: "error",
+        pluginId: record.id,
+        source: record.source,
+        message: `model catalog provider "${providerId}" registration has unreadable field: liveCatalog`,
+      });
+      return null;
+    }
+
+    const staticCatalog = normalizeCatalogHook(provider, staticCatalogValue.value);
+    const liveCatalog = normalizeCatalogHook(provider, liveCatalogValue.value);
+    const invalidHook =
+      staticCatalog === null ? "staticCatalog" : liveCatalog === null ? "liveCatalog" : undefined;
+    if (invalidHook) {
+      params.pushDiagnostic({
+        level: "error",
+        pluginId: record.id,
+        source: record.source,
+        message: `model catalog provider "${providerId}" registration has invalid field: ${invalidHook}`,
+      });
+      return null;
+    }
+
+    return {
+      provider: providerId,
+      kinds: normalizedKinds.kinds,
+      ...(staticCatalog ? { staticCatalog } : {}),
+      ...(liveCatalog ? { liveCatalog } : {}),
+    };
+  };
+
+  const registerModelCatalogProvider = (
+    record: PluginRecord,
+    provider: UnifiedModelCatalogProviderPlugin,
+  ) => {
+    const normalizedProvider = normalizeModelCatalogProvider(record, provider);
+    if (!normalizedProvider) {
       return;
     }
+    const providerId = normalizedProvider.provider;
     const existing = params.registry.modelCatalogProviders.find(
       (entry) => entry.provider.provider === providerId && entry.pluginId !== record.id,
     );
@@ -97,28 +251,25 @@ export function createModelCatalogRegistrationHandlers(params: {
       });
       return;
     }
-    const normalizedKinds = uniqueValues(provider.kinds);
     const samePluginOverlapping = params.registry.modelCatalogProviders.find(
       (entry) =>
         entry.provider.provider === providerId &&
         entry.pluginId === record.id &&
-        entry.provider.kinds.some((kind) => normalizedKinds.includes(kind)),
+        entry.provider.kinds.some((kind) => normalizedProvider.kinds.includes(kind)),
     );
     if (samePluginOverlapping) {
       samePluginOverlapping.provider = {
-        ...samePluginOverlapping.provider,
-        ...provider,
         provider: providerId,
-        kinds: uniqueValues([...samePluginOverlapping.provider.kinds, ...normalizedKinds]),
+        kinds: uniqueValues([...samePluginOverlapping.provider.kinds, ...normalizedProvider.kinds]),
         staticCatalog: mergeModelCatalogHooks(
           "static",
           samePluginOverlapping.provider.staticCatalog,
-          provider.staticCatalog,
+          normalizedProvider.staticCatalog,
         ),
         liveCatalog: mergeModelCatalogHooks(
           "live",
           samePluginOverlapping.provider.liveCatalog,
-          provider.liveCatalog,
+          normalizedProvider.liveCatalog,
         ),
       };
       return;
@@ -126,11 +277,7 @@ export function createModelCatalogRegistrationHandlers(params: {
     params.registry.modelCatalogProviders.push({
       pluginId: record.id,
       pluginName: record.name,
-      provider: {
-        ...provider,
-        provider: providerId,
-        kinds: normalizedKinds,
-      },
+      provider: normalizedProvider,
       source: record.source,
       rootDir: record.rootDir,
     });

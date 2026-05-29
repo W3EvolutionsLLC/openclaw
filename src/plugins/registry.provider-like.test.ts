@@ -121,6 +121,113 @@ describe("plugin registry provider-like registrations", () => {
     ]);
   });
 
+  it("rejects malformed model catalog providers without retaining plugin state", async () => {
+    const pluginRegistry = createTestRegistry();
+    const fuzzRecord = createPluginRecord({
+      id: "fuzzplugin-model-catalog",
+      name: "Fuzz Plugin Model Catalog",
+      source: "/tmp/fuzzplugin-model-catalog/index.js",
+      origin: "global",
+      enabled: true,
+      configSchema: false,
+    });
+    const mockRecord = createPluginRecord({
+      id: "mockplugin-model-catalog",
+      name: "Mock Plugin Model Catalog",
+      source: "/tmp/mockplugin-model-catalog/index.js",
+      origin: "global",
+      enabled: true,
+      configSchema: false,
+    });
+
+    const unreadableProvider = Object.defineProperty({}, "provider", {
+      get() {
+        throw new Error("fuzzplugin model catalog provider getter failed");
+      },
+    });
+    const revokedKinds = Proxy.revocable(["text"], {});
+    revokedKinds.revoke();
+    const invalidHook = {
+      provider: "fuzzplugin-model-catalog-invalid-hook",
+      kinds: ["text"],
+      staticCatalog: true,
+    };
+    class MockCatalogProvider {
+      #model = "mockplugin-catalog-model";
+      provider = "mockplugin-model-catalog";
+      kinds = ["text"];
+
+      staticCatalog() {
+        return [
+          {
+            kind: "text" as const,
+            provider: this.provider,
+            model: this.#model,
+            source: "static" as const,
+          },
+        ];
+      }
+    }
+    const healthyProvider = Object.defineProperty(new MockCatalogProvider(), "extraCrash", {
+      enumerable: true,
+      get() {
+        throw new Error("mockplugin model catalog extra getter should not be enumerated");
+      },
+    });
+
+    expect(() =>
+      pluginRegistry.registerModelCatalogProvider(fuzzRecord, unreadableProvider as never),
+    ).not.toThrow();
+    expect(() =>
+      pluginRegistry.registerModelCatalogProvider(fuzzRecord, {
+        provider: "fuzzplugin-model-catalog-revoked-kinds",
+        kinds: revokedKinds.proxy,
+      } as never),
+    ).not.toThrow();
+    expect(() =>
+      pluginRegistry.registerModelCatalogProvider(fuzzRecord, invalidHook as never),
+    ).not.toThrow();
+    expect(() =>
+      pluginRegistry.registerModelCatalogProvider(mockRecord, healthyProvider as never),
+    ).not.toThrow();
+
+    healthyProvider.kinds.push("voice");
+
+    expect(pluginRegistry.registry.modelCatalogProviders).toHaveLength(1);
+    const catalogRegistration = pluginRegistry.registry.modelCatalogProviders[0];
+    expect(catalogRegistration?.pluginId).toBe("mockplugin-model-catalog");
+    expect(Object.is(catalogRegistration?.provider, healthyProvider)).toBe(false);
+    expect(Object.hasOwn(catalogRegistration?.provider ?? {}, "extraCrash")).toBe(false);
+    expect(catalogRegistration?.provider.provider).toBe("mockplugin-model-catalog");
+    expect(catalogRegistration?.provider.kinds).toEqual(["text"]);
+    await expect(
+      Promise.resolve(catalogRegistration?.provider.staticCatalog?.({} as never)),
+    ).resolves.toEqual([
+      {
+        kind: "text",
+        provider: "mockplugin-model-catalog",
+        model: "mockplugin-catalog-model",
+        source: "static",
+      },
+    ]);
+    expect(diagnosticSummaries(pluginRegistry.registry.diagnostics)).toEqual([
+      {
+        pluginId: "fuzzplugin-model-catalog",
+        message: "model catalog provider registration has unreadable field: provider",
+      },
+      {
+        pluginId: "fuzzplugin-model-catalog",
+        message:
+          'model catalog provider "fuzzplugin-model-catalog-revoked-kinds" registration has unreadable field: kinds',
+      },
+      {
+        pluginId: "fuzzplugin-model-catalog",
+        message:
+          'model catalog provider "fuzzplugin-model-catalog-invalid-hook" registration has invalid field: staticCatalog',
+      },
+    ]);
+  });
+
   it("publishes text catalog rows for registered provider catalog hooks", async () => {
     const pluginRegistry = createTestRegistry();
     const record = createPluginRecord({
