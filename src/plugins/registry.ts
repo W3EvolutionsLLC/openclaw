@@ -820,8 +820,89 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
   const canDispatchGatewayMethodsFromHttpRoute = (record: PluginRecord): boolean =>
     (record.contracts?.gatewayMethodDispatch ?? []).includes(GATEWAY_METHOD_DISPATCH_CONTRACT);
 
+  function normalizeHttpRouteNodeCapability(
+    value: unknown,
+  ):
+    | { ok: true; value?: NonNullable<PluginHttpRouteRegistration["nodeCapability"]> }
+    | { ok: false; field: string } {
+    if (!value || typeof value !== "object") {
+      return { ok: true };
+    }
+    const surfaceValue = readHostHookField(value, "surface");
+    const ttlMsValue = readHostHookField(value, "ttlMs");
+    if (!surfaceValue.ok) {
+      return { ok: false, field: "nodeCapability.surface" };
+    }
+    if (!ttlMsValue.ok) {
+      return { ok: false, field: "nodeCapability.ttlMs" };
+    }
+    const surface = normalizeOptionalString(surfaceValue.value);
+    if (!surface) {
+      return { ok: true };
+    }
+    const ttlMs = ttlMsValue.value;
+    return {
+      ok: true,
+      value: {
+        surface,
+        ...(typeof ttlMs === "number" && Number.isFinite(ttlMs) ? { ttlMs } : {}),
+      },
+    };
+  }
+
   const registerHttpRoute = (record: PluginRecord, params: OpenClawPluginHttpRouteParams) => {
-    const normalizedPath = normalizePluginHttpPath(params.path);
+    const pathValue = readHostHookField(params, "path");
+    const handlerValue = readHostHookField(params, "handler");
+    const handleUpgradeValue = readHostHookField(params, "handleUpgrade");
+    const authValue = readHostHookField(params, "auth");
+    const matchValue = readHostHookField(params, "match");
+    const gatewayRuntimeScopeSurfaceValue = readHostHookField(params, "gatewayRuntimeScopeSurface");
+    const nodeCapabilityValue = readHostHookField(params, "nodeCapability");
+    const replaceExistingValue = readHostHookField(params, "replaceExisting");
+    const pushUnreadableDiagnostic = (field: string) => {
+      pushDiagnostic({
+        level: "error",
+        pluginId: record.id,
+        source: record.source,
+        message: `http route registration has unreadable field: ${field}`,
+      });
+    };
+    if (!pathValue.ok) {
+      pushUnreadableDiagnostic("path");
+      return;
+    }
+    if (!handlerValue.ok) {
+      pushUnreadableDiagnostic("handler");
+      return;
+    }
+    if (!handleUpgradeValue.ok) {
+      pushUnreadableDiagnostic("handleUpgrade");
+      return;
+    }
+    if (!authValue.ok) {
+      pushUnreadableDiagnostic("auth");
+      return;
+    }
+    if (!matchValue.ok) {
+      pushUnreadableDiagnostic("match");
+      return;
+    }
+    if (!gatewayRuntimeScopeSurfaceValue.ok) {
+      pushUnreadableDiagnostic("gatewayRuntimeScopeSurface");
+      return;
+    }
+    if (!nodeCapabilityValue.ok) {
+      pushUnreadableDiagnostic("nodeCapability");
+      return;
+    }
+    if (!replaceExistingValue.ok) {
+      pushUnreadableDiagnostic("replaceExisting");
+      return;
+    }
+
+    const normalizedPath = normalizePluginHttpPath(
+      typeof pathValue.value === "string" ? pathValue.value : undefined,
+    );
     if (!normalizedPath) {
       pushDiagnostic({
         level: "warn",
@@ -831,7 +912,8 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
       });
       return;
     }
-    if (params.auth !== "gateway" && params.auth !== "plugin") {
+    const auth = authValue.value;
+    if (auth !== "gateway" && auth !== "plugin") {
       pushDiagnostic({
         level: "error",
         pluginId: record.id,
@@ -840,18 +922,56 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
       });
       return;
     }
-    const match = params.match ?? "exact";
+    if (typeof handlerValue.value !== "function") {
+      pushDiagnostic({
+        level: "error",
+        pluginId: record.id,
+        source: record.source,
+        message: `http route registration missing or invalid handler: ${normalizedPath}`,
+      });
+      return;
+    }
+    const handler = handlerValue.value as OpenClawPluginHttpRouteParams["handler"];
+    const match = matchValue.value === "prefix" ? "prefix" : "exact";
+    const handleUpgrade =
+      typeof handleUpgradeValue.value === "function"
+        ? (handleUpgradeValue.value as NonNullable<OpenClawPluginHttpRouteParams["handleUpgrade"]>)
+        : undefined;
+    const gatewayRuntimeScopeSurface =
+      gatewayRuntimeScopeSurfaceValue.value === "write-default" ||
+      gatewayRuntimeScopeSurfaceValue.value === "trusted-operator"
+        ? gatewayRuntimeScopeSurfaceValue.value
+        : undefined;
+    const nodeCapability = normalizeHttpRouteNodeCapability(nodeCapabilityValue.value);
+    if (!nodeCapability.ok) {
+      pushUnreadableDiagnostic(nodeCapability.field);
+      return;
+    }
+    const routeEntry: PluginHttpRouteRegistration = {
+      pluginId: record.id,
+      path: normalizedPath,
+      handler,
+      ...(handleUpgrade ? { handleUpgrade } : {}),
+      auth,
+      match,
+      ...(gatewayRuntimeScopeSurface ? { gatewayRuntimeScopeSurface } : {}),
+      ...(canDispatchGatewayMethodsFromHttpRoute(record)
+        ? { gatewayMethodDispatchAllowed: true }
+        : {}),
+      ...(nodeCapability.value ? { nodeCapability: nodeCapability.value } : {}),
+      source: record.source,
+    };
     const overlappingRoute = findOverlappingPluginHttpRoute(registry.httpRoutes, {
       path: normalizedPath,
       match,
     });
-    if (overlappingRoute && overlappingRoute.auth !== params.auth) {
+    if (overlappingRoute && overlappingRoute.auth !== auth) {
       pushDiagnostic({
         level: "error",
         pluginId: record.id,
         source: record.source,
         message:
-          `http route overlap rejected: ${normalizedPath} (${match}, ${params.auth}) ` +
+          `http route overlap rejected: ${normalizedPath} (${match}, ${auth}) ` +
           `overlaps ${overlappingRoute.path} (${overlappingRoute.match}, ${overlappingRoute.auth}) ` +
           `owned by ${describeHttpRouteOwner(overlappingRoute)}`,
       });
@@ -865,7 +985,7 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
       if (!existing) {
         return;
       }
-      if (!params.replaceExisting && existing.pluginId !== record.id) {
+      if (replaceExistingValue.value !== true && existing.pluginId !== record.id) {
         pushDiagnostic({
           level: "error",
           pluginId: record.id,
@@ -883,41 +1003,11 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
         });
         return;
       }
-      registry.httpRoutes[existingIndex] = {
-        pluginId: record.id,
-        path: normalizedPath,
-        handler: params.handler,
-        ...(params.handleUpgrade ? { handleUpgrade: params.handleUpgrade } : {}),
-        auth: params.auth,
-        match,
-        ...(params.gatewayRuntimeScopeSurface
-          ? { gatewayRuntimeScopeSurface: params.gatewayRuntimeScopeSurface }
-          : {}),
-        ...(canDispatchGatewayMethodsFromHttpRoute(record)
-          ? { gatewayMethodDispatchAllowed: true }
-          : {}),
-        ...(params.nodeCapability ? { nodeCapability: { ...params.nodeCapability } } : {}),
-        source: record.source,
-      };
+      registry.httpRoutes[existingIndex] = routeEntry;
       return;
     }
     record.httpRoutes += 1;
-    registry.httpRoutes.push({
-      pluginId: record.id,
-      path: normalizedPath,
-      handler: params.handler,
-      ...(params.handleUpgrade ? { handleUpgrade: params.handleUpgrade } : {}),
-      auth: params.auth,
-      match,
-      ...(params.gatewayRuntimeScopeSurface
-        ? { gatewayRuntimeScopeSurface: params.gatewayRuntimeScopeSurface }
-        : {}),
-      ...(canDispatchGatewayMethodsFromHttpRoute(record)
-        ? { gatewayMethodDispatchAllowed: true }
-        : {}),
-      ...(params.nodeCapability ? { nodeCapability: { ...params.nodeCapability } } : {}),
-      source: record.source,
-    });
+    registry.httpRoutes.push(routeEntry);
   };
 
   const registerHostedMediaResolver = (

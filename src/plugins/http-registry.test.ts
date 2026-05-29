@@ -11,6 +11,7 @@ import {
 } from "./runtime.js";
 import type { PluginRuntime } from "./runtime/types.js";
 import { createPluginRecord } from "./status.test-helpers.js";
+import type { OpenClawPluginHttpRouteParams } from "./types.js";
 
 function expectRouteRegistrationDenied(params: {
   replaceExisting: boolean;
@@ -85,6 +86,13 @@ function createLoggedRouteHarness() {
   };
 }
 
+function diagnosticSummaries(diagnostics: readonly unknown[]) {
+  return diagnostics.map((entry) => {
+    const diagnostic = entry as { pluginId?: string; message?: string };
+    return { pluginId: diagnostic.pluginId, message: diagnostic.message };
+  });
+}
+
 describe("registerPluginHttpRoute", () => {
   afterEach(() => {
     releasePinnedPluginHttpRouteRegistry();
@@ -156,6 +164,55 @@ describe("registerPluginHttpRoute", () => {
 
     expect(plainRoute?.gatewayMethodDispatchAllowed).toBeUndefined();
     expect(adminRoute?.gatewayMethodDispatchAllowed).toBe(true);
+  });
+
+  it("rejects unreadable plugin api route fields without aborting sibling routes", () => {
+    const pluginRegistry = createPluginRegistry({
+      logger: {
+        info() {},
+        warn() {},
+        error() {},
+        debug() {},
+      },
+      runtime: {} as PluginRuntime,
+      activateGlobalSideEffects: false,
+    });
+    const config = {} as OpenClawConfig;
+    const record = createPluginRecord({
+      id: "fuzzplugin-http",
+      name: "Fuzz Plugin",
+      source: "/tmp/fuzzplugin/index.ts",
+    });
+    const route = {
+      auth: "plugin",
+      handler: vi.fn(),
+      get path() {
+        throw new Error("fuzzplugin path getter failed");
+      },
+    } as unknown as OpenClawPluginHttpRouteParams;
+    const healthyHandler = vi.fn();
+
+    pluginRegistry.registry.plugins.push(record);
+    const api = pluginRegistry.createApi(record, { config });
+    api.registerHttpRoute(route);
+    api.registerHttpRoute({
+      path: "/mockplugin/ok",
+      auth: "plugin",
+      handler: healthyHandler,
+    });
+
+    expect(pluginRegistry.registry.httpRoutes).toEqual([
+      expect.objectContaining({
+        pluginId: "fuzzplugin-http",
+        path: "/mockplugin/ok",
+        auth: "plugin",
+        handler: healthyHandler,
+      }),
+    ]);
+    expect(diagnosticSummaries(pluginRegistry.registry.diagnostics)).toContainEqual({
+      pluginId: "fuzzplugin-http",
+      message: "http route registration has unreadable field: path",
+    });
   });
 
   it("returns noop unregister when path is missing", () => {
