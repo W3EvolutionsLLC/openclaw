@@ -777,9 +777,52 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
     handler: GatewayRequestHandler,
     opts?: { scope?: OperatorScope },
   ) => {
+    if (typeof method !== "string") {
+      pushDiagnostic({
+        level: "error",
+        pluginId: record.id,
+        source: record.source,
+        message: "gateway method registration missing or invalid method",
+      });
+      return;
+    }
     const trimmed = method.trim();
     if (!trimmed) {
       return;
+    }
+    if (typeof (handler as unknown) !== "function") {
+      pushDiagnostic({
+        level: "error",
+        pluginId: record.id,
+        source: record.source,
+        message: `gateway method registration missing or invalid handler: ${trimmed}`,
+      });
+      return;
+    }
+    let scope: OperatorScope | undefined;
+    if (opts && typeof opts === "object") {
+      const scopeValue = readHostHookField(opts, "scope");
+      if (!scopeValue.ok) {
+        pushDiagnostic({
+          level: "error",
+          pluginId: record.id,
+          source: record.source,
+          message: `gateway method registration has unreadable field: scope (${trimmed})`,
+        });
+        return;
+      }
+      if (scopeValue.value !== undefined) {
+        if (!isOperatorScope(scopeValue.value)) {
+          pushDiagnostic({
+            level: "error",
+            pluginId: record.id,
+            source: record.source,
+            message: `gateway method registration has invalid scope: ${trimmed}`,
+          });
+          return;
+        }
+        scope = scopeValue.value;
+      }
     }
     if (coreGatewayMethods.has(trimmed) || registry.gatewayHandlers[trimmed]) {
       pushDiagnostic({
@@ -792,7 +835,7 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
     }
     const wrappedHandler = adaptPluginGatewayMethodHandler(handler);
     registry.gatewayHandlers[trimmed] = wrappedHandler;
-    const normalizedScope = normalizePluginGatewayMethodScope(trimmed, opts?.scope);
+    const normalizedScope = normalizePluginGatewayMethodScope(trimmed, scope);
     if (normalizedScope.coercedToReservedAdmin) {
       pushDiagnostic({
         level: "warn",
