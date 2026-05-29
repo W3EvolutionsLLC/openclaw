@@ -214,6 +214,44 @@ function pushUnreadableCapturedToolDiagnostic(registry: PluginRegistry, record: 
   });
 }
 
+function readCapturedRegistrationId(entry: object): string {
+  try {
+    const id = (entry as { id?: unknown }).id;
+    return typeof id === "string" ? id.trim() : "";
+  } catch {
+    return "";
+  }
+}
+
+function pushUnreadableCapturedRegistrationIdDiagnostic(
+  registry: PluginRegistry,
+  record: PluginRecord,
+  kind: string,
+) {
+  registry.diagnostics.push({
+    level: "error",
+    pluginId: record.id,
+    source: record.source,
+    message: `plugin ${kind} registration missing readable id`,
+  });
+}
+
+function filterCapturedRegistrationsWithReadableIds<T extends object>(
+  registry: PluginRegistry,
+  record: PluginRecord,
+  kind: string,
+  entries: readonly T[],
+): Array<{ id: string; registration: T }> {
+  return entries.flatMap((registration) => {
+    const id = readCapturedRegistrationId(registration);
+    if (!id) {
+      pushUnreadableCapturedRegistrationIdDiagnostic(registry, record, kind);
+      return [];
+    }
+    return [{ id, registration }];
+  });
+}
+
 export function loadBundledCapabilityRuntimeRegistry(params: {
   pluginIds: readonly string[];
   env?: PluginLoadOptions["env"];
@@ -337,38 +375,134 @@ export function loadBundledCapabilityRuntimeRegistry(params: {
     try {
       const captured = createCapturedPluginRegistration();
       register(captured.api);
-      record.cliBackendIds.push(...captured.cliBackends.map((entry) => entry.id));
-      record.providerIds.push(...captured.providers.map((entry) => entry.id));
-      record.embeddingProviderIds.push(...captured.embeddingProviders.map((entry) => entry.id));
-      record.speechProviderIds.push(...captured.speechProviders.map((entry) => entry.id));
+      const capturedCliBackends = filterCapturedRegistrationsWithReadableIds(
+        registry,
+        record,
+        "cli backend",
+        captured.cliBackends,
+      );
+      const capturedProviders = filterCapturedRegistrationsWithReadableIds(
+        registry,
+        record,
+        "provider",
+        captured.providers,
+      );
+      const capturedEmbeddingProviders = filterCapturedRegistrationsWithReadableIds(
+        registry,
+        record,
+        "embedding provider",
+        captured.embeddingProviders,
+      );
+      const capturedSpeechProviders = filterCapturedRegistrationsWithReadableIds(
+        registry,
+        record,
+        "speech provider",
+        captured.speechProviders,
+      );
+      const capturedRealtimeTranscriptionProviders = filterCapturedRegistrationsWithReadableIds(
+        registry,
+        record,
+        "realtime transcription provider",
+        captured.realtimeTranscriptionProviders,
+      );
+      const capturedRealtimeVoiceProviders = filterCapturedRegistrationsWithReadableIds(
+        registry,
+        record,
+        "realtime voice provider",
+        captured.realtimeVoiceProviders,
+      );
+      const capturedMediaUnderstandingProviders = filterCapturedRegistrationsWithReadableIds(
+        registry,
+        record,
+        "media understanding provider",
+        captured.mediaUnderstandingProviders,
+      );
+      const capturedTranscriptSourceProviders = filterCapturedRegistrationsWithReadableIds(
+        registry,
+        record,
+        "transcript source provider",
+        captured.transcriptSourceProviders,
+      );
+      const capturedImageGenerationProviders = filterCapturedRegistrationsWithReadableIds(
+        registry,
+        record,
+        "image generation provider",
+        captured.imageGenerationProviders,
+      );
+      const capturedVideoGenerationProviders = filterCapturedRegistrationsWithReadableIds(
+        registry,
+        record,
+        "video generation provider",
+        captured.videoGenerationProviders,
+      );
+      const capturedMusicGenerationProviders = filterCapturedRegistrationsWithReadableIds(
+        registry,
+        record,
+        "music generation provider",
+        captured.musicGenerationProviders,
+      );
+      const capturedWebFetchProviders = filterCapturedRegistrationsWithReadableIds(
+        registry,
+        record,
+        "web fetch provider",
+        captured.webFetchProviders,
+      );
+      const capturedWebSearchProviders = filterCapturedRegistrationsWithReadableIds(
+        registry,
+        record,
+        "web search provider",
+        captured.webSearchProviders,
+      );
+      const capturedMigrationProviders = filterCapturedRegistrationsWithReadableIds(
+        registry,
+        record,
+        "migration provider",
+        captured.migrationProviders,
+      );
+      const capturedMemoryEmbeddingProviders = filterCapturedRegistrationsWithReadableIds(
+        registry,
+        record,
+        "memory embedding provider",
+        captured.memoryEmbeddingProviders,
+      );
+      const capturedAgentHarnesses = filterCapturedRegistrationsWithReadableIds(
+        registry,
+        record,
+        "agent harness",
+        captured.agentHarnesses,
+      );
+      record.cliBackendIds.push(...capturedCliBackends.map((entry) => entry.id));
+      record.providerIds.push(...capturedProviders.map((entry) => entry.id));
+      record.embeddingProviderIds.push(...capturedEmbeddingProviders.map((entry) => entry.id));
+      record.speechProviderIds.push(...capturedSpeechProviders.map((entry) => entry.id));
       record.realtimeTranscriptionProviderIds.push(
-        ...captured.realtimeTranscriptionProviders.map((entry) => entry.id),
+        ...capturedRealtimeTranscriptionProviders.map((entry) => entry.id),
       );
       record.realtimeVoiceProviderIds.push(
-        ...captured.realtimeVoiceProviders.map((entry) => entry.id),
+        ...capturedRealtimeVoiceProviders.map((entry) => entry.id),
       );
       record.mediaUnderstandingProviderIds.push(
-        ...captured.mediaUnderstandingProviders.map((entry) => entry.id),
+        ...capturedMediaUnderstandingProviders.map((entry) => entry.id),
       );
       record.transcriptSourceProviderIds.push(
-        ...captured.transcriptSourceProviders.map((entry) => entry.id),
+        ...capturedTranscriptSourceProviders.map((entry) => entry.id),
       );
       record.imageGenerationProviderIds.push(
-        ...captured.imageGenerationProviders.map((entry) => entry.id),
+        ...capturedImageGenerationProviders.map((entry) => entry.id),
       );
       record.videoGenerationProviderIds.push(
-        ...captured.videoGenerationProviders.map((entry) => entry.id),
+        ...capturedVideoGenerationProviders.map((entry) => entry.id),
       );
       record.musicGenerationProviderIds.push(
-        ...captured.musicGenerationProviders.map((entry) => entry.id),
+        ...capturedMusicGenerationProviders.map((entry) => entry.id),
       );
-      record.webFetchProviderIds.push(...captured.webFetchProviders.map((entry) => entry.id));
-      record.webSearchProviderIds.push(...captured.webSearchProviders.map((entry) => entry.id));
-      record.migrationProviderIds.push(...captured.migrationProviders.map((entry) => entry.id));
+      record.webFetchProviderIds.push(...capturedWebFetchProviders.map((entry) => entry.id));
+      record.webSearchProviderIds.push(...capturedWebSearchProviders.map((entry) => entry.id));
+      record.migrationProviderIds.push(...capturedMigrationProviders.map((entry) => entry.id));
       record.memoryEmbeddingProviderIds.push(
-        ...captured.memoryEmbeddingProviders.map((entry) => entry.id),
+        ...capturedMemoryEmbeddingProviders.map((entry) => entry.id),
       );
-      record.agentHarnessIds.push(...captured.agentHarnesses.map((entry) => entry.id));
+      record.agentHarnessIds.push(...capturedAgentHarnesses.map((entry) => entry.id));
       const capturedTools = captured.tools.flatMap((tool) => {
         const name = readCapturedPluginToolName(tool);
         if (!name) {
@@ -380,7 +514,7 @@ export function loadBundledCapabilityRuntimeRegistry(params: {
       record.toolNames.push(...capturedTools.map((entry) => entry.name));
 
       registry.cliBackends?.push(
-        ...captured.cliBackends.map((backend) => ({
+        ...capturedCliBackends.map(({ registration: backend }) => ({
           pluginId: record.id,
           pluginName: record.name,
           backend,
@@ -398,7 +532,7 @@ export function loadBundledCapabilityRuntimeRegistry(params: {
         })),
       );
       registry.providers.push(
-        ...captured.providers.map((provider) => ({
+        ...capturedProviders.map(({ registration: provider }) => ({
           pluginId: record.id,
           pluginName: record.name,
           provider,
@@ -407,7 +541,7 @@ export function loadBundledCapabilityRuntimeRegistry(params: {
         })),
       );
       registry.embeddingProviders.push(
-        ...captured.embeddingProviders.map((provider) => ({
+        ...capturedEmbeddingProviders.map(({ registration: provider }) => ({
           pluginId: record.id,
           pluginName: record.name,
           provider,
@@ -416,7 +550,7 @@ export function loadBundledCapabilityRuntimeRegistry(params: {
         })),
       );
       registry.speechProviders.push(
-        ...captured.speechProviders.map((provider) => ({
+        ...capturedSpeechProviders.map(({ registration: provider }) => ({
           pluginId: record.id,
           pluginName: record.name,
           provider,
@@ -425,7 +559,7 @@ export function loadBundledCapabilityRuntimeRegistry(params: {
         })),
       );
       registry.realtimeTranscriptionProviders.push(
-        ...captured.realtimeTranscriptionProviders.map((provider) => ({
+        ...capturedRealtimeTranscriptionProviders.map(({ registration: provider }) => ({
           pluginId: record.id,
           pluginName: record.name,
           provider,
@@ -434,7 +568,7 @@ export function loadBundledCapabilityRuntimeRegistry(params: {
         })),
       );
       registry.realtimeVoiceProviders.push(
-        ...captured.realtimeVoiceProviders.map((provider) => ({
+        ...capturedRealtimeVoiceProviders.map(({ registration: provider }) => ({
           pluginId: record.id,
           pluginName: record.name,
           provider,
@@ -443,7 +577,7 @@ export function loadBundledCapabilityRuntimeRegistry(params: {
         })),
       );
       registry.mediaUnderstandingProviders.push(
-        ...captured.mediaUnderstandingProviders.map((provider) => ({
+        ...capturedMediaUnderstandingProviders.map(({ registration: provider }) => ({
           pluginId: record.id,
           pluginName: record.name,
           provider,
@@ -452,7 +586,7 @@ export function loadBundledCapabilityRuntimeRegistry(params: {
         })),
       );
       registry.transcriptSourceProviders.push(
-        ...captured.transcriptSourceProviders.map((provider) => ({
+        ...capturedTranscriptSourceProviders.map(({ registration: provider }) => ({
           pluginId: record.id,
           pluginName: record.name,
           provider,
@@ -461,7 +595,7 @@ export function loadBundledCapabilityRuntimeRegistry(params: {
         })),
       );
       registry.imageGenerationProviders.push(
-        ...captured.imageGenerationProviders.map((provider) => ({
+        ...capturedImageGenerationProviders.map(({ registration: provider }) => ({
           pluginId: record.id,
           pluginName: record.name,
           provider,
@@ -470,7 +604,7 @@ export function loadBundledCapabilityRuntimeRegistry(params: {
         })),
       );
       registry.videoGenerationProviders.push(
-        ...captured.videoGenerationProviders.map((provider) => ({
+        ...capturedVideoGenerationProviders.map(({ registration: provider }) => ({
           pluginId: record.id,
           pluginName: record.name,
           provider,
@@ -479,7 +613,7 @@ export function loadBundledCapabilityRuntimeRegistry(params: {
         })),
       );
       registry.musicGenerationProviders.push(
-        ...captured.musicGenerationProviders.map((provider) => ({
+        ...capturedMusicGenerationProviders.map(({ registration: provider }) => ({
           pluginId: record.id,
           pluginName: record.name,
           provider,
@@ -488,7 +622,7 @@ export function loadBundledCapabilityRuntimeRegistry(params: {
         })),
       );
       registry.webFetchProviders.push(
-        ...captured.webFetchProviders.map((provider) => ({
+        ...capturedWebFetchProviders.map(({ registration: provider }) => ({
           pluginId: record.id,
           pluginName: record.name,
           provider,
@@ -497,7 +631,7 @@ export function loadBundledCapabilityRuntimeRegistry(params: {
         })),
       );
       registry.webSearchProviders.push(
-        ...captured.webSearchProviders.map((provider) => ({
+        ...capturedWebSearchProviders.map(({ registration: provider }) => ({
           pluginId: record.id,
           pluginName: record.name,
           provider,
@@ -506,7 +640,7 @@ export function loadBundledCapabilityRuntimeRegistry(params: {
         })),
       );
       registry.migrationProviders.push(
-        ...captured.migrationProviders.map((provider) => ({
+        ...capturedMigrationProviders.map(({ registration: provider }) => ({
           pluginId: record.id,
           pluginName: record.name,
           provider,
@@ -515,7 +649,7 @@ export function loadBundledCapabilityRuntimeRegistry(params: {
         })),
       );
       registry.memoryEmbeddingProviders.push(
-        ...captured.memoryEmbeddingProviders.map((provider) => ({
+        ...capturedMemoryEmbeddingProviders.map(({ registration: provider }) => ({
           pluginId: record.id,
           pluginName: record.name,
           provider,
@@ -524,7 +658,7 @@ export function loadBundledCapabilityRuntimeRegistry(params: {
         })),
       );
       registry.agentHarnesses.push(
-        ...captured.agentHarnesses.map((harness) => ({
+        ...capturedAgentHarnesses.map(({ registration: harness }) => ({
           pluginId: record.id,
           pluginName: record.name,
           harness,

@@ -101,4 +101,86 @@ describe("loadBundledCapabilityRuntimeRegistry", () => {
       ),
     ).toBe(false);
   });
+
+  it("skips captured capability registrations with unreadable ids while preserving healthy siblings", () => {
+    const plugin = writePlugin({
+      id: "fuzzplugin",
+      filename: "fuzzplugin-caps.cjs",
+      body: `const unreadableProvider = {
+        label: "Unreadable Provider",
+        auth: [],
+      };
+      Object.defineProperty(unreadableProvider, "id", {
+        enumerable: true,
+        get() {
+          throw new Error("fuzzplugin provider id read failed");
+        },
+      });
+      const healthyProvider = {
+        id: "mockplugin-provider",
+        label: "Mock Provider",
+        auth: [],
+      };
+      const malformedCliBackend = {
+        id: 42,
+        config: { command: "mock-cli" },
+      };
+      const healthyCliBackend = {
+        id: "mockplugin-cli",
+        config: { command: "mock-cli" },
+      };
+
+      module.exports = {
+        id: "fuzzplugin",
+        register(api) {
+          api.registerProvider(unreadableProvider);
+          api.registerProvider(healthyProvider);
+          api.registerCliBackend(malformedCliBackend);
+          api.registerCliBackend(healthyCliBackend);
+        },
+      };`,
+    });
+
+    const registry = loadBundledCapabilityRuntimeRegistry({
+      pluginIds: ["fuzzplugin"],
+      discovery: {
+        candidates: [
+          {
+            idHint: "fuzzplugin",
+            source: plugin.file,
+            rootDir: plugin.dir,
+            origin: "bundled",
+          },
+        ],
+        diagnostics: [],
+      },
+    });
+
+    const record = registry.plugins.find((entry) => entry.id === "fuzzplugin");
+    expect(record?.status).toBe("loaded");
+    expect(record?.providerIds).toEqual(["mockplugin-provider"]);
+    expect(record?.cliBackendIds).toEqual(["mockplugin-cli"]);
+    expect(registry.providers.map((entry) => entry.provider.id)).toEqual(["mockplugin-provider"]);
+    expect(registry.cliBackends?.map((entry) => entry.backend.id)).toEqual(["mockplugin-cli"]);
+    expect(
+      registry.diagnostics.some(
+        (entry) =>
+          entry.pluginId === "fuzzplugin" &&
+          entry.message === "plugin provider registration missing readable id",
+      ),
+    ).toBe(true);
+    expect(
+      registry.diagnostics.some(
+        (entry) =>
+          entry.pluginId === "fuzzplugin" &&
+          entry.message === "plugin cli backend registration missing readable id",
+      ),
+    ).toBe(true);
+    expect(
+      registry.diagnostics.some(
+        (entry) =>
+          entry.pluginId === "fuzzplugin" && entry.message.startsWith("failed to load plugin:"),
+      ),
+    ).toBe(false);
+  });
 });
