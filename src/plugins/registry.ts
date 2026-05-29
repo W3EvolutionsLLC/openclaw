@@ -2102,34 +2102,44 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
       }
       return normalized;
     };
-    const parentPath = (opts?.parentPath ?? []).map((segment) =>
-      normalizeCommandRoot(segment, "command"),
-    );
-    if (parentPath.some((segment) => segment === null)) {
+    let normalizedParentPath: string[];
+    let descriptors: OpenClawPluginCliCommandDescriptor[];
+    let commands: string[];
+    try {
+      const parentPath = (opts?.parentPath ?? []).map((segment) =>
+        normalizeCommandRoot(segment, "command"),
+      );
+      if (parentPath.some((segment) => segment === null)) {
+        return;
+      }
+      normalizedParentPath = parentPath as string[];
+      descriptors = (opts?.descriptors ?? [])
+        .map((descriptor) => {
+          const name = normalizeCommandRoot(descriptor.name, "descriptor");
+          const description = sanitizeCommandDescriptorDescription(descriptor.description);
+          return name && description
+            ? {
+                name,
+                description,
+                hasSubcommands: descriptor.hasSubcommands,
+              }
+            : null;
+        })
+        .filter(
+          (descriptor): descriptor is OpenClawPluginCliCommandDescriptor => descriptor !== null,
+        );
+      commands = [...(opts?.commands ?? []), ...descriptors.map((descriptor) => descriptor.name)]
+        .map((cmd) => normalizeCommandRoot(cmd, "command"))
+        .filter((command): command is string => command !== null);
+    } catch {
+      pushDiagnostic({
+        level: "error",
+        pluginId: record.id,
+        source: record.source,
+        message: "cli registration has unreadable field: options",
+      });
       return;
     }
-    const normalizedParentPath = parentPath as string[];
-    const descriptors = (opts?.descriptors ?? [])
-      .map((descriptor) => {
-        const name = normalizeCommandRoot(descriptor.name, "descriptor");
-        const description = sanitizeCommandDescriptorDescription(descriptor.description);
-        return name && description
-          ? {
-              name,
-              description,
-              hasSubcommands: descriptor.hasSubcommands,
-            }
-          : null;
-      })
-      .filter(
-        (descriptor): descriptor is OpenClawPluginCliCommandDescriptor => descriptor !== null,
-      );
-    const commands = [
-      ...(opts?.commands ?? []),
-      ...descriptors.map((descriptor) => descriptor.name),
-    ]
-      .map((cmd) => normalizeCommandRoot(cmd, "command"))
-      .filter((command): command is string => command !== null);
     if (commands.length === 0) {
       pushDiagnostic({
         level: "error",

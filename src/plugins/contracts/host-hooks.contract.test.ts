@@ -231,6 +231,66 @@ describe("host-hook fixture plugin contract", () => {
     });
   });
 
+  it("fails closed on unreadable CLI registration options without aborting plugin registration", () => {
+    const { config, registry } = createPluginRegistryFixture();
+    const revokedCommands = Proxy.revocable(["mockplugin-revoked"], {});
+    revokedCommands.revoke();
+    const unreadableOptions: Record<string, unknown> = {};
+    Object.defineProperty(unreadableOptions, "commands", {
+      enumerable: true,
+      get() {
+        throw new Error("fuzzplugin CLI commands are unreadable");
+      },
+    });
+    const unreadableDescriptor: Record<string, unknown> = {
+      name: "mockplugin-cli-bad",
+    };
+    Object.defineProperty(unreadableDescriptor, "description", {
+      enumerable: true,
+      get() {
+        throw new Error("fuzzplugin CLI descriptor description is unreadable");
+      },
+    });
+
+    registerTestPlugin({
+      registry,
+      config,
+      record: createPluginRecord({
+        id: "fuzzplugin",
+        name: "Fuzz Plugin",
+        origin: "workspace",
+      }),
+      register(api) {
+        api.registerCli(() => undefined, unreadableOptions as never);
+        api.registerCli(() => undefined, {
+          commands: revokedCommands.proxy as never,
+        });
+        api.registerCli(() => undefined, {
+          descriptors: [unreadableDescriptor as never],
+        });
+        api.registerCli(() => undefined, {
+          commands: ["mockplugin-cli"],
+        });
+        api.registerCommand({
+          name: "mockplugin-cli",
+          description: "Healthy command sibling",
+          handler: async () => ({ text: "ok" }),
+        });
+      },
+    });
+
+    expect(registry.registry.cliRegistrars.map((entry) => entry.commands)).toEqual([
+      ["mockplugin-cli"],
+    ]);
+    expect(registry.registry.commands.map((entry) => entry.command.name)).toEqual([
+      "mockplugin-cli",
+    ]);
+    expect(diagnosticSummaries(registry.registry.diagnostics)).toContainEqual({
+      pluginId: "fuzzplugin",
+      message: "cli registration has unreadable field: options",
+    });
+  });
+
   it("fails closed on unreadable Control UI descriptors without aborting plugin registration", () => {
     const { config, registry } = createPluginRegistryFixture();
     const descriptor: Record<string, unknown> = {
