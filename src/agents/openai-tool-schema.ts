@@ -54,8 +54,12 @@ function resolveStrictOpenAISchemaCacheKey(
   ]);
 }
 
-function readCachedStrictOpenAISchema(schema: object, key: string): unknown {
-  return strictOpenAISchemaCache.get(schema)?.find((entry) => entry.key === key)?.value;
+function readCachedStrictOpenAISchema(
+  schema: object,
+  key: string,
+): { found: true; value: unknown } | { found: false } {
+  const entry = strictOpenAISchemaCache.get(schema)?.find((candidate) => candidate.key === key);
+  return entry ? { found: true, value: entry.value } : { found: false };
 }
 
 function rememberStrictOpenAISchema(schema: object, key: string, value: unknown): unknown {
@@ -89,8 +93,8 @@ export function normalizeStrictOpenAIJsonSchema(
   }
   const cacheKey = resolveStrictOpenAISchemaCacheKey(modelCompat);
   const cached = readCachedStrictOpenAISchema(schemaInput, cacheKey);
-  if (cached !== undefined) {
-    return cached;
+  if (cached.found) {
+    return cached.value;
   }
   return rememberStrictOpenAISchema(
     schemaInput,
