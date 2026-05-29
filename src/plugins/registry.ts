@@ -542,7 +542,62 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
       });
       return;
     }
-    const runtimes = normalizeAgentToolResultMiddlewareRuntimes(options);
+    const pushUnreadableDiagnostic = (field: string) => {
+      pushDiagnostic({
+        level: "error",
+        pluginId: record.id,
+        source: record.source,
+        message: `agent tool result middleware registration has unreadable field: ${field}`,
+      });
+    };
+    let normalizedOptions = options;
+    if (options && (typeof options === "object" || typeof options === "function")) {
+      const runtimesValue = readHostHookField(options, "runtimes");
+      const harnessesValue = readHostHookField(options, "harnesses");
+      if (!runtimesValue.ok) {
+        pushUnreadableDiagnostic("runtimes");
+        return;
+      }
+      if (!harnessesValue.ok) {
+        pushUnreadableDiagnostic("harnesses");
+        return;
+      }
+      const copyRuntimeOptions = (
+        field: "runtimes" | "harnesses",
+        value: unknown,
+      ): { ok: true; entries: unknown[] | undefined } | { ok: false } => {
+        if (value === undefined) {
+          return { ok: true, entries: undefined };
+        }
+        try {
+          return {
+            ok: true,
+            entries: Array.isArray(value)
+              ? Array.from(value).filter((entry) => typeof entry === "string")
+              : [],
+          };
+        } catch {
+          pushUnreadableDiagnostic(field);
+          return { ok: false };
+        }
+      };
+      const runtimeEntries = copyRuntimeOptions("runtimes", runtimesValue.value);
+      if (!runtimeEntries.ok) {
+        return;
+      }
+      const harnessEntries = copyRuntimeOptions("harnesses", harnessesValue.value);
+      if (!harnessEntries.ok) {
+        return;
+      }
+      if (runtimeEntries.entries !== undefined) {
+        normalizedOptions = { runtimes: runtimeEntries.entries as never };
+      } else if (harnessEntries.entries !== undefined) {
+        normalizedOptions = { harnesses: harnessEntries.entries as never };
+      } else {
+        normalizedOptions = undefined;
+      }
+    }
+    const runtimes = normalizeAgentToolResultMiddlewareRuntimes(normalizedOptions);
     if (runtimes.length === 0) {
       pushDiagnostic({
         level: "error",

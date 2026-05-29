@@ -291,6 +291,70 @@ describe("host-hook fixture plugin contract", () => {
     });
   });
 
+  it("fails closed on unreadable agent tool result middleware options without aborting plugin registration", () => {
+    const { config, registry } = createPluginRegistryFixture();
+    const revokedRuntimes = Proxy.revocable(["codex"], {});
+    revokedRuntimes.revoke();
+    const unreadableRuntimes: Record<string, unknown> = {};
+    Object.defineProperty(unreadableRuntimes, "runtimes", {
+      enumerable: true,
+      get() {
+        throw new Error("fuzzplugin middleware runtimes are unreadable");
+      },
+    });
+    const unreadableHarnesses: Record<string, unknown> = {};
+    Object.defineProperty(unreadableHarnesses, "harnesses", {
+      enumerable: true,
+      get() {
+        throw new Error("fuzzplugin middleware harnesses are unreadable");
+      },
+    });
+
+    registerTestPlugin({
+      registry,
+      config,
+      record: createPluginRecord({
+        id: "fuzzplugin",
+        name: "Fuzz Plugin",
+        origin: "bundled",
+        contracts: { agentToolResultMiddleware: ["codex"] },
+      }),
+      register(api) {
+        api.registerAgentToolResultMiddleware(() => undefined, unreadableRuntimes as never);
+        api.registerAgentToolResultMiddleware(() => undefined, {
+          runtimes: revokedRuntimes.proxy as never,
+        });
+        api.registerAgentToolResultMiddleware(() => undefined, {
+          runtimes: [{} as never],
+        });
+        api.registerAgentToolResultMiddleware(() => undefined, unreadableHarnesses as never);
+        api.registerAgentToolResultMiddleware(() => undefined, {
+          harnesses: ["codex-app-server"],
+        });
+        api.registerCommand({
+          name: "mockplugin-middleware",
+          description: "Healthy command sibling",
+          handler: async () => ({ text: "ok" }),
+        });
+      },
+    });
+
+    expect(registry.registry.agentToolResultMiddlewares.map((entry) => entry.runtimes)).toEqual([
+      ["codex"],
+    ]);
+    expect(registry.registry.commands.map((entry) => entry.command.name)).toEqual([
+      "mockplugin-middleware",
+    ]);
+    expect(diagnosticSummaries(registry.registry.diagnostics)).toContainEqual({
+      pluginId: "fuzzplugin",
+      message: "agent tool result middleware registration has unreadable field: runtimes",
+    });
+    expect(diagnosticSummaries(registry.registry.diagnostics)).toContainEqual({
+      pluginId: "fuzzplugin",
+      message: "agent tool result middleware registration has unreadable field: harnesses",
+    });
+  });
+
   it("fails closed on unreadable Control UI descriptors without aborting plugin registration", () => {
     const { config, registry } = createPluginRegistryFixture();
     const descriptor: Record<string, unknown> = {
