@@ -1,11 +1,13 @@
-import { getActivePluginChannelRegistry } from "../../plugins/runtime.js";
 import {
   normalizeLowercaseStringOrEmpty,
   normalizeOptionalString,
 } from "../../shared/string-coerce.js";
 import { normalizeTrimmedStringList } from "../../shared/string-normalization.js";
 import { resolveTextCommand } from "../commands-registry.js";
-import { resolveCommandSurfaceChannel } from "./channel-context.js";
+import {
+  resolveCommandSurfaceChannel,
+  resolveConfiguredChannelDefaultAccountId,
+} from "./channel-context.js";
 import { persistSessionEntry } from "./commands-session-store.js";
 import type { CommandHandler, HandleCommandsParams } from "./commands-types.js";
 
@@ -33,10 +35,14 @@ function resolveTargetChannelAccountId(
   params: HandleCommandsParams,
   targetChannel: string,
 ): string {
-  const plugin = getActivePluginChannelRegistry()?.channels.find(
-    (entry) => normalizeLowercaseStringOrEmpty(entry.plugin.id) === targetChannel,
-  )?.plugin;
-  return normalizeOptionalString(plugin?.config.defaultAccountId?.(params.cfg)) || "default";
+  return (
+    normalizeOptionalString(
+      resolveConfiguredChannelDefaultAccountId({
+        channel: targetChannel,
+        cfg: params.cfg,
+      }),
+    ) || "default"
+  );
 }
 
 function isDirectDockSource(params: HandleCommandsParams): boolean {

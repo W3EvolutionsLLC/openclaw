@@ -1,9 +1,9 @@
 import { normalizeConversationText } from "../../acp/conversation-id.js";
 import { resolveConversationBindingContext } from "../../channels/conversation-binding-context.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
-import { getActivePluginChannelRegistry } from "../../plugins/runtime.js";
 import { normalizeLowercaseStringOrEmpty } from "../../shared/string-coerce.js";
 import type { MsgContext } from "../templating.js";
+import { resolveConfiguredChannelDefaultAccountId } from "./channel-context.js";
 import type { HandleCommandsParams } from "./commands-types.js";
 
 type BindingMsgContext = Pick<
@@ -35,13 +35,15 @@ function resolveBindingAccountId(params: {
   commandChannel?: string | null;
 }): string {
   const channel = resolveBindingChannel(params.ctx, params.commandChannel);
-  const plugin = getActivePluginChannelRegistry()?.channels.find(
-    (entry) => entry.plugin.id === channel,
-  )?.plugin;
   const accountId = normalizeConversationText(params.ctx.AccountId);
   return (
     accountId ||
-    normalizeConversationText(plugin?.config.defaultAccountId?.(params.cfg)) ||
+    normalizeConversationText(
+      resolveConfiguredChannelDefaultAccountId({
+        channel,
+        cfg: params.cfg,
+      }),
+    ) ||
     "default"
   );
 }

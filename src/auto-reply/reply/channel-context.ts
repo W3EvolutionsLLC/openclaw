@@ -1,5 +1,5 @@
+import { getLoadedChannelPluginForRead } from "../../channels/plugins/registry-loaded-read.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
-import { getActivePluginChannelRegistry } from "../../plugins/runtime.js";
 import {
   normalizeOptionalLowercaseString,
   normalizeOptionalString,
@@ -30,6 +30,23 @@ type ChannelAccountParams = {
   };
 };
 
+export function resolveConfiguredChannelDefaultAccountId(params: {
+  channel: string;
+  cfg: OpenClawConfig;
+}): string | undefined {
+  const targetChannel = normalizeOptionalLowercaseString(params.channel);
+  if (!targetChannel) {
+    return undefined;
+  }
+  let plugin: ReturnType<typeof getLoadedChannelPluginForRead>;
+  try {
+    plugin = getLoadedChannelPluginForRead(targetChannel);
+  } catch {
+    return undefined;
+  }
+  return normalizeOptionalString(plugin?.config.defaultAccountId?.(params.cfg));
+}
+
 export function resolveCommandSurfaceChannel(params: CommandSurfaceParams): string {
   const channel =
     params.ctx.OriginatingChannel ??
@@ -45,9 +62,9 @@ export function resolveChannelAccountId(params: ChannelAccountParams): string {
     return accountId;
   }
   const channel = resolveCommandSurfaceChannel(params);
-  const plugin = getActivePluginChannelRegistry()?.channels.find(
-    (entry) => entry.plugin.id === channel,
-  )?.plugin;
-  const configuredDefault = normalizeOptionalString(plugin?.config.defaultAccountId?.(params.cfg));
+  const configuredDefault = resolveConfiguredChannelDefaultAccountId({
+    channel,
+    cfg: params.cfg,
+  });
   return configuredDefault || "default";
 }
