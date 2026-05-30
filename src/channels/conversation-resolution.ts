@@ -8,7 +8,6 @@ import {
 import { resolveConversationIdFromTargets } from "../infra/outbound/conversation-id.js";
 import { normalizeConversationTargetRef } from "../infra/outbound/session-binding-normalization.js";
 import { stringifyRouteThreadId } from "../plugin-sdk/channel-route.js";
-import { getActivePluginChannelRegistry } from "../plugins/runtime.js";
 import {
   normalizeLowercaseStringOrEmpty,
   normalizeOptionalLowercaseString,
@@ -95,8 +94,7 @@ function getActiveRegistryChannelPlugin(rawChannel: string): ChannelPlugin | und
   if (!normalized) {
     return undefined;
   }
-  return getActivePluginChannelRegistry()?.channels.find((entry) => entry.plugin.id === normalized)
-    ?.plugin;
+  return getLoadedChannelPlugin(normalized);
 }
 
 function getRuntimeChannelPluginCandidates(channel: string): ChannelPlugin[] {

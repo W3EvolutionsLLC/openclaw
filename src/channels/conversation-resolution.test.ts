@@ -77,6 +77,70 @@ describe("conversation resolution", () => {
     });
   });
 
+  it("skips unreadable loaded channel registry entries while resolving healthy aliases", () => {
+    const healthyBase = createChannelTestPluginBase({
+      id: "mockplugin-chat",
+      label: "Mock Plugin Chat",
+      config: {
+        defaultAccountId: () => "work",
+      },
+    });
+    const healthyPlugin: ChannelPlugin = {
+      ...healthyBase,
+      meta: {
+        ...healthyBase.meta,
+        aliases: ["mockchat"],
+      },
+      bindings: {
+        ...createBindingProviderDefaults(),
+        resolveCommandConversation: () => ({ conversationId: "room-alpha" }),
+      },
+    };
+    const registry = createTestRegistry([
+      {
+        pluginId: healthyPlugin.id,
+        source: "test",
+        plugin: healthyPlugin,
+      },
+    ]);
+    const unreadableEntry = Object.defineProperty(
+      { pluginId: "fuzzplugin-entry", source: "test" },
+      "plugin",
+      {
+        enumerable: true,
+        get() {
+          throw new Error("fuzzplugin channel entry unreadable");
+        },
+      },
+    );
+    const unreadablePluginId = Object.defineProperty({ meta: { id: "fuzzplugin-chat" } }, "id", {
+      enumerable: true,
+      get() {
+        throw new Error("fuzzplugin channel id unreadable");
+      },
+    });
+    registry.channels.unshift(
+      unreadableEntry as never,
+      { pluginId: "fuzzplugin-chat", source: "test", plugin: unreadablePluginId } as never,
+    );
+    setActivePluginRegistry(registry);
+
+    expect(
+      resolveCommandConversationResolution({
+        cfg: testConfig,
+        channel: "mockchat",
+        originatingTo: "mockchat:room-alpha",
+      }),
+    ).toEqual({
+      canonical: {
+        channel: "mockplugin-chat",
+        accountId: "work",
+        conversationId: "room-alpha",
+      },
+      source: "command-provider",
+    });
+  });
+
   it("can skip placement hints for callers that do not consume them", () => {
     registerChannelPlugin({
       ...createChannelTestPluginBase({
