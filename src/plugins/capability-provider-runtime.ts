@@ -285,12 +285,47 @@ function readCapabilityProviderId(
   }
 }
 
+function copyCapabilityProviderEntries<K extends CapabilityProviderRegistryKey>(
+  entries: unknown,
+): Array<PluginRegistry[K][number]> {
+  if (!Array.isArray(entries)) {
+    return [];
+  }
+  let length: number;
+  try {
+    length = entries.length;
+  } catch {
+    return [];
+  }
+  const copied: Array<PluginRegistry[K][number]> = [];
+  for (let index = 0; index < length; index += 1) {
+    try {
+      const entry = entries[index];
+      if (entry && typeof entry === "object") {
+        copied.push(entry as PluginRegistry[K][number]);
+      }
+    } catch {
+      continue;
+    }
+  }
+  return copied;
+}
+
+function readCapabilityProviderFromEntry<K extends CapabilityProviderRegistryKey>(
+  entry: unknown,
+): CapabilityProviderForKey<K> | undefined {
+  return readRecordValue(entry, "provider") as CapabilityProviderForKey<K> | undefined;
+}
+
 function listCapabilityProviderObjects<K extends CapabilityProviderRegistryKey>(
   entries: PluginRegistry[K],
 ): CapabilityProviderForKey<K>[] {
   const providers: CapabilityProviderForKey<K>[] = [];
-  for (const entry of entries) {
-    const provider = entry.provider as CapabilityProviderForKey<K>;
+  for (const entry of copyCapabilityProviderEntries<K>(entries)) {
+    const provider = readCapabilityProviderFromEntry<K>(entry);
+    if (!provider) {
+      continue;
+    }
     if (!readCapabilityProviderId(provider).ok) {
       continue;
     }
@@ -303,13 +338,14 @@ function findProviderById<K extends CapabilityProviderRegistryKey>(
   entries: PluginRegistry[K],
   providerId: string,
 ): CapabilityProviderForKey<K> | undefined {
-  const providerEntries = entries as unknown as Array<{
-    provider: CapabilityProviderForKey<K> & { id?: unknown };
-  }>;
-  for (const entry of providerEntries) {
-    const id = readCapabilityProviderId(entry.provider);
+  for (const entry of copyCapabilityProviderEntries<K>(entries)) {
+    const provider = readCapabilityProviderFromEntry<K>(entry);
+    if (!provider) {
+      continue;
+    }
+    const id = readCapabilityProviderId(provider);
     if (id.ok && id.id === providerId) {
-      return entry.provider;
+      return provider;
     }
   }
   return undefined;
@@ -322,8 +358,11 @@ function mergeCapabilityProviders<K extends CapabilityProviderRegistryKey>(
   const merged = new Map<string, CapabilityProviderForKey<K>>();
   const unnamed: CapabilityProviderForKey<K>[] = [];
   const addEntries = (entries: PluginRegistry[K]) => {
-    for (const entry of entries) {
-      const provider = entry.provider as CapabilityProviderForKey<K>;
+    for (const entry of copyCapabilityProviderEntries<K>(entries)) {
+      const provider = readCapabilityProviderFromEntry<K>(entry);
+      if (!provider) {
+        continue;
+      }
       const id = readCapabilityProviderId(provider);
       if (!id.ok) {
         continue;
@@ -350,8 +389,8 @@ function mergeCapabilityProviderEntries<K extends CapabilityProviderRegistryKey>
   const merged = new Map<string, PluginRegistry[K][number]>();
   const unnamed: Array<PluginRegistry[K][number]> = [];
   const addEntries = (entries: PluginRegistry[K]) => {
-    for (const entry of entries) {
-      const id = readCapabilityProviderId(entry.provider);
+    for (const entry of copyCapabilityProviderEntries<K>(entries)) {
+      const id = readCapabilityProviderId(readCapabilityProviderFromEntry<K>(entry));
       if (!id.ok) {
         continue;
       }
@@ -492,7 +531,7 @@ function shouldScopeCapabilityLoadToRequestedProviders(
 }
 
 function removeActiveProviderIds(requested: Set<string>, entries: readonly unknown[]): void {
-  for (const entry of entries as Array<{ provider: { id?: unknown; aliases?: unknown } }>) {
+  for (const entry of copyCapabilityProviderEntries<CapabilityProviderRegistryKey>(entries)) {
     const provider = readRecordValue(entry, "provider");
     const id = readRecordValue(provider, "id");
     if (typeof id === "string") {
@@ -522,19 +561,26 @@ function filterLoadedProvidersForRequestedConfig<K extends CapabilityProviderReg
   if (params.requested.size === 0) {
     return [] as unknown as PluginRegistry[K];
   }
-  return params.entries.filter((entry) => {
+  const filtered: Array<PluginRegistry[K][number]> = [];
+  for (const entry of copyCapabilityProviderEntries<K>(params.entries)) {
     const provider = readRecordValue(entry, "provider");
     const id = readRecordValue(provider, "id");
     if (typeof id === "string" && params.requested.has(id.toLowerCase())) {
-      return true;
+      filtered.push(entry);
+      continue;
     }
+    let matchedAlias = false;
     for (const alias of copyArrayEntries(readRecordValue(provider, "aliases")) ?? []) {
       if (typeof alias === "string" && params.requested.has(alias.toLowerCase())) {
-        return true;
+        matchedAlias = true;
+        break;
       }
     }
-    return false;
-  }) as PluginRegistry[K];
+    if (matchedAlias) {
+      filtered.push(entry);
+    }
+  }
+  return filtered as PluginRegistry[K];
 }
 
 function resolveRequestedCapabilityPluginIds(params: {

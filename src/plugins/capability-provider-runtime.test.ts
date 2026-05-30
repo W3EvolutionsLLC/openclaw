@@ -506,6 +506,61 @@ describe("resolvePluginCapabilityProviders", () => {
     ).toBe("mockplugin-provider");
   });
 
+  it("skips unreadable active capability provider rows while preserving healthy providers", () => {
+    const active = createEmptyPluginRegistry();
+    active.speechProviders.push(
+      {
+        pluginId: "fuzzplugin",
+        pluginName: "fuzzplugin",
+        source: "test",
+        provider: {
+          id: "fuzzplugin-provider",
+          label: "fuzzplugin",
+          isConfigured: () => true,
+          synthesize: async () => ({
+            audioBuffer: Buffer.from("x"),
+            outputFormat: "mp3",
+            voiceCompatible: false,
+            fileExtension: ".mp3",
+          }),
+        },
+      } as never,
+      {
+        pluginId: "mockplugin",
+        pluginName: "mockplugin",
+        source: "test",
+        provider: {
+          id: "mockplugin-provider",
+          label: "mockplugin",
+          isConfigured: () => true,
+          synthesize: async () => ({
+            audioBuffer: Buffer.from("x"),
+            outputFormat: "mp3",
+            voiceCompatible: false,
+            fileExtension: ".mp3",
+          }),
+        },
+      } as never,
+    );
+    Object.defineProperty(active.speechProviders, 0, {
+      get() {
+        throw new Error("fuzzplugin capability provider row failed");
+      },
+    });
+    mocks.resolveRuntimePluginRegistry.mockReturnValue(active);
+
+    expectResolvedCapabilityProviderIds(
+      resolvePluginCapabilityProviders({ key: "speechProviders" }),
+      ["mockplugin-provider"],
+    );
+    expect(
+      resolvePluginCapabilityProvider({
+        key: "speechProviders",
+        providerId: "mockplugin-provider",
+      })?.id,
+    ).toBe("mockplugin-provider");
+  });
+
   it("skips unreadable speech provider config maps while resolving requested providers", () => {
     const cfg = {
       models: {
