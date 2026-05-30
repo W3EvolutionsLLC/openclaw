@@ -47,6 +47,59 @@ const { loadBundledPluginPublicArtifactModuleSyncMock } = vi.hoisted(() => {
             }),
           };
         }
+        if (dirName === "fuzzplugin" && artifactBasename === "web-search-contract-api.js") {
+          return {
+            createBrokenWebSearchProvider: () => {
+              throw new Error("fuzzplugin provider factory failed");
+            },
+            createFuzzWebSearchProvider: () =>
+              Object.create(null, {
+                id: {
+                  enumerable: true,
+                  get() {
+                    throw new Error("fuzzplugin provider id getter failed");
+                  },
+                },
+                label: { enumerable: true, value: "Fuzz Provider" },
+                hint: { enumerable: true, value: "fuzz" },
+                envVars: { enumerable: true, value: ["FUZZ_API_KEY"] },
+                placeholder: { enumerable: true, value: "fuzz" },
+                signupUrl: { enumerable: true, value: "https://example.com/fuzz" },
+                credentialPath: {
+                  enumerable: true,
+                  value: "plugins.entries.fuzzplugin.config.apiKey",
+                },
+                getCredentialValue: { enumerable: true, value: () => undefined },
+                setCredentialValue: { enumerable: true, value: () => ({}) },
+                createTool: { enumerable: true, value: () => null },
+              }),
+            createMockWebSearchProvider: () =>
+              Object.create(null, {
+                id: { enumerable: true, value: "mockplugin" },
+                label: { enumerable: true, value: "Mock Provider" },
+                hint: { enumerable: true, value: "mock" },
+                envVars: { enumerable: true, value: ["MOCK_API_KEY"] },
+                placeholder: { enumerable: true, value: "mock" },
+                signupUrl: { enumerable: true, value: "https://example.com/mock" },
+                credentialPath: {
+                  enumerable: true,
+                  value: "",
+                },
+                docsUrl: {
+                  enumerable: true,
+                  get() {
+                    throw new Error("mockplugin docsUrl getter failed");
+                  },
+                },
+                getCredentialValue: { enumerable: true, value: () => undefined },
+                setCredentialValue: { enumerable: true, value: () => ({}) },
+                createTool: {
+                  enumerable: true,
+                  value: () => ({ description: "mock", parameters: {} }),
+                },
+              }),
+          };
+        }
         throw new Error(
           `Unable to resolve bundled plugin public surface ${dirName}/${artifactBasename}`,
         );
@@ -139,6 +192,27 @@ describe("web provider public artifacts explicit fast path", () => {
     expect(loadBundledPluginPublicArtifactModuleSyncMock).toHaveBeenCalledWith({
       dirName: "firecrawl",
       artifactBasename: "web-fetch-contract-api.js",
+    });
+    expect(loadPluginManifestRegistryMock).not.toHaveBeenCalled();
+  });
+
+  it("skips unreadable bundled web search public artifact providers while preserving healthy entries", () => {
+    const provider = expectSingleProvider(
+      resolveBundledWebSearchProvidersFromPublicArtifacts({
+        onlyPluginIds: ["fuzzplugin"],
+      }),
+    );
+
+    expect(Object.getPrototypeOf(provider)).toBe(Object.prototype);
+    expect(provider.id).toBe("mockplugin");
+    expect(provider.pluginId).toBe("fuzzplugin");
+    expect(provider.label).toBe("Mock Provider");
+    expect(provider.envVars).toEqual(["MOCK_API_KEY"]);
+    expect(provider.credentialPath).toBe("");
+    expect("docsUrl" in provider).toBe(false);
+    expect(provider.createTool({ config: {} as never })).toEqual({
+      description: "mock",
+      parameters: {},
     });
     expect(loadPluginManifestRegistryMock).not.toHaveBeenCalled();
   });
