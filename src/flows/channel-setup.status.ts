@@ -134,6 +134,56 @@ function formatSetupOptionalDisplayText(value: string | undefined): string | und
   return safe || undefined;
 }
 
+function readRecordValue(record: unknown, field: string): unknown {
+  try {
+    return typeof record === "object" && record !== null
+      ? (record as Record<string, unknown>)[field]
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function readStringField(record: unknown, field: string): string | undefined {
+  const value = readRecordValue(record, field);
+  return typeof value === "string" ? value : undefined;
+}
+
+function readBooleanField(record: unknown, field: string): boolean | undefined {
+  const value = readRecordValue(record, field);
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function copyChannelSetupSelectionEntry(
+  entry: ChannelSetupSelectionEntry,
+): ChannelSetupSelectionEntry | undefined {
+  const id = readStringField(entry, "id");
+  if (!id) {
+    return undefined;
+  }
+  const rawMeta = readRecordValue(entry, "meta");
+  if (typeof rawMeta !== "object" || rawMeta === null) {
+    return undefined;
+  }
+  const label = readStringField(rawMeta, "label") ?? id;
+  const selectionLabel = readStringField(rawMeta, "selectionLabel");
+  const exposure = readRecordValue(rawMeta, "exposure");
+  const setupExposure = readBooleanField(exposure, "setup");
+  const showConfigured = readBooleanField(rawMeta, "showConfigured");
+  const showInSetup = readBooleanField(rawMeta, "showInSetup");
+  return {
+    id: id as ChannelChoice,
+    meta: {
+      id: readStringField(rawMeta, "id") ?? id,
+      label,
+      ...(selectionLabel ? { selectionLabel } : {}),
+      ...(setupExposure === undefined ? {} : { exposure: { setup: setupExposure } }),
+      ...(showConfigured === undefined ? {} : { showConfigured }),
+      ...(showInSetup === undefined ? {} : { showInSetup }),
+    },
+  };
+}
+
 function formatSetupDisplayList(values: readonly string[] | undefined): string[] | undefined {
   const safe = (values ?? []).flatMap((value) => {
     const sanitized = formatSetupOptionalDisplayText(value);
@@ -540,6 +590,10 @@ export function resolveChannelSetupSelectionContributions(params: {
 }): ChannelSetupSelectionContribution[] {
   const bundledChannelIds = new Set(listChatChannels().map((channel) => channel.id));
   return params.entries
+    .flatMap((entry) => {
+      const copied = copyChannelSetupSelectionEntry(entry);
+      return copied ? [copied] : [];
+    })
     .filter((entry) => shouldShowChannelInSetup(entry.meta))
     .toSorted((left, right) => compareChannelSetupSelectionEntries(left, right))
     .map((entry) => {

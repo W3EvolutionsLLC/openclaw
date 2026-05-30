@@ -15,6 +15,9 @@ type IsChannelConfigured = typeof import("../config/channel-configured.js").isCh
 type NoteChannelPrimerChannels = Parameters<
   typeof import("./channel-setup.status.js").noteChannelPrimer
 >[1];
+type ChannelSetupSelectionEntry = Parameters<
+  typeof import("./channel-setup.status.js").resolveChannelSetupSelectionContributions
+>[0]["entries"][number];
 
 const listChatChannels = vi.hoisted(() => vi.fn<ListChatChannels>(() => []));
 const resolveChannelSetupEntries = vi.hoisted(() =>
@@ -166,6 +169,38 @@ describe("resolveChannelSetupSelectionContributions", () => {
       {
         value: "zalo",
         label: "Zalo (Bot API)",
+      },
+    ]);
+  });
+
+  it("skips unreadable setup entries while preserving healthy channel choices", () => {
+    const unreadableEntry = Object.defineProperty({ id: "fuzzplugin" }, "meta", {
+      enumerable: true,
+      get() {
+        throw new Error("fuzzplugin channel metadata unavailable");
+      },
+    }) as ChannelSetupSelectionEntry;
+
+    const contributions = resolveChannelSetupSelectionContributions({
+      entries: [
+        unreadableEntry,
+        {
+          id: "mockplugin",
+          meta: {
+            id: "mockplugin",
+            label: "Mock Plugin",
+            selectionLabel: "Mock Plugin setup",
+          },
+        } as ChannelSetupSelectionEntry,
+      ],
+      statusByChannel: new Map(),
+      resolveDisabledHint: () => undefined,
+    });
+
+    expect(contributions.map((contribution) => contribution.option)).toEqual([
+      {
+        value: "mockplugin",
+        label: "Mock Plugin setup",
       },
     ]);
   });
