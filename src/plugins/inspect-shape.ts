@@ -40,28 +40,54 @@ export type PluginShapeSummary = {
 function buildPluginCapabilityEntries(
   plugin: PluginRegistry["plugins"][number],
 ): PluginCapabilityEntry[] {
+  const status = readPluginStringField(plugin, "status");
+  const kind = readPluginKindField(plugin, "kind");
   return [
-    { kind: "cli-backend" as const, ids: plugin.cliBackendIds ?? [] },
-    { kind: "text-inference" as const, ids: plugin.providerIds },
-    { kind: "embedding" as const, ids: plugin.embeddingProviderIds },
-    { kind: "speech" as const, ids: plugin.speechProviderIds },
-    { kind: "realtime-transcription" as const, ids: plugin.realtimeTranscriptionProviderIds },
-    { kind: "realtime-voice" as const, ids: plugin.realtimeVoiceProviderIds },
-    { kind: "media-understanding" as const, ids: plugin.mediaUnderstandingProviderIds },
-    { kind: "transcript-source" as const, ids: plugin.transcriptSourceProviderIds },
-    { kind: "image-generation" as const, ids: plugin.imageGenerationProviderIds },
-    { kind: "video-generation" as const, ids: plugin.videoGenerationProviderIds },
-    { kind: "music-generation" as const, ids: plugin.musicGenerationProviderIds },
-    { kind: "web-search" as const, ids: plugin.webSearchProviderIds },
-    { kind: "agent-harness" as const, ids: plugin.agentHarnessIds },
+    { kind: "cli-backend" as const, ids: readPluginStringArrayField(plugin, "cliBackendIds") },
+    { kind: "text-inference" as const, ids: readPluginStringArrayField(plugin, "providerIds") },
+    { kind: "embedding" as const, ids: readPluginStringArrayField(plugin, "embeddingProviderIds") },
+    { kind: "speech" as const, ids: readPluginStringArrayField(plugin, "speechProviderIds") },
+    {
+      kind: "realtime-transcription" as const,
+      ids: readPluginStringArrayField(plugin, "realtimeTranscriptionProviderIds"),
+    },
+    {
+      kind: "realtime-voice" as const,
+      ids: readPluginStringArrayField(plugin, "realtimeVoiceProviderIds"),
+    },
+    {
+      kind: "media-understanding" as const,
+      ids: readPluginStringArrayField(plugin, "mediaUnderstandingProviderIds"),
+    },
+    {
+      kind: "transcript-source" as const,
+      ids: readPluginStringArrayField(plugin, "transcriptSourceProviderIds"),
+    },
+    {
+      kind: "image-generation" as const,
+      ids: readPluginStringArrayField(plugin, "imageGenerationProviderIds"),
+    },
+    {
+      kind: "video-generation" as const,
+      ids: readPluginStringArrayField(plugin, "videoGenerationProviderIds"),
+    },
+    {
+      kind: "music-generation" as const,
+      ids: readPluginStringArrayField(plugin, "musicGenerationProviderIds"),
+    },
+    {
+      kind: "web-search" as const,
+      ids: readPluginStringArrayField(plugin, "webSearchProviderIds"),
+    },
+    { kind: "agent-harness" as const, ids: readPluginStringArrayField(plugin, "agentHarnessIds") },
     {
       kind: "context-engine" as const,
       ids:
-        plugin.status === "loaded" && hasKind(plugin.kind, "context-engine")
-          ? (plugin.contextEngineIds ?? [])
+        status === "loaded" && hasKind(kind, "context-engine")
+          ? readPluginStringArrayField(plugin, "contextEngineIds")
           : [],
     },
-    { kind: "channel" as const, ids: plugin.channelIds },
+    { kind: "channel" as const, ids: readPluginStringArrayField(plugin, "channelIds") },
   ].filter((entry) => entry.ids.length > 0);
 }
 
@@ -127,6 +153,55 @@ export function readRegistryArrayElement(
   return readRegistryRecordField(value, String(index));
 }
 
+function readPluginStringField(value: unknown, field: string): string | undefined {
+  const read = readRegistryRecordField(value, field);
+  return read.ok && typeof read.value === "string" ? read.value : undefined;
+}
+
+function readRegistryStringArray(value: unknown): string[] | undefined {
+  const length = readRegistryArrayLength(value);
+  if (length === undefined) {
+    return undefined;
+  }
+  const entries: string[] = [];
+  for (let index = 0; index < length; index += 1) {
+    const entry = readRegistryArrayElement(value, index);
+    if (entry.ok && typeof entry.value === "string") {
+      entries.push(entry.value);
+    }
+  }
+  return entries;
+}
+
+function readPluginStringArrayField(value: unknown, field: string): string[] {
+  const read = readRegistryRecordField(value, field);
+  return read.ok ? (readRegistryStringArray(read.value) ?? []) : [];
+}
+
+function readPluginKindField(
+  value: unknown,
+  field: string,
+): Parameters<typeof hasKind>[0] | undefined {
+  const read = readRegistryRecordField(value, field);
+  if (!read.ok) {
+    return undefined;
+  }
+  if (typeof read.value === "string") {
+    return read.value as Parameters<typeof hasKind>[0];
+  }
+  return readRegistryStringArray(read.value) as Parameters<typeof hasKind>[0] | undefined;
+}
+
+function readPluginArrayFieldLength(value: unknown, field: string): number {
+  const read = readRegistryRecordField(value, field);
+  return read.ok ? (readRegistryArrayLength(read.value) ?? 0) : 0;
+}
+
+function readPluginNumberField(value: unknown, field: string): number {
+  const read = readRegistryRecordField(value, field);
+  return read.ok && typeof read.value === "number" ? read.value : 0;
+}
+
 export function registryEntryMatchesPluginId(entry: unknown, pluginId: string): boolean {
   const entryPluginId = readRegistryRecordField(entry, "pluginId");
   return entryPluginId.ok && entryPluginId.value === pluginId;
@@ -185,13 +260,14 @@ export function buildPluginShapeSummary(params: {
   plugin: PluginRegistry["plugins"][number];
   report: Pick<PluginRegistry, "hooks" | "typedHooks" | "tools" | "gatewayMethodDescriptors">;
 }): PluginShapeSummary {
+  const pluginId = readPluginStringField(params.plugin, "id") ?? "";
   const capabilities = buildPluginCapabilityEntries(params.plugin);
-  const typedHookCount = countPluginOwnedEntries(params.report.typedHooks, params.plugin.id);
-  const customHookCount = countPluginOwnedEntries(params.report.hooks, params.plugin.id);
-  const toolCount = countPluginOwnedEntries(params.report.tools, params.plugin.id);
+  const typedHookCount = countPluginOwnedEntries(params.report.typedHooks, pluginId);
+  const customHookCount = countPluginOwnedEntries(params.report.hooks, pluginId);
+  const toolCount = countPluginOwnedEntries(params.report.tools, pluginId);
   const gatewayMethodCount = listPluginOwnedGatewayMethodNames({
     descriptors: params.report.gatewayMethodDescriptors,
-    pluginId: params.plugin.id,
+    pluginId,
   }).length;
   const capabilityCount = capabilities.length;
   const shape = derivePluginInspectShape({
@@ -199,12 +275,15 @@ export function buildPluginShapeSummary(params: {
     typedHookCount,
     customHookCount,
     toolCount,
-    commandCount: params.plugin.commands.length,
-    cliCount: params.plugin.cliCommands.length,
-    serviceCount: params.plugin.services.length,
-    gatewayDiscoveryServiceCount: params.plugin.gatewayDiscoveryServiceIds.length,
+    commandCount: readPluginArrayFieldLength(params.plugin, "commands"),
+    cliCount: readPluginArrayFieldLength(params.plugin, "cliCommands"),
+    serviceCount: readPluginArrayFieldLength(params.plugin, "services"),
+    gatewayDiscoveryServiceCount: readPluginArrayFieldLength(
+      params.plugin,
+      "gatewayDiscoveryServiceIds",
+    ),
     gatewayMethodCount,
-    httpRouteCount: params.plugin.httpRoutes,
+    httpRouteCount: readPluginNumberField(params.plugin, "httpRoutes"),
   });
 
   return {
@@ -214,7 +293,7 @@ export function buildPluginShapeSummary(params: {
     capabilities,
     usesLegacyBeforeAgentStart: hasPluginOwnedLegacyBeforeAgentStartHook({
       typedHooks: params.report.typedHooks,
-      pluginId: params.plugin.id,
+      pluginId,
     }),
   };
 }

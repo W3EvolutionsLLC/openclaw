@@ -873,6 +873,128 @@ describe("plugin status reports", () => {
     );
   });
 
+  it("skips unreadable inspect plugin records and normalizes selected record summaries", () => {
+    const unreadablePluginRecord = {};
+    Object.defineProperty(unreadablePluginRecord, "id", {
+      get() {
+        throw new Error("unreadable fuzzplugin plugin id");
+      },
+    });
+    const mockPlugin = createPluginRecord({
+      id: "mockplugin",
+      name: "Mock Plugin",
+      contracts: {
+        externalAuthProviders: ["mock-auth"],
+        tools: ["mockplugin_status"],
+        webSearchProviders: ["mock-web-search"],
+      },
+      configJsonSchema: {
+        type: "object",
+        properties: {
+          apiKey: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                nested: {
+                  type: "object",
+                  properties: {
+                    value: { type: "string" },
+                  },
+                },
+              },
+            },
+          },
+        },
+      } as never,
+      configSchema: true,
+      configUiHints: {
+        apiKey: { label: "API Key", sensitive: true },
+      },
+      dependencyStatus: {
+        hasDependencies: true,
+        installed: false,
+        requiredInstalled: false,
+        optionalInstalled: true,
+        missing: ["mock-dep"],
+        missingOptional: [],
+        dependencies: [
+          {
+            name: "mock-dep",
+            spec: "^1.0.0",
+            installed: false,
+            optional: false,
+          },
+        ],
+        optionalDependencies: [],
+      },
+      providerIds: ["mock-provider"],
+    });
+    Object.defineProperty(mockPlugin, "commands", {
+      get() {
+        throw new Error("unreadable fuzzplugin plugin commands");
+      },
+    });
+    Object.defineProperty(mockPlugin, "gatewayDiscoveryServiceIds", {
+      get() {
+        throw new Error("unreadable fuzzplugin gateway discovery services");
+      },
+    });
+    Object.defineProperty(mockPlugin, "bundleCapabilities", {
+      get() {
+        throw new Error("unreadable fuzzplugin bundle capabilities");
+      },
+    });
+    setPluginLoadResult({
+      plugins: [unreadablePluginRecord as never, mockPlugin],
+      typedHooks: [createTypedHook({ pluginId: "mockplugin", hookName: "before_agent_start" })],
+    });
+
+    const inspect = expectInspectReport("mockplugin");
+
+    expect(inspect.plugin.id).toBe("mockplugin");
+    expect(inspect.capabilities).toEqual([{ kind: "text-inference", ids: ["mock-provider"] }]);
+    expect(inspect.plugin.contracts).toEqual({
+      externalAuthProviders: ["mock-auth"],
+      tools: ["mockplugin_status"],
+      webSearchProviders: ["mock-web-search"],
+    });
+    expect(inspect.plugin.configJsonSchema).toEqual({
+      type: "object",
+      properties: {
+        apiKey: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              nested: {
+                type: "object",
+                properties: {
+                  value: { type: "string" },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+    expect(inspect.plugin.configSchema).toBe(true);
+    expect(inspect.plugin.configUiHints).toEqual({
+      apiKey: { label: "API Key", sensitive: true },
+    });
+    expect(inspect.plugin.dependencyStatus).toMatchObject({
+      hasDependencies: true,
+      installed: false,
+      missing: ["mock-dep"],
+    });
+    expect(inspect.commands).toEqual([]);
+    expect(inspect.gatewayDiscoveryServices).toEqual([]);
+    expect(inspect.bundleCapabilities).toEqual([]);
+    expect(inspect.typedHooks).toEqual([{ name: "before_agent_start" }]);
+    expect(() => JSON.stringify(inspect)).not.toThrow();
+    expect(buildAllPluginInspectReports().map((entry) => entry.plugin.id)).toEqual(["mockplugin"]);
+  });
+
   it("builds inspect reports for every loaded plugin", () => {
     setPluginLoadResult({
       plugins: [

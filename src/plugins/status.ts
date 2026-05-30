@@ -33,7 +33,11 @@ import {
   resolvePluginRuntimeLoadContext,
 } from "./runtime/load-context.js";
 import { loadPluginMetadataRegistrySnapshot } from "./runtime/metadata-registry-loader.js";
-import { buildPluginDependencyStatus } from "./status-dependencies.js";
+import {
+  buildPluginDependencyStatus,
+  type PluginDependencyEntry,
+  type PluginDependencyStatus,
+} from "./status-dependencies.js";
 import type { PluginHookName, PluginLogger } from "./types.js";
 
 export type PluginStatusReport = PluginRegistry & {
@@ -203,6 +207,352 @@ function readRegistryStringArray(value: unknown): string[] | undefined {
     }
   }
   return entries;
+}
+
+function readRegistryStringArrayField(value: unknown, field: string): string[] {
+  const read = readRegistryRecordField(value, field);
+  return read.ok ? (readRegistryStringArray(read.value) ?? []) : [];
+}
+
+function readPluginStatus(value: unknown): PluginRecord["status"] {
+  const status = readRegistryStringField(value, "status");
+  return status === "loaded" || status === "disabled" || status === "error" ? status : "error";
+}
+
+function readPluginOrigin(value: unknown): PluginRecord["origin"] {
+  const origin = readRegistryStringField(value, "origin");
+  return origin === "bundled" ||
+    origin === "workspace" ||
+    origin === "global" ||
+    origin === "config"
+    ? origin
+    : "workspace";
+}
+
+function readPluginFormat(value: unknown): PluginRecord["format"] | undefined {
+  const format = readRegistryStringField(value, "format");
+  return format === "openclaw" || format === "bundle" ? format : undefined;
+}
+
+function readPluginBundleFormat(value: unknown): PluginRecord["bundleFormat"] | undefined {
+  const bundleFormat = readRegistryStringField(value, "bundleFormat");
+  return bundleFormat === "codex" || bundleFormat === "claude" || bundleFormat === "cursor"
+    ? bundleFormat
+    : undefined;
+}
+
+function readPluginKind(value: unknown): PluginRecord["kind"] | undefined {
+  const kind = readRegistryRecordField(value, "kind");
+  if (!kind.ok) {
+    return undefined;
+  }
+  if (typeof kind.value === "string") {
+    return kind.value as PluginRecord["kind"];
+  }
+  return readRegistryStringArray(kind.value) as PluginRecord["kind"] | undefined;
+}
+
+function readPluginDateField(value: unknown, field: string): Date | undefined {
+  const read = readRegistryRecordField(value, field);
+  return read.ok && read.value instanceof Date ? read.value : undefined;
+}
+
+function copyRegistryJsonLikeValue(value: unknown, seen = new WeakSet<object>()): unknown {
+  if (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
+    return value;
+  }
+  const length = readRegistryArrayLength(value);
+  if (length !== undefined) {
+    const arrayValue = value as object;
+    if (seen.has(arrayValue)) {
+      return undefined;
+    }
+    seen.add(arrayValue);
+    const entries: unknown[] = [];
+    for (let index = 0; index < length; index += 1) {
+      const entry = readRegistryArrayElement(value, index);
+      if (entry.ok) {
+        entries.push(copyRegistryJsonLikeValue(entry.value, seen));
+      }
+    }
+    seen.delete(arrayValue);
+    return entries;
+  }
+  if ((typeof value !== "object" && typeof value !== "function") || value === null) {
+    return undefined;
+  }
+  if (seen.has(value)) {
+    return undefined;
+  }
+  seen.add(value);
+  let keys: string[];
+  try {
+    keys = Object.keys(value);
+  } catch {
+    seen.delete(value);
+    return undefined;
+  }
+  const record: Record<string, unknown> = {};
+  for (const key of keys) {
+    const read = readRegistryRecordField(value, key);
+    if (read.ok) {
+      const copied = copyRegistryJsonLikeValue(read.value, seen);
+      if (copied !== undefined) {
+        record[key] = copied;
+      }
+    }
+  }
+  seen.delete(value);
+  return record;
+}
+
+function readPluginJsonLikeObjectField(
+  value: unknown,
+  field: string,
+): Record<string, unknown> | undefined {
+  const read = readRegistryRecordField(value, field);
+  if (!read.ok) {
+    return undefined;
+  }
+  const copied = copyRegistryJsonLikeValue(read.value);
+  return copied && typeof copied === "object" && !Array.isArray(copied)
+    ? (copied as Record<string, unknown>)
+    : undefined;
+}
+
+function readPluginContracts(value: unknown): PluginRecord["contracts"] | undefined {
+  const contracts = readRegistryRecordField(value, "contracts");
+  if (!contracts.ok) {
+    return undefined;
+  }
+  const normalized: Record<string, string[]> = {};
+  for (const field of [
+    "embeddedExtensionFactories",
+    "agentToolResultMiddleware",
+    "externalAuthProviders",
+    "embeddingProviders",
+    "memoryEmbeddingProviders",
+    "speechProviders",
+    "realtimeTranscriptionProviders",
+    "realtimeVoiceProviders",
+    "mediaUnderstandingProviders",
+    "transcriptSourceProviders",
+    "documentExtractors",
+    "imageGenerationProviders",
+    "videoGenerationProviders",
+    "musicGenerationProviders",
+    "webContentExtractors",
+    "webFetchProviders",
+    "webSearchProviders",
+    "migrationProviders",
+    "gatewayMethodDispatch",
+    "tools",
+  ] as const) {
+    const entries = readRegistryStringArrayField(contracts.value, field);
+    if (entries.length > 0) {
+      normalized[field] = entries;
+    }
+  }
+  return Object.keys(normalized).length > 0
+    ? (normalized as NonNullable<PluginRecord["contracts"]>)
+    : undefined;
+}
+
+function readPluginDependencyEntries(value: unknown): PluginDependencyEntry[] {
+  const length = readRegistryArrayLength(value);
+  if (length === undefined) {
+    return [];
+  }
+  const entries: PluginDependencyEntry[] = [];
+  for (let index = 0; index < length; index += 1) {
+    const entry = readRegistryArrayElement(value, index);
+    if (!entry.ok) {
+      continue;
+    }
+    const name = readRegistryStringField(entry.value, "name");
+    const spec = readRegistryStringField(entry.value, "spec");
+    if (!name || !spec) {
+      continue;
+    }
+    const resolvedPath = readRegistryStringField(entry.value, "resolvedPath");
+    entries.push({
+      name,
+      spec,
+      installed: readRegistryBooleanField(entry.value, "installed") === true,
+      optional: readRegistryBooleanField(entry.value, "optional") === true,
+      ...(resolvedPath ? { resolvedPath } : {}),
+    });
+  }
+  return entries;
+}
+
+function readPluginDependencyStatus(value: unknown): PluginDependencyStatus | undefined {
+  const status = readRegistryRecordField(value, "dependencyStatus");
+  if (!status.ok) {
+    return undefined;
+  }
+  const dependenciesField = readRegistryRecordField(status.value, "dependencies");
+  const optionalDependenciesField = readRegistryRecordField(status.value, "optionalDependencies");
+  const dependencies = dependenciesField.ok
+    ? readPluginDependencyEntries(dependenciesField.value)
+    : [];
+  const optionalDependencies = optionalDependenciesField.ok
+    ? readPluginDependencyEntries(optionalDependenciesField.value)
+    : [];
+  const missing = readRegistryStringArrayField(status.value, "missing");
+  const missingOptional = readRegistryStringArrayField(status.value, "missingOptional");
+  return {
+    hasDependencies:
+      readRegistryBooleanField(status.value, "hasDependencies") ??
+      (dependencies.length > 0 || optionalDependencies.length > 0),
+    installed: readRegistryBooleanField(status.value, "installed") ?? missing.length === 0,
+    requiredInstalled:
+      readRegistryBooleanField(status.value, "requiredInstalled") ?? missing.length === 0,
+    optionalInstalled:
+      readRegistryBooleanField(status.value, "optionalInstalled") ?? missingOptional.length === 0,
+    missing,
+    missingOptional,
+    dependencies,
+    optionalDependencies,
+  };
+}
+
+function normalizeInspectablePluginRecord(value: unknown): PluginRecord | undefined {
+  const id = readRegistryStringField(value, "id");
+  if (!id) {
+    return undefined;
+  }
+  const enabled = readRegistryBooleanField(value, "enabled") === true;
+  const status = readPluginStatus(value);
+  const activationSource = readRegistryStringField(value, "activationSource");
+  const failurePhase = readRegistryStringField(value, "failurePhase");
+  const contracts = readPluginContracts(value);
+  const configUiHints = readPluginJsonLikeObjectField(value, "configUiHints");
+  const configJsonSchema = readPluginJsonLikeObjectField(value, "configJsonSchema");
+  const dependencyStatus = readPluginDependencyStatus(value);
+  return {
+    id,
+    name: readRegistryStringField(value, "name") ?? id,
+    ...(readRegistryStringField(value, "version")
+      ? { version: readRegistryStringField(value, "version") }
+      : {}),
+    ...(readRegistryStringField(value, "packageName")
+      ? { packageName: readRegistryStringField(value, "packageName") }
+      : {}),
+    description: readRegistryStringField(value, "description") ?? "",
+    ...(readPluginFormat(value) ? { format: readPluginFormat(value) } : {}),
+    ...(readPluginBundleFormat(value) ? { bundleFormat: readPluginBundleFormat(value) } : {}),
+    bundleCapabilities: readRegistryStringArrayField(value, "bundleCapabilities"),
+    ...(readPluginKind(value) ? { kind: readPluginKind(value) } : {}),
+    source: readRegistryStringField(value, "source") ?? "",
+    ...(readRegistryStringField(value, "rootDir")
+      ? { rootDir: readRegistryStringField(value, "rootDir") }
+      : {}),
+    origin: readPluginOrigin(value),
+    ...(readRegistryStringField(value, "workspaceDir")
+      ? { workspaceDir: readRegistryStringField(value, "workspaceDir") }
+      : {}),
+    trustedOfficialInstall: readRegistryBooleanField(value, "trustedOfficialInstall") === true,
+    enabled,
+    explicitlyEnabled: readRegistryBooleanField(value, "explicitlyEnabled"),
+    activated: readRegistryBooleanField(value, "activated"),
+    imported: readRegistryBooleanField(value, "imported"),
+    compat: readRegistryStringArrayField(value, "compat") as PluginRecord["compat"],
+    ...(activationSource
+      ? { activationSource: activationSource as PluginRecord["activationSource"] }
+      : {}),
+    ...(readRegistryStringField(value, "activationReason")
+      ? { activationReason: readRegistryStringField(value, "activationReason") }
+      : {}),
+    status,
+    ...(readRegistryStringField(value, "error")
+      ? { error: readRegistryStringField(value, "error") }
+      : {}),
+    ...(readPluginDateField(value, "failedAt")
+      ? { failedAt: readPluginDateField(value, "failedAt") }
+      : {}),
+    ...(failurePhase === "validation" || failurePhase === "load" || failurePhase === "register"
+      ? { failurePhase }
+      : {}),
+    toolNames: readRegistryStringArrayField(value, "toolNames"),
+    hookNames: readRegistryStringArrayField(value, "hookNames"),
+    channelIds: readRegistryStringArrayField(value, "channelIds"),
+    cliBackendIds: readRegistryStringArrayField(value, "cliBackendIds"),
+    providerIds: readRegistryStringArrayField(value, "providerIds"),
+    syntheticAuthRefs: readRegistryStringArrayField(value, "syntheticAuthRefs"),
+    embeddingProviderIds: readRegistryStringArrayField(value, "embeddingProviderIds"),
+    speechProviderIds: readRegistryStringArrayField(value, "speechProviderIds"),
+    realtimeTranscriptionProviderIds: readRegistryStringArrayField(
+      value,
+      "realtimeTranscriptionProviderIds",
+    ),
+    realtimeVoiceProviderIds: readRegistryStringArrayField(value, "realtimeVoiceProviderIds"),
+    mediaUnderstandingProviderIds: readRegistryStringArrayField(
+      value,
+      "mediaUnderstandingProviderIds",
+    ),
+    transcriptSourceProviderIds: readRegistryStringArrayField(value, "transcriptSourceProviderIds"),
+    imageGenerationProviderIds: readRegistryStringArrayField(value, "imageGenerationProviderIds"),
+    videoGenerationProviderIds: readRegistryStringArrayField(value, "videoGenerationProviderIds"),
+    musicGenerationProviderIds: readRegistryStringArrayField(value, "musicGenerationProviderIds"),
+    webFetchProviderIds: readRegistryStringArrayField(value, "webFetchProviderIds"),
+    webSearchProviderIds: readRegistryStringArrayField(value, "webSearchProviderIds"),
+    migrationProviderIds: readRegistryStringArrayField(value, "migrationProviderIds"),
+    contextEngineIds: readRegistryStringArrayField(value, "contextEngineIds"),
+    memoryEmbeddingProviderIds: readRegistryStringArrayField(value, "memoryEmbeddingProviderIds"),
+    agentHarnessIds: readRegistryStringArrayField(value, "agentHarnessIds"),
+    cliCommands: readRegistryStringArrayField(value, "cliCommands"),
+    services: readRegistryStringArrayField(value, "services"),
+    gatewayDiscoveryServiceIds: readRegistryStringArrayField(value, "gatewayDiscoveryServiceIds"),
+    commands: readRegistryStringArrayField(value, "commands"),
+    httpRoutes: readRegistryNumberField(value, "httpRoutes") ?? 0,
+    hookCount: readRegistryNumberField(value, "hookCount") ?? 0,
+    configSchema: readRegistryBooleanField(value, "configSchema") === true,
+    ...(configUiHints ? { configUiHints: configUiHints as PluginRecord["configUiHints"] } : {}),
+    ...(configJsonSchema
+      ? { configJsonSchema: configJsonSchema as PluginRecord["configJsonSchema"] }
+      : {}),
+    ...(contracts ? { contracts } : {}),
+    memorySlotSelected: readRegistryBooleanField(value, "memorySlotSelected"),
+    ...(dependencyStatus ? { dependencyStatus } : {}),
+  };
+}
+
+function findInspectablePlugin(params: { entries: unknown; id: string }): PluginRecord | undefined {
+  for (const plugin of listInspectablePlugins(params.entries)) {
+    if (plugin && (plugin.id === params.id || plugin.name === params.id)) {
+      return plugin;
+    }
+  }
+  return undefined;
+}
+
+function listInspectablePlugins(entries: unknown): PluginRecord[] {
+  const length = readRegistryArrayLength(entries);
+  if (length === undefined) {
+    return [];
+  }
+  const plugins: PluginRecord[] = [];
+  for (let index = 0; index < length; index += 1) {
+    const entry = readRegistryArrayElement(entries, index);
+    if (!entry.ok) {
+      continue;
+    }
+    const plugin = normalizeInspectablePluginRecord(entry.value);
+    if (plugin) {
+      plugins.push(plugin);
+    }
+  }
+  return plugins;
+}
+
+function listInspectablePluginIds(entries: unknown): string[] {
+  return listInspectablePlugins(entries).map((plugin) => plugin.id);
 }
 
 function listPluginOwnedTypedHooks(params: {
@@ -435,9 +785,10 @@ function buildPluginReport(
           }),
         { surface: "status", onlyPluginCount: onlyPluginIds?.length },
       );
+  const plugins = listInspectablePlugins(registry.plugins);
   const importedPluginIds = new Set([
     ...(loadModules
-      ? registry.plugins
+      ? plugins
           .filter((plugin) => plugin.status === "loaded" && plugin.format !== "bundle")
           .map((plugin) => plugin.id)
       : []),
@@ -448,7 +799,7 @@ function buildPluginReport(
   return {
     workspaceDir,
     ...registry,
-    plugins: registry.plugins.map((plugin) =>
+    plugins: plugins.map((plugin) =>
       Object.assign({}, plugin, {
         imported: plugin.format !== `bundle` && importedPluginIds.has(plugin.id),
         version: resolveReportedPluginVersion(plugin, params?.env),
@@ -499,31 +850,32 @@ export function buildPluginInspectReport(params: {
       workspaceDir: params.workspaceDir,
       env: params.env,
     });
-  const plugin = report.plugins.find((entry) => entry.id === params.id || entry.name === params.id);
+  const plugin = findInspectablePlugin({ entries: report.plugins, id: params.id });
   if (!plugin) {
     return null;
   }
+  const pluginId = plugin.id;
 
-  const typedHooks = listPluginOwnedTypedHooks({ entries: report.typedHooks, pluginId: plugin.id });
-  const customHooks = listPluginOwnedCustomHooks({ entries: report.hooks, pluginId: plugin.id });
-  const tools = listPluginOwnedToolSummaries({ entries: report.tools, pluginId: plugin.id });
+  const typedHooks = listPluginOwnedTypedHooks({ entries: report.typedHooks, pluginId });
+  const customHooks = listPluginOwnedCustomHooks({ entries: report.hooks, pluginId });
+  const tools = listPluginOwnedToolSummaries({ entries: report.tools, pluginId });
   const diagnostics = listPluginOwnedDiagnostics({
     entries: report.diagnostics,
-    pluginId: plugin.id,
+    pluginId,
   });
-  const policyEntry = normalizePluginsConfig(config.plugins).entries[plugin.id];
+  const policyEntry = normalizePluginsConfig(config.plugins).entries[pluginId];
   const shapeSummary = buildPluginShapeSummary({ plugin, report });
   const shape = shapeSummary.shape;
   const gatewayMethods = listPluginOwnedGatewayMethodNames({
     descriptors: report.gatewayMethodDescriptors,
-    pluginId: plugin.id,
+    pluginId,
   });
 
   // Populate MCP server info for bundle-format plugins with a known rootDir.
   let mcpServers: PluginInspectReport["mcpServers"] = [];
   if (plugin.format === "bundle" && plugin.bundleFormat && plugin.rootDir) {
     const mcpSupport = inspectBundleMcpRuntimeSupport({
-      pluginId: plugin.id,
+      pluginId,
       rootDir: plugin.rootDir,
       bundleFormat: plugin.bundleFormat,
     });
@@ -543,7 +895,7 @@ export function buildPluginInspectReport(params: {
   let lspServers: PluginInspectReport["lspServers"] = [];
   if (plugin.format === "bundle" && plugin.bundleFormat && plugin.rootDir) {
     const lspSupport = inspectBundleLspRuntimeSupport({
-      pluginId: plugin.id,
+      pluginId,
       rootDir: plugin.rootDir,
       bundleFormat: plugin.bundleFormat,
     });
@@ -563,7 +915,7 @@ export function buildPluginInspectReport(params: {
   const hasRuntimeMemoryEmbeddingProviderRegistration =
     hasPluginOwnedMemoryEmbeddingProviderRegistration({
       entries: report.memoryEmbeddingProviders,
-      pluginId: plugin.id,
+      pluginId,
     });
   const compatibility = buildCompatibilityNoticesForInspect({
     plugin,
@@ -628,10 +980,10 @@ export function buildAllPluginInspectReports(params?: {
       env: params?.env,
     });
 
-  return report.plugins
-    .map((plugin) =>
+  return listInspectablePluginIds(report.plugins)
+    .map((id) =>
       buildPluginInspectReport({
-        id: plugin.id,
+        id,
         config: rawConfig,
         logger: params?.logger,
         workspaceDir: params?.workspaceDir,
