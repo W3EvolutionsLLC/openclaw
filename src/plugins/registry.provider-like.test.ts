@@ -267,6 +267,73 @@ describe("plugin registry provider-like registrations", () => {
     ]);
   });
 
+  it("skips unreadable existing model catalog registrations while preserving healthy providers", () => {
+    const pluginRegistry = createTestRegistry();
+    const mockRecord = createPluginRecord({
+      id: "mockplugin-model-catalog-registration",
+      name: "Mock Plugin Model Catalog Registration",
+      source: "/tmp/mockplugin-model-catalog-registration/index.js",
+      origin: "global",
+      enabled: true,
+      configSchema: false,
+    });
+
+    pluginRegistry.registry.modelCatalogProviders.push(
+      {
+        pluginId: "fuzzplugin-model-catalog-registration",
+        pluginName: "Fuzz Plugin Model Catalog Registration",
+        provider: Object.defineProperty({ kinds: ["text"] }, "provider", {
+          get() {
+            throw new Error("fuzzplugin model catalog provider id getter failed");
+          },
+        }),
+        source: "/tmp/fuzzplugin-model-catalog-registration/index.js",
+      } as never,
+      Object.defineProperty(
+        {
+          pluginName: "Fuzz Plugin Model Catalog Owner",
+          provider: { provider: "mockplugin-catalog", kinds: ["text"] },
+          source: "/tmp/fuzzplugin-model-catalog-owner/index.js",
+        },
+        "pluginId",
+        {
+          get() {
+            throw new Error("fuzzplugin model catalog owner getter failed");
+          },
+        },
+      ) as never,
+      {
+        pluginId: "mockplugin-model-catalog-registration",
+        pluginName: "Mock Plugin Model Catalog Registration",
+        provider: Object.defineProperty({ provider: "mockplugin-catalog" }, "kinds", {
+          get() {
+            throw new Error("fuzzplugin model catalog kinds getter failed");
+          },
+        }),
+        source: "/tmp/mockplugin-model-catalog-registration/index.js",
+      } as never,
+    );
+
+    expect(() =>
+      pluginRegistry.registerModelCatalogProvider(mockRecord, {
+        provider: "mockplugin-catalog",
+        kinds: ["text"],
+        staticCatalog: () => [
+          {
+            kind: "text",
+            provider: "mockplugin-catalog",
+            model: "mockplugin-model",
+            source: "static",
+          },
+        ],
+      }),
+    ).not.toThrow();
+
+    const catalogProvider = pluginRegistry.registry.modelCatalogProviders.at(-1)?.provider;
+    expect(catalogProvider?.provider).toBe("mockplugin-catalog");
+    expect(catalogProvider?.kinds).toEqual(["text"]);
+  });
+
   it("publishes text catalog rows for registered provider catalog hooks", async () => {
     const pluginRegistry = createTestRegistry();
     const record = createPluginRecord({

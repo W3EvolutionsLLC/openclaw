@@ -26,6 +26,7 @@ import type {
 
 type UnifiedModelCatalogHook = NonNullable<UnifiedModelCatalogProviderPlugin["staticCatalog"]>;
 type ReadPluginFieldResult = { ok: true; value: unknown } | { ok: false };
+type ModelCatalogProviderRegistration = PluginRegistry["modelCatalogProviders"][number];
 
 const allowedModelCatalogKinds = new Set<UnifiedModelCatalogKind>([
   "text",
@@ -123,6 +124,41 @@ function mergeModelCatalogHooks(
     const [leftRows, rightRows] = await Promise.all([left(ctx), right(ctx)]);
     return mergeCatalogHookResults(source, leftRows, rightRows);
   };
+}
+
+function readRegisteredModelCatalogProviderId(
+  entry: ModelCatalogProviderRegistration,
+): string | undefined {
+  const providerValue = readPluginField(entry, "provider");
+  if (!providerValue.ok) {
+    return undefined;
+  }
+  const providerIdValue = readPluginField(providerValue.value, "provider");
+  return providerIdValue.ok
+    ? (normalizeOptionalString(providerIdValue.value) ?? undefined)
+    : undefined;
+}
+
+function readRegisteredModelCatalogPluginId(
+  entry: ModelCatalogProviderRegistration,
+): string | undefined {
+  const pluginIdValue = readPluginField(entry, "pluginId");
+  return pluginIdValue.ok ? (normalizeOptionalString(pluginIdValue.value) ?? undefined) : undefined;
+}
+
+function readRegisteredModelCatalogKinds(
+  entry: ModelCatalogProviderRegistration,
+): UnifiedModelCatalogKind[] {
+  const providerValue = readPluginField(entry, "provider");
+  if (!providerValue.ok) {
+    return [];
+  }
+  const kindsValue = readPluginField(providerValue.value, "kinds");
+  if (!kindsValue.ok) {
+    return [];
+  }
+  const kinds = normalizeCatalogKinds(kindsValue.value);
+  return kinds.ok ? kinds.kinds : [];
 }
 
 export function createModelCatalogRegistrationHandlers(params: {
@@ -239,23 +275,34 @@ export function createModelCatalogRegistrationHandlers(params: {
       return;
     }
     const providerId = normalizedProvider.provider;
-    const existing = params.registry.modelCatalogProviders.find(
-      (entry) => entry.provider.provider === providerId && entry.pluginId !== record.id,
-    );
+    let existingOwnerPluginId: string | undefined;
+    const existing = params.registry.modelCatalogProviders.find((entry) => {
+      if (readRegisteredModelCatalogProviderId(entry) !== providerId) {
+        return false;
+      }
+      const ownerPluginId = readRegisteredModelCatalogPluginId(entry);
+      if (!ownerPluginId || ownerPluginId === record.id) {
+        return false;
+      }
+      existingOwnerPluginId = ownerPluginId;
+      return true;
+    });
     if (existing) {
       params.pushDiagnostic({
         level: "error",
         pluginId: record.id,
         source: record.source,
-        message: `model catalog provider already registered: ${providerId} (${existing.pluginId})`,
+        message: `model catalog provider already registered: ${providerId} (${existingOwnerPluginId})`,
       });
       return;
     }
     const samePluginOverlapping = params.registry.modelCatalogProviders.find(
       (entry) =>
-        entry.provider.provider === providerId &&
-        entry.pluginId === record.id &&
-        entry.provider.kinds.some((kind) => normalizedProvider.kinds.includes(kind)),
+        readRegisteredModelCatalogProviderId(entry) === providerId &&
+        readRegisteredModelCatalogPluginId(entry) === record.id &&
+        readRegisteredModelCatalogKinds(entry).some((kind) =>
+          normalizedProvider.kinds.includes(kind),
+        ),
     );
     if (samePluginOverlapping) {
       samePluginOverlapping.provider = {
