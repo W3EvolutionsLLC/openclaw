@@ -274,6 +274,31 @@ function safeResolvePluginRegistryLoadCacheKey(loadOptions: PluginLoadOptions): 
   }
 }
 
+function readCapabilityProviderId(
+  provider: unknown,
+): { ok: true; id: string | undefined } | { ok: false } {
+  try {
+    const id = (provider as { id?: unknown }).id;
+    return { ok: true, id: typeof id === "string" && id ? id : undefined };
+  } catch {
+    return { ok: false };
+  }
+}
+
+function listCapabilityProviderObjects<K extends CapabilityProviderRegistryKey>(
+  entries: PluginRegistry[K],
+): CapabilityProviderForKey<K>[] {
+  const providers: CapabilityProviderForKey<K>[] = [];
+  for (const entry of entries) {
+    const provider = entry.provider as CapabilityProviderForKey<K>;
+    if (!readCapabilityProviderId(provider).ok) {
+      continue;
+    }
+    providers.push(provider);
+  }
+  return providers;
+}
+
 function findProviderById<K extends CapabilityProviderRegistryKey>(
   entries: PluginRegistry[K],
   providerId: string,
@@ -282,7 +307,8 @@ function findProviderById<K extends CapabilityProviderRegistryKey>(
     provider: CapabilityProviderForKey<K> & { id?: unknown };
   }>;
   for (const entry of providerEntries) {
-    if (entry.provider.id === providerId) {
+    const id = readCapabilityProviderId(entry.provider);
+    if (id.ok && id.id === providerId) {
       return entry.provider;
     }
   }
@@ -297,13 +323,17 @@ function mergeCapabilityProviders<K extends CapabilityProviderRegistryKey>(
   const unnamed: CapabilityProviderForKey<K>[] = [];
   const addEntries = (entries: PluginRegistry[K]) => {
     for (const entry of entries) {
-      const provider = entry.provider as CapabilityProviderForKey<K> & { id?: string };
-      if (!provider.id) {
+      const provider = entry.provider as CapabilityProviderForKey<K>;
+      const id = readCapabilityProviderId(provider);
+      if (!id.ok) {
+        continue;
+      }
+      if (!id.id) {
         unnamed.push(provider);
         continue;
       }
-      if (!merged.has(provider.id)) {
-        merged.set(provider.id, provider);
+      if (!merged.has(id.id)) {
+        merged.set(id.id, provider);
       }
     }
   };
@@ -321,13 +351,16 @@ function mergeCapabilityProviderEntries<K extends CapabilityProviderRegistryKey>
   const unnamed: Array<PluginRegistry[K][number]> = [];
   const addEntries = (entries: PluginRegistry[K]) => {
     for (const entry of entries) {
-      const provider = entry.provider as { id?: string };
-      if (!provider.id) {
+      const id = readCapabilityProviderId(entry.provider);
+      if (!id.ok) {
+        continue;
+      }
+      if (!id.id) {
         unnamed.push(entry);
         continue;
       }
-      if (!merged.has(provider.id)) {
-        merged.set(provider.id, entry);
+      if (!merged.has(id.id)) {
+        merged.set(id.id, entry);
       }
     }
   };
@@ -671,12 +704,12 @@ export function resolvePluginCapabilityProviders<K extends CapabilityProviderReg
       : undefined;
   if (activeProviders.length > 0 && params.key !== "memoryEmbeddingProviders") {
     if (!missingRequestedProviders && !shouldMergeManifestProvidersWhenActive(params.key)) {
-      return activeProviders.map((entry) => entry.provider) as CapabilityProviderForKey<K>[];
+      return listCapabilityProviderObjects(activeProviders);
     }
     if (missingRequestedProviders) {
       removeActiveProviderIds(missingRequestedProviders, activeProviders);
       if (missingRequestedProviders.size === 0) {
-        return activeProviders.map((entry) => entry.provider) as CapabilityProviderForKey<K>[];
+        return listCapabilityProviderObjects(activeProviders);
       }
     }
   }
