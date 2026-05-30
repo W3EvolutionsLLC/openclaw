@@ -1,11 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { normalizeConversationText } from "../../acp/conversation-id.js";
+import { listLoadedChannelPlugins } from "../../channels/plugins/registry-loaded.js";
 import { normalizeAnyChannelId } from "../../channels/registry.js";
 import { resolveStateDir } from "../../config/paths.js";
 import { loadJsonFile } from "../../infra/json-file.js";
 import { saveJsonFile } from "../../plugin-sdk/json-store.js";
-import { getActivePluginChannelRegistryFromState } from "../../plugins/runtime-channel-state.js";
 import { normalizeOptionalLowercaseString } from "../../shared/string-coerce.js";
 import { normalizeConversationRef } from "./session-binding-normalization.js";
 import type {
@@ -107,6 +107,49 @@ function pruneExpiredBinding(key: string): SessionBindingRecord | null {
   return null;
 }
 
+function readRecordField(value: unknown, key: string): unknown {
+  if ((typeof value !== "object" && typeof value !== "function") || value === null) {
+    return undefined;
+  }
+  try {
+    return (value as Record<string, unknown>)[key];
+  } catch {
+    return undefined;
+  }
+}
+
+function readArrayLength(value: unknown): number | undefined {
+  try {
+    return Array.isArray(value) ? value.length : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function pluginMatchesCurrentConversationChannel(plugin: unknown, normalized: string): boolean {
+  if (readRecordField(plugin, "id") === normalized) {
+    return true;
+  }
+  const meta = readRecordField(plugin, "meta");
+  const aliases = readRecordField(meta, "aliases");
+  const aliasCount = readArrayLength(aliases);
+  if (aliasCount === undefined) {
+    return false;
+  }
+  for (let index = 0; index < aliasCount; index += 1) {
+    const alias = readRecordField(aliases, String(index));
+    if (normalizeOptionalLowercaseString(alias) === normalized) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function pluginSupportsCurrentConversationBinding(plugin: unknown): boolean {
+  const conversationBindings = readRecordField(plugin, "conversationBindings");
+  return readRecordField(conversationBindings, "supportsCurrentConversationBinding") === true;
+}
+
 function resolveChannelSupportsCurrentConversationBinding(channel: string): boolean {
   const normalized =
     normalizeAnyChannelId(channel) ??
@@ -114,22 +157,22 @@ function resolveChannelSupportsCurrentConversationBinding(channel: string): bool
   if (!normalized) {
     return false;
   }
-  const matchesPluginId = (plugin: {
-    id?: string | null;
-    meta?: { aliases?: readonly string[] } | null;
-  }) =>
-    plugin.id === normalized ||
-    (plugin.meta?.aliases ?? []).some(
-      (alias) => normalizeOptionalLowercaseString(alias) === normalized,
-    );
   // Read the already-installed runtime channel registry from shared state only.
   // Importing plugins/runtime here creates a module cycle through plugin-sdk
   // surfaces during bundled channel discovery.
-  const plugin = (getActivePluginChannelRegistryFromState()?.channels ?? []).find((entry) =>
-    matchesPluginId(entry.plugin),
-  )?.plugin;
-  if (plugin?.conversationBindings?.supportsCurrentConversationBinding === true) {
-    return true;
+  let plugins: readonly unknown[];
+  try {
+    plugins = listLoadedChannelPlugins();
+  } catch {
+    return false;
+  }
+  for (const plugin of plugins) {
+    if (
+      pluginMatchesCurrentConversationChannel(plugin, normalized) &&
+      pluginSupportsCurrentConversationBinding(plugin)
+    ) {
+      return true;
+    }
   }
   return false;
 }

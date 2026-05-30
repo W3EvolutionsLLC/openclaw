@@ -3,7 +3,10 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { setActivePluginRegistry } from "../../plugins/runtime.js";
-import { createTestRegistry } from "../../test-utils/channel-plugins.js";
+import {
+  createChannelTestPluginBase,
+  createTestRegistry,
+} from "../../test-utils/channel-plugins.js";
 import {
   testing,
   bindGenericCurrentConversation,
@@ -61,6 +64,36 @@ function setMinimalCurrentConversationRegistry(): void {
   );
 }
 
+function setHostileCurrentConversationRegistry(): void {
+  const registry = createTestRegistry([]);
+  const hostileEntry = Object.defineProperty(
+    {
+      pluginId: "fuzzplugin",
+      source: "test",
+    },
+    "plugin",
+    {
+      get() {
+        throw new Error("unreadable channel entry");
+      },
+    },
+  );
+  registry.channels = [
+    hostileEntry,
+    {
+      pluginId: "mockplugin",
+      source: "test",
+      plugin: {
+        ...createChannelTestPluginBase({ id: "mockplugin" }),
+        conversationBindings: {
+          supportsCurrentConversationBinding: true,
+        },
+      },
+    },
+  ] as never;
+  setActivePluginRegistry(registry);
+}
+
 describe("generic current-conversation bindings", () => {
   let previousStateDir: string | undefined;
   let testStateDir = "";
@@ -116,6 +149,22 @@ describe("generic current-conversation bindings", () => {
         accountId: "default",
       }),
     ).toBeNull();
+  });
+
+  it("skips unreadable channel entries when advertising current conversation support", () => {
+    setHostileCurrentConversationRegistry();
+
+    expect(
+      getGenericCurrentConversationBindingCapabilities({
+        channel: "mockplugin",
+        accountId: "default",
+      }),
+    ).toEqual({
+      adapterAvailable: true,
+      bindSupported: true,
+      unbindSupported: true,
+      placements: ["current"],
+    });
   });
 
   it("reloads persisted bindings after the in-memory cache is cleared", async () => {
