@@ -231,13 +231,12 @@ export function buildMemoryPromptSection(params: {
   availableTools: Set<string>;
   citationsMode?: MemoryCitationsMode;
 }): string[] {
-  const primary = normalizeMemoryPromptLines(
-    memoryPluginState.capability?.capability.promptBuilder?.(params) ?? [],
-  );
-  const supplements = memoryPluginState.promptSupplements
+  const primaryBuilder = readMemoryPromptBuilder(memoryPluginState.capability?.capability);
+  const primary = primaryBuilder ? runMemoryPromptBuilder(primaryBuilder, params) : [];
+  const supplements = listReadableMemoryPromptSupplements()
     // Keep supplement order stable even if plugin registration order changes.
     .toSorted((left, right) => left.pluginId.localeCompare(right.pluginId))
-    .flatMap((registration) => normalizeMemoryPromptLines(registration.builder(params)));
+    .flatMap((registration) => runMemoryPromptBuilder(registration.builder, params));
   return [...primary, ...supplements];
 }
 
@@ -245,7 +244,92 @@ function normalizeMemoryPromptLines(value: unknown): string[] {
   if (!Array.isArray(value)) {
     return [];
   }
-  return value.filter((line): line is string => typeof line === "string");
+  let length: number;
+  try {
+    length = value.length;
+  } catch {
+    return [];
+  }
+  const lines: string[] = [];
+  for (let index = 0; index < length; index += 1) {
+    let line: unknown;
+    try {
+      line = value[index];
+    } catch {
+      continue;
+    }
+    if (typeof line === "string") {
+      lines.push(line);
+    }
+  }
+  return lines;
+}
+
+function readMemoryPromptBuilder(value: unknown): MemoryPromptSectionBuilder | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  try {
+    const builder = (value as { promptBuilder?: unknown }).promptBuilder;
+    return typeof builder === "function" ? (builder as MemoryPromptSectionBuilder) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function runMemoryPromptBuilder(
+  builder: MemoryPromptSectionBuilder,
+  params: Parameters<MemoryPromptSectionBuilder>[0],
+): string[] {
+  try {
+    return normalizeMemoryPromptLines(builder(params));
+  } catch {
+    return [];
+  }
+}
+
+function readMemoryPromptSupplement(
+  value: unknown,
+): MemoryPromptSupplementRegistration | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  let pluginId: unknown;
+  let builder: unknown;
+  try {
+    pluginId = (value as MemoryPromptSupplementRegistration).pluginId;
+    builder = (value as MemoryPromptSupplementRegistration).builder;
+  } catch {
+    return undefined;
+  }
+  if (typeof pluginId !== "string" || typeof builder !== "function") {
+    return undefined;
+  }
+  return { pluginId, builder: builder as MemoryPromptSectionBuilder };
+}
+
+function listReadableMemoryPromptSupplements(): MemoryPromptSupplementRegistration[] {
+  const source = memoryPluginState.promptSupplements;
+  let length: number;
+  try {
+    length = source.length;
+  } catch {
+    return [];
+  }
+  const supplements: MemoryPromptSupplementRegistration[] = [];
+  for (let index = 0; index < length; index += 1) {
+    let registration: unknown;
+    try {
+      registration = source[index];
+    } catch {
+      continue;
+    }
+    const readable = readMemoryPromptSupplement(registration);
+    if (readable) {
+      supplements.push(readable);
+    }
+  }
+  return supplements;
 }
 
 export function getMemoryPromptSectionBuilder(): MemoryPromptSectionBuilder | undefined {

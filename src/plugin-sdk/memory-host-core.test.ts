@@ -6,6 +6,8 @@ import {
   clearMemoryPluginState,
   registerMemoryCapability,
   registerMemoryPromptSection,
+  registerMemoryPromptSectionForPlugin,
+  registerMemoryPromptSupplement,
 } from "../plugins/memory-state.js";
 import * as memoryCoreAlias from "./memory-core.js";
 import {
@@ -33,6 +35,22 @@ describe("memory-host-core helpers", () => {
         citationsMode: "off",
       }),
     ).toEqual(["## Memory Recall", "citations=off", ""]);
+  });
+
+  it("skips crashing memory prompt plugin builders while preserving healthy siblings", () => {
+    registerMemoryPromptSectionForPlugin("fuzzplugin", () => {
+      throw new Error("fuzzplugin memory prompt exploded");
+    });
+    registerMemoryPromptSupplement("fuzzplugin", () => {
+      throw new Error("fuzzplugin memory supplement exploded");
+    });
+    registerMemoryPromptSupplement("mockplugin", () => ["mock memory supplement"]);
+
+    expect(
+      buildActiveMemoryPromptSection({
+        availableTools: new Set(["memory_search"]),
+      }),
+    ).toEqual(["mock memory supplement"]);
   });
 
   it("exposes active memory public artifacts for companion plugins", async () => {
