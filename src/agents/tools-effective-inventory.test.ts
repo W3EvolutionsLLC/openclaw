@@ -322,6 +322,79 @@ describe("resolveEffectiveToolInventory", () => {
     });
   });
 
+  it("skips unreadable plugin tool metadata while preserving healthy entries", async () => {
+    const registry = createEmptyPluginRegistry();
+    const metadataEntries = [
+      undefined,
+      Object.create(null, {
+        pluginId: { enumerable: true, value: "fuzzplugin" },
+        metadata: {
+          enumerable: true,
+          get() {
+            throw new Error("fuzzplugin inventory metadata is unreadable");
+          },
+        },
+      }),
+      Object.create(null, {
+        pluginId: { enumerable: true, value: "fuzzplugin" },
+        metadata: {
+          enumerable: true,
+          value: Object.create(null, {
+            toolName: {
+              enumerable: true,
+              get() {
+                throw new Error("fuzzplugin inventory tool name is unreadable");
+              },
+            },
+          }),
+        },
+      }),
+      {
+        pluginId: "mockplugin",
+        pluginName: "Mock Plugin",
+        source: "fixture",
+        metadata: {
+          toolName: "mockplugin_lookup",
+          displayName: "Mock Lookup",
+          description: "Curated mock lookup.",
+          risk: "medium",
+          tags: ["mock", "lookup"],
+        },
+      },
+    ];
+    Object.defineProperty(metadataEntries, "0", {
+      enumerable: true,
+      get() {
+        throw new Error("fuzzplugin inventory metadata entry is unreadable");
+      },
+    });
+    registry.toolMetadata = metadataEntries as never;
+    setActivePluginRegistry(registry);
+    const { resolveEffectiveToolInventory } = await loadHarness({
+      tools: [
+        mockTool({
+          name: "mockplugin_lookup",
+          label: "Lookup",
+          description: "Search mock records",
+        }),
+      ],
+      pluginMeta: { mockplugin_lookup: { pluginId: "mockplugin" } },
+    });
+
+    const result = resolveEffectiveToolInventory({ cfg: {} });
+
+    expect(result.groups[0]?.tools[0]).toEqual({
+      id: "mockplugin_lookup",
+      label: "Mock Lookup",
+      description: "Curated mock lookup.",
+      rawDescription: "Curated mock lookup.",
+      source: "plugin",
+      pluginId: "mockplugin",
+      risk: "medium",
+      tags: ["mock", "lookup"],
+    });
+  });
+
   it("quarantines tools with schemas that cannot be projected to the model runtime", async () => {
     const { resolveEffectiveToolInventory } = await loadHarness({
       tools: [
