@@ -19,6 +19,9 @@ vi.mock("../../agents/agent-scope.js", () => ({
 
 const pluginToolMetaState = new Map<string, { pluginId: string; optional: boolean }>();
 const pluginToolMetaByObject = new WeakMap<object, { pluginId: string; optional: boolean }>();
+const activePluginRegistry = vi.hoisted(() => ({
+  value: undefined as unknown,
+}));
 
 vi.mock("../../plugins/tools.js", () => ({
   buildPluginToolMetadataKey: (pluginId: string, toolName: string) =>
@@ -46,6 +49,10 @@ vi.mock("../../plugins/tools.js", () => ({
       return undefined;
     }
   }),
+}));
+
+vi.mock("../../plugins/runtime.js", () => ({
+  getActivePluginRegistry: () => activePluginRegistry.value,
 }));
 
 type RespondCall = [boolean, unknown?, { code: number; message: string }?];
@@ -84,6 +91,7 @@ function respondCall(respond: ReturnType<typeof vi.fn>): RespondCall {
 
 describe("tools.catalog handler", () => {
   beforeEach(() => {
+    activePluginRegistry.value = undefined;
     pluginToolMetaState.clear();
     vi.mocked(resolvePluginTools).mockClear();
     vi.mocked(resolvePluginTools).mockReturnValue([
@@ -273,6 +281,102 @@ describe("tools.catalog handler", () => {
       tags: undefined,
       defaultProfiles: [],
     });
+  });
+
+  it("skips unreadable active registry tool metadata while preserving deferred tools", async () => {
+    const unreadableMetadataEntries = [
+      undefined,
+      Object.create(null, {
+        pluginId: { enumerable: true, value: "fuzzplugin" },
+        metadata: {
+          enumerable: true,
+          get() {
+            throw new Error("fuzzplugin tool metadata is unreadable");
+          },
+        },
+      }),
+      {
+        pluginId: "mockplugin",
+        metadata: {
+          toolName: "mockplugin_deferred",
+          displayName: "Mock deferred",
+          description: "Deferred mock tool",
+          risk: "medium",
+          tags: ["mock", "deferred"],
+        },
+      },
+    ];
+    Object.defineProperty(unreadableMetadataEntries, "0", {
+      enumerable: true,
+      get() {
+        throw new Error("fuzzplugin tool metadata entry is unreadable");
+      },
+    });
+    const unreadableToolEntries = [
+      undefined,
+      Object.create(null, {
+        pluginId: {
+          enumerable: true,
+          get() {
+            throw new Error("fuzzplugin tool plugin id is unreadable");
+          },
+        },
+        names: { enumerable: true, value: ["fuzzplugin_deferred"] },
+      }),
+      {
+        pluginId: "mockplugin",
+        pluginName: "Mock Plugin",
+        names: ["mockplugin_deferred"],
+        optional: true,
+      },
+    ];
+    Object.defineProperty(unreadableToolEntries, "0", {
+      enumerable: true,
+      get() {
+        throw new Error("fuzzplugin tool entry is unreadable");
+      },
+    });
+    activePluginRegistry.value = {
+      toolMetadata: unreadableMetadataEntries,
+      tools: unreadableToolEntries,
+    };
+    vi.mocked(resolvePluginTools).mockReturnValueOnce([] as never);
+
+    const { respond, invoke } = createInvokeParams({});
+    await invoke();
+
+    const call = respondCall(respond);
+    expect(call[0]).toBe(true);
+    const payload = call[1] as {
+      groups: Array<{
+        source: "core" | "plugin";
+        tools: Array<{
+          id: string;
+          label: string;
+          description: string;
+          pluginId?: string;
+          optional?: boolean;
+          risk?: string;
+          tags?: string[];
+        }>;
+      }>;
+    };
+    const tools = payload.groups
+      .filter((group) => group.source === "plugin")
+      .flatMap((group) => group.tools);
+    expect(tools).toEqual([
+      {
+        id: "mockplugin_deferred",
+        label: "Mock deferred",
+        description: "Deferred mock tool",
+        source: "plugin",
+        pluginId: "mockplugin",
+        optional: true,
+        risk: "medium",
+        tags: ["mock", "deferred"],
+        defaultProfiles: [],
+      },
+    ]);
   });
 
   it("opts plugin tool catalog loads into gateway subagent binding", async () => {

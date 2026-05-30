@@ -52,11 +52,97 @@ function readPluginCatalogToolField(
   tool: unknown,
   key: "name" | "label" | "description" | "displaySummary",
 ): unknown {
+  const read = readRecordField(tool, key);
+  return read.ok ? read.value : undefined;
+}
+
+function readRecordField(
+  value: unknown,
+  field: string,
+): { ok: true; value: unknown } | { ok: false } {
   try {
-    return (tool as Record<string, unknown>)[key];
+    if ((typeof value !== "object" && typeof value !== "function") || value === null) {
+      return { ok: false };
+    }
+    return { ok: true, value: (value as Record<string, unknown>)[field] };
+  } catch {
+    return { ok: false };
+  }
+}
+
+function readArrayLength(value: unknown): number | undefined {
+  try {
+    return Array.isArray(value) ? value.length : undefined;
   } catch {
     return undefined;
   }
+}
+
+function readArrayElement(
+  value: unknown,
+  index: number,
+): { ok: true; value: unknown } | { ok: false } {
+  return readRecordField(value, String(index));
+}
+
+function readArrayFieldElements(value: unknown, field: string): unknown[] {
+  const read = readRecordField(value, field);
+  if (!read.ok) {
+    return [];
+  }
+  const length = readArrayLength(read.value);
+  if (length === undefined) {
+    return [];
+  }
+  const entries: unknown[] = [];
+  for (let index = 0; index < length; index += 1) {
+    const entry = readArrayElement(read.value, index);
+    if (entry.ok) {
+      entries.push(entry.value);
+    }
+  }
+  return entries;
+}
+
+function readNormalizedStringField(value: unknown, field: string): string | undefined {
+  const read = readRecordField(value, field);
+  if (!read.ok || typeof read.value !== "string") {
+    return undefined;
+  }
+  return normalizeOptionalString(read.value);
+}
+
+function readStringField(value: unknown, field: string): string | undefined {
+  const read = readRecordField(value, field);
+  return read.ok && typeof read.value === "string" ? read.value : undefined;
+}
+
+function readBooleanField(value: unknown, field: string): boolean | undefined {
+  const read = readRecordField(value, field);
+  return read.ok && typeof read.value === "boolean" ? read.value : undefined;
+}
+
+function readStringArrayField(value: unknown, field: string): string[] | undefined {
+  const read = readRecordField(value, field);
+  if (!read.ok) {
+    return undefined;
+  }
+  const length = readArrayLength(read.value);
+  if (length === undefined) {
+    return undefined;
+  }
+  const items: string[] = [];
+  for (let index = 0; index < length; index += 1) {
+    const item = readArrayElement(read.value, index);
+    if (!item.ok || typeof item.value !== "string") {
+      continue;
+    }
+    const normalized = normalizeOptionalString(item.value);
+    if (normalized) {
+      items.push(normalized);
+    }
+  }
+  return items.length > 0 ? items : undefined;
 }
 
 function readPluginCatalogToolName(tool: unknown): string | undefined {
@@ -70,6 +156,39 @@ function readPluginCatalogToolString(
 ): string | undefined {
   const value = readPluginCatalogToolField(tool, key);
   return typeof value === "string" ? value : undefined;
+}
+
+type PluginCatalogMetadata = {
+  displayName?: string;
+  description?: string;
+  risk?: "low" | "medium" | "high";
+  tags?: string[];
+};
+
+function readPluginCatalogMetadata(activeRegistry: unknown): Map<string, PluginCatalogMetadata> {
+  const metadata = new Map<string, PluginCatalogMetadata>();
+  for (const entry of readArrayFieldElements(activeRegistry, "toolMetadata")) {
+    const pluginId = readNormalizedStringField(entry, "pluginId");
+    const metadataRecord = readRecordField(entry, "metadata");
+    if (!pluginId || !metadataRecord.ok) {
+      continue;
+    }
+    const toolName = readNormalizedStringField(metadataRecord.value, "toolName");
+    if (!toolName) {
+      continue;
+    }
+    const displayName = readStringField(metadataRecord.value, "displayName");
+    const description = readStringField(metadataRecord.value, "description");
+    const risk = readStringField(metadataRecord.value, "risk");
+    const tags = readStringArrayField(metadataRecord.value, "tags");
+    metadata.set(buildPluginToolMetadataKey(pluginId, toolName), {
+      ...(displayName !== undefined ? { displayName } : {}),
+      ...(description !== undefined ? { description } : {}),
+      ...(risk === "low" || risk === "medium" || risk === "high" ? { risk } : {}),
+      ...(tags !== undefined ? { tags } : {}),
+    });
+  }
+  return metadata;
 }
 
 function resolveAgentIdOrRespondError(
@@ -137,12 +256,7 @@ function buildPluginGroups(params: {
   // was registered BY the tool's owning plugin. Without this scoping, plugin-X
   // could override the catalog label/description/risk/tags for another plugin's
   // tool by registering metadata with the same toolName.
-  const pluginToolMetadata = new Map(
-    (activeRegistry?.toolMetadata ?? []).map((entry) => [
-      buildPluginToolMetadataKey(entry.pluginId, entry.metadata.toolName),
-      entry.metadata,
-    ]),
-  );
+  const pluginToolMetadata = readPluginCatalogMetadata(activeRegistry);
   const seenToolIds = new Set<string>();
   for (const tool of pluginTools) {
     const toolName = readPluginCatalogToolName(tool);
@@ -187,35 +301,39 @@ function buildPluginGroups(params: {
     seenToolIds.add(toolName);
     groups.set(groupId, existing);
   }
-  for (const entry of activeRegistry?.tools ?? []) {
-    const names = entry.names.length > 0 ? entry.names : (entry.declaredNames ?? []);
+  for (const entry of readArrayFieldElements(activeRegistry, "tools")) {
+    const pluginId = readNormalizedStringField(entry, "pluginId");
+    if (!pluginId) {
+      continue;
+    }
+    const pluginName = readStringField(entry, "pluginName") ?? pluginId;
+    const names =
+      readStringArrayField(entry, "names") ?? readStringArrayField(entry, "declaredNames") ?? [];
     for (const name of names) {
       if (seenToolIds.has(name) || params.existingToolNames.has(name)) {
         continue;
       }
-      const groupId = `plugin:${entry.pluginId}`;
+      const groupId = `plugin:${pluginId}`;
       const existing =
         groups.get(groupId) ??
         ({
           id: groupId,
-          label: entry.pluginName ?? entry.pluginId,
+          label: pluginName,
           source: "plugin",
-          pluginId: entry.pluginId,
+          pluginId,
           tools: [],
         } as ToolCatalogGroup);
-      const ownedMetadata = pluginToolMetadata.get(
-        buildPluginToolMetadataKey(entry.pluginId, name),
-      );
+      const ownedMetadata = pluginToolMetadata.get(buildPluginToolMetadataKey(pluginId, name));
       existing.tools.push({
         id: name,
         label: normalizeOptionalString(ownedMetadata?.displayName) ?? name,
         description:
           summarizeToolDescriptionText({
             rawDescription: ownedMetadata?.description,
-          }) || `Plugin tool from ${entry.pluginName ?? entry.pluginId}`,
+          }) || `Plugin tool from ${pluginName}`,
         source: "plugin",
-        pluginId: entry.pluginId,
-        optional: entry.optional,
+        pluginId,
+        optional: readBooleanField(entry, "optional"),
         risk: ownedMetadata?.risk,
         tags: ownedMetadata?.tags,
         defaultProfiles: [],
