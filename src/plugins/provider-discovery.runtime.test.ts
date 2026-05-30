@@ -629,6 +629,34 @@ describe("resolvePluginDiscoveryProvidersRuntime", () => {
     expect(requireResolvePluginProvidersParams().onlyPluginIds).toEqual(["runtime-only"]);
   });
 
+  it("keeps failed projection plugins in fallback loading beside runtime manifest catalogs", () => {
+    const { unreadableProvider } = createUnreadableDiscoveryProviderFixtures();
+    const staticFallbackProvider = createProvider({ id: "fuzzprovider", mode: "static" });
+    const fullProviders = [
+      createProvider({ id: "fuzzfull", mode: "catalog" }),
+      createProvider({ id: "runtime-only", mode: "catalog" }),
+    ];
+    mocks.resolveDiscoveredProviderPluginIds.mockReturnValue(["fuzzplugin", "runtime-only"]);
+    mocks.resolvePluginProviders.mockReturnValue(fullProviders);
+    mocks.loadPluginMetadataSnapshot.mockReturnValue({
+      index: { plugins: [] },
+      manifestRegistry: {
+        plugins: [
+          createManifestPlugin("fuzzplugin"),
+          createManifestPluginWithRuntimeDiscoveryOnly("runtime-only"),
+        ],
+        diagnostics: [],
+      },
+    });
+    mocks.loadSource.mockReturnValue([unreadableProvider, staticFallbackProvider]);
+
+    expect(resolvePluginDiscoveryProvidersRuntime({})).toEqual(fullProviders);
+    expect(requireResolvePluginProvidersParams().onlyPluginIds).toEqual([
+      "fuzzplugin",
+      "runtime-only",
+    ]);
+  });
+
   it("full-loads runtime-owned catalog plugins even when they have discovery entries", () => {
     const entryProvider = createProvider({ id: "mixed-entry", mode: "static" });
     const runtimeProvider = createProvider({ id: "runtime-owned", mode: "catalog" });

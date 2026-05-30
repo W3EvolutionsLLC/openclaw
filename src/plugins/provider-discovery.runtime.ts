@@ -554,11 +554,15 @@ export function resolvePluginDiscoveryProvidersRuntime(params: {
   }
   const runtimeManifestCatalogPluginIds = listRuntimeManifestCatalogPluginIds(entryResult);
   if (runtimeManifestCatalogPluginIds.length > 0) {
+    const fullPluginIds = sortUniqueStrings([
+      ...entryResult.fallbackPluginIds,
+      ...runtimeManifestCatalogPluginIds,
+    ]);
     return resolvePluginProviders({
       ...params,
       env,
       bundledProviderVitestCompat,
-      onlyPluginIds: runtimeManifestCatalogPluginIds,
+      onlyPluginIds: fullPluginIds,
     });
   }
   if (entryProviders.length > 0) {
