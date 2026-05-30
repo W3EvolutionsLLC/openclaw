@@ -175,6 +175,37 @@ function expectBindingConversationCase(
   expect(resolveBindingConversationFromCommand(params)).toEqual(expected);
 }
 
+function setHostileCommandBindingChannelRegistry(): void {
+  const registry = createTestRegistry([]);
+  const hostileEntry = Object.defineProperty(
+    {
+      pluginId: "fuzzplugin",
+      source: "test",
+    },
+    "plugin",
+    {
+      get() {
+        throw new Error("fuzzplugin channel entry is unreadable");
+      },
+    },
+  );
+  registry.channels = [
+    hostileEntry,
+    {
+      pluginId: "mockplugin",
+      source: "test",
+      plugin: {
+        ...createChannelTestPluginBase({ id: "mockplugin", label: "Mock Plugin" }),
+        bindings: {
+          resolveCommandConversation: ({ senderId }: { senderId?: string }) =>
+            senderId ? { conversationId: `mock:${senderId}` } : null,
+        },
+      },
+    },
+  ] as never;
+  setActivePluginRegistry(registry);
+}
+
 beforeEach(() => {
   completionMocks.prepareSimpleCompletionModelForAgent.mockReset();
   completionMocks.prepareSimpleCompletionModelForAgent.mockResolvedValue({
@@ -1176,6 +1207,23 @@ describe("registerPluginCommand", () => {
     },
   ] as const)("$name", ({ params, expected }) => {
     expectBindingConversationCase(params, expected);
+  });
+
+  it("skips unreadable channel entries when resolving command binding conversations", () => {
+    setHostileCommandBindingChannelRegistry();
+
+    expectBindingConversationCase(
+      {
+        channel: "mockplugin",
+        senderId: "sender-42",
+        accountId: "default",
+      },
+      {
+        channel: "mockplugin",
+        accountId: "default",
+        conversationId: "mock:sender-42",
+      },
+    );
   });
 
   it("does not expose binding APIs to plugin commands on unsupported channels", async () => {

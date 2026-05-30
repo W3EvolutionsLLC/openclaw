@@ -7,6 +7,7 @@
 
 import { resolveBoundAgentIdForSession } from "../agents/session-agent-binding.js";
 import { resolveConversationBindingContext } from "../channels/conversation-binding-context.js";
+import { getLoadedChannelPluginForRead } from "../channels/plugins/registry-loaded-read.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { ADMIN_SCOPE, isOperatorScope } from "../gateway/operator-scopes.js";
 import { logVerbose } from "../globals.js";
@@ -35,7 +36,6 @@ import {
   getCurrentPluginConversationBinding,
   requestPluginConversationBinding,
 } from "./conversation-binding.js";
-import { getActivePluginChannelRegistry } from "./runtime.js";
 import type {
   OpenClawPluginCommandDefinition,
   PluginCommandContext,
@@ -152,9 +152,7 @@ function resolveBindingConversationFromCommand(params: {
   parentConversationId?: string;
   threadId?: string | number;
 } | null {
-  const channelPlugin = getActivePluginChannelRegistry()?.channels.find(
-    (entry) => entry.plugin.id === params.channel,
-  )?.plugin;
+  const channelPlugin = getLoadedChannelPluginForRead(params.channel);
   if (!channelPlugin?.bindings?.resolveCommandConversation) {
     return null;
   }
