@@ -11,6 +11,7 @@ import type { RuntimeEnv } from "../../runtime.js";
 import { normalizeOptionalLowercaseString } from "../../shared/string-coerce.js";
 import { createClackPrompter } from "../../wizard/clack-prompter.js";
 import type { WizardPrompter } from "../../wizard/prompts.js";
+import { findChannelPluginInSnapshot } from "./channel-plugin-snapshot.js";
 import {
   ensureChannelSetupPluginInstalled,
   loadChannelSetupPluginRegistrySnapshotForChannel,
@@ -79,11 +80,11 @@ function findScopedChannelPlugin(
   channelId: ChannelId,
   supports: (plugin: ChannelPlugin) => boolean,
 ): ChannelPlugin | undefined {
-  const runtimePlugin = snapshot.channels.find((entry) => entry.plugin.id === channelId)?.plugin;
+  const runtimePlugin = findChannelPluginInSnapshot(snapshot, "channels", channelId);
   if (runtimePlugin) {
     return runtimePlugin;
   }
-  const setupPlugin = snapshot.channelSetups.find((entry) => entry.plugin.id === channelId)?.plugin;
+  const setupPlugin = findChannelPluginInSnapshot(snapshot, "channelSetups", channelId);
   return setupPlugin && supports(setupPlugin) ? setupPlugin : undefined;
 }
 

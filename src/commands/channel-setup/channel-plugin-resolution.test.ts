@@ -66,6 +66,14 @@ function createPlugin(id: string): ChannelPlugin {
   return { id } as ChannelPlugin;
 }
 
+function createUnreadablePluginEntry(pluginId: string): { plugin: ChannelPlugin } {
+  return Object.defineProperty({}, "plugin", {
+    get() {
+      throw new Error(`${pluginId} channel entry is unreadable`);
+    },
+  }) as { plugin: ChannelPlugin };
+}
+
 function firstMockArg(mock: { mock: { calls: ReadonlyArray<ReadonlyArray<unknown>> } }): unknown {
   const call = mock.mock.calls[0];
   if (!call) {
@@ -215,6 +223,32 @@ describe("resolveInstallableChannelPlugin", () => {
     expect(result.plugin).toBe(scopedPlugin);
     expect(result.pluginInstalled).toBe(false);
     expect(result.supportsRequestedCapability).toBe(false);
+    expect(mocks.ensureChannelSetupPluginInstalled).not.toHaveBeenCalled();
+  });
+
+  it("skips unreadable scoped channel entries while resolving installable plugins", async () => {
+    const catalogEntry = createCatalogEntry({
+      id: "mockplugin",
+      pluginId: "mockplugin",
+      origin: "bundled",
+    });
+    const scopedPlugin = createPlugin("mockplugin");
+
+    mocks.listChannelPluginCatalogEntries.mockReturnValue([catalogEntry]);
+    mocks.loadChannelSetupPluginRegistrySnapshotForChannel.mockReturnValue({
+      channels: [createUnreadablePluginEntry("fuzzplugin"), { plugin: scopedPlugin }],
+      channelSetups: [createUnreadablePluginEntry("fuzzplugin-setup")],
+    });
+
+    const result = await resolveInstallableChannelPlugin({
+      cfg: { plugins: { enabled: true } },
+      runtime: {} as never,
+      rawChannel: "mockplugin",
+      allowInstall: true,
+    });
+
+    expect(result.plugin).toBe(scopedPlugin);
+    expect(result.pluginInstalled).toBe(false);
     expect(mocks.ensureChannelSetupPluginInstalled).not.toHaveBeenCalled();
   });
 

@@ -22,6 +22,7 @@ import { normalizeOptionalLowercaseString } from "../../shared/string-coerce.js"
 import { createClackPrompter } from "../../wizard/clack-prompter.js";
 import { WizardCancelledError } from "../../wizard/prompts.js";
 import { applyAgentBindings, describeBinding } from "../agents.bindings.js";
+import { findChannelPluginInSnapshot } from "../channel-setup/channel-plugin-snapshot.js";
 import type { ChannelChoice } from "../onboard-types.js";
 import { applyAccountName, applyChannelAccountConfig } from "./add-mutators.js";
 import { channelLabel } from "./runtime-label.js";
@@ -328,9 +329,9 @@ async function channelsAddCommandImpl(
       forceSetupOnlyChannelPlugins: true,
     });
     return (
-      snapshot.channelSetups.find((entry) => entry.plugin.id === channelId)?.plugin ??
+      findChannelPluginInSnapshot(snapshot, "channelSetups", channelId) ??
       getBundledChannelSetupPlugin(channelId) ??
-      snapshot.channels.find((entry) => entry.plugin.id === channelId)?.plugin ??
+      findChannelPluginInSnapshot(snapshot, "channels", channelId) ??
       existing
     );
   };

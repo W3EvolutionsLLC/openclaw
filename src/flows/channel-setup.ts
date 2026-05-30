@@ -7,6 +7,7 @@ import type {
   ChannelSetupWizardAdapter,
 } from "../channels/plugins/setup-wizard-types.js";
 import { formatCliCommand } from "../cli/command-format.js";
+import { findChannelPluginInSnapshot } from "../commands/channel-setup/channel-plugin-snapshot.js";
 import {
   resolveChannelSetupEntries,
   shouldShowChannelInSetup,
@@ -177,8 +178,8 @@ export async function setupChannels(
       forceSetupOnlyChannelPlugins: setup?.forceSetupOnlyChannelPlugins ?? true,
     });
     const plugin =
-      snapshot.channelSetups.find((entry) => entry.plugin.id === channel)?.plugin ??
-      snapshot.channels.find((entry) => entry.plugin.id === channel)?.plugin;
+      findChannelPluginInSnapshot(snapshot, "channelSetups", channel) ??
+      findChannelPluginInSnapshot(snapshot, "channels", channel);
     if (plugin) {
       rememberScopedPlugin(plugin);
       return plugin;
