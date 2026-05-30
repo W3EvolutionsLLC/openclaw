@@ -74,4 +74,46 @@ describe("bootstrapOutboundChannelPlugin", () => {
 
     expect(loaderMocks.resolveRuntimePluginRegistry).not.toHaveBeenCalled();
   });
+
+  it("skips unreadable channel entries before a healthy sender", () => {
+    const registry = createEmptyPluginRegistry();
+    const unreadableEntry = Object.defineProperty(
+      { pluginId: "fuzzplugin-entry", source: "runtime" },
+      "plugin",
+      {
+        enumerable: true,
+        get() {
+          throw new Error("fuzzplugin bootstrap channel entry unreadable");
+        },
+      },
+    );
+    const unreadablePluginId = Object.defineProperty({ meta: { id: "fuzzplugin-chat" } }, "id", {
+      enumerable: true,
+      get() {
+        throw new Error("fuzzplugin bootstrap channel id unreadable");
+      },
+    });
+    registry.channels = [
+      unreadableEntry,
+      { pluginId: "fuzzplugin-chat", plugin: unreadablePluginId, source: "runtime" },
+      {
+        pluginId: "mockplugin-chat",
+        plugin: {
+          id: "discord",
+          meta: {},
+          outbound: { sendText: async () => ({ messageId: "1" }) },
+        },
+        source: "runtime",
+      },
+    ] as never;
+    setActivePluginRegistry(registry);
+    pinActivePluginChannelRegistry(registry);
+
+    bootstrapOutboundChannelPlugin({
+      channel: "discord",
+      cfg: discordConfig,
+    });
+
+    expect(loaderMocks.resolveRuntimePluginRegistry).not.toHaveBeenCalled();
+  });
 });
