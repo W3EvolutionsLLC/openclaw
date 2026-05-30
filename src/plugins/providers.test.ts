@@ -1166,6 +1166,101 @@ describe("resolvePluginProviders", () => {
     });
   });
 
+  it("skips unreadable provider registry entries while preserving healthy providers", () => {
+    setManifestPlugins([
+      createManifestProviderPlugin({
+        id: "fuzzplugin",
+        providerIds: ["fuzzprovider", "fuzzauthprovider"],
+        enabledByDefault: true,
+      }),
+      createManifestProviderPlugin({
+        id: "mockplugin",
+        providerIds: ["mockprovider"],
+        enabledByDefault: true,
+      }),
+    ]);
+    const unreadableProvider = Object.create(null, {
+      id: {
+        enumerable: true,
+        get() {
+          throw new Error("fuzzplugin provider id getter failed");
+        },
+      },
+      label: {
+        enumerable: true,
+        value: "Fuzz Provider",
+      },
+      auth: {
+        enumerable: true,
+        value: [],
+      },
+    }) as ProviderPlugin;
+    const unreadableAuthProvider = Object.create(null, {
+      id: {
+        enumerable: true,
+        value: "fuzzauthprovider",
+      },
+      label: {
+        enumerable: true,
+        value: "Fuzz Auth Provider",
+      },
+      auth: {
+        enumerable: true,
+        get() {
+          throw new Error("fuzzplugin provider auth getter failed");
+        },
+      },
+    }) as ProviderPlugin;
+    const healthyProvider = Object.create(null, {
+      id: {
+        enumerable: true,
+        value: "mockprovider",
+      },
+      aliases: {
+        enumerable: true,
+        get() {
+          throw new Error("mockplugin aliases getter failed");
+        },
+      },
+      hookAliases: {
+        enumerable: true,
+        value: ["mockprovider-cli"],
+      },
+      label: {
+        enumerable: true,
+        value: "Mock Provider",
+      },
+      auth: {
+        enumerable: true,
+        value: [],
+      },
+    }) as ProviderPlugin;
+    const registry = createEmptyPluginRegistry();
+    registry.providers.push(
+      { pluginId: "fuzzplugin", provider: unreadableProvider, source: "bundled" },
+      { pluginId: "fuzzplugin", provider: unreadableAuthProvider, source: "bundled" },
+      { pluginId: "mockplugin", provider: healthyProvider, source: "bundled" },
+    );
+    resolveRuntimePluginRegistryMock.mockReturnValue(registry);
+
+    const providers = resolvePluginProviders({
+      config: {
+        plugins: {
+          allow: ["fuzzplugin", "mockplugin"],
+        },
+      },
+      onlyPluginIds: ["fuzzplugin", "mockplugin"],
+    });
+
+    expect(providers.map((provider) => provider.id)).toEqual(["mockprovider"]);
+    expect(Object.getPrototypeOf(providers[0])).toBe(Object.prototype);
+    expect(providers[0]?.pluginId).toBe("mockplugin");
+    expect(providers[0]?.label).toBe("Mock Provider");
+    expect(providers[0]?.auth).toEqual([]);
+    expect(providers[0]?.aliases).toEqual([]);
+    expect(providers[0]?.hookAliases).toEqual(["mockprovider-cli"]);
+  });
+
   it("inherits workspaceDir from the active registry when provider resolution omits it", () => {
     setActivePluginRegistry(
       createEmptyPluginRegistry(),

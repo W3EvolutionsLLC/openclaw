@@ -1,4 +1,4 @@
-import { sortUniqueStrings } from "../shared/string-normalization.js";
+import { normalizeStringEntries, sortUniqueStrings } from "../shared/string-normalization.js";
 import { withActivatedPluginIds } from "./activation-context.js";
 import { resolveBundledPluginCompatibleActivationInputs } from "./activation-context.js";
 import { resolveManifestActivationPluginIds } from "./activation-planner.js";
@@ -33,6 +33,111 @@ import type { ProviderPlugin } from "./types.js";
 
 function dedupeSortedPluginIds(values: Iterable<string>): string[] {
   return sortUniqueStrings(values);
+}
+
+function readProviderPluginStringField(
+  provider: ProviderPlugin,
+  field: "id" | "label",
+): string | undefined {
+  try {
+    const value = provider[field];
+    return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function readProviderPluginStringList(
+  provider: ProviderPlugin,
+  field: "aliases" | "hookAliases",
+): { values: string[]; shouldMask: boolean } {
+  try {
+    const value = provider[field];
+    if (value === undefined) {
+      return { values: [], shouldMask: false };
+    }
+    if (!Array.isArray(value)) {
+      return { values: [], shouldMask: true };
+    }
+    return { values: normalizeStringEntries(value), shouldMask: true };
+  } catch {
+    return { values: [], shouldMask: true };
+  }
+}
+
+function readProviderPluginAuth(provider: ProviderPlugin): ProviderPlugin["auth"] | undefined {
+  try {
+    return Array.isArray(provider.auth) ? provider.auth : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function copyReadableProviderFields(provider: ProviderPlugin): Record<string, unknown> {
+  const fields: Record<string, unknown> = {};
+  let descriptors: PropertyDescriptorMap;
+  try {
+    descriptors = Object.getOwnPropertyDescriptors(provider);
+  } catch {
+    return fields;
+  }
+  for (const [key, descriptor] of Object.entries(descriptors)) {
+    if (
+      !descriptor.enumerable ||
+      key === "id" ||
+      key === "label" ||
+      key === "auth" ||
+      key === "aliases" ||
+      key === "hookAliases" ||
+      key === "pluginId"
+    ) {
+      continue;
+    }
+    try {
+      fields[key] = (provider as Record<string, unknown>)[key];
+    } catch {
+      // Unreadable plugin-owned provider fields are treated as absent.
+    }
+  }
+  return fields;
+}
+
+function createProviderRuntimePlugin(entry: {
+  pluginId: string;
+  provider: ProviderPlugin;
+}): ProviderPlugin | undefined {
+  const id = readProviderPluginStringField(entry.provider, "id");
+  if (!id) {
+    return undefined;
+  }
+  const label = readProviderPluginStringField(entry.provider, "label");
+  const auth = readProviderPluginAuth(entry.provider);
+  if (!label || !auth) {
+    return undefined;
+  }
+  const aliases = readProviderPluginStringList(entry.provider, "aliases");
+  const hookAliases = readProviderPluginStringList(entry.provider, "hookAliases");
+  return {
+    ...copyReadableProviderFields(entry.provider),
+    id,
+    label,
+    auth,
+    ...(aliases.shouldMask ? { aliases: aliases.values } : {}),
+    ...(hookAliases.shouldMask ? { hookAliases: hookAliases.values } : {}),
+    pluginId: entry.pluginId,
+  } as ProviderPlugin;
+}
+
+function listProviderRuntimePlugins(
+  providers: ReadonlyArray<{
+    pluginId: string;
+    provider: ProviderPlugin;
+  }>,
+): ProviderPlugin[] {
+  return providers.flatMap((entry) => {
+    const provider = createProviderRuntimePlugin(entry);
+    return provider ? [provider] : [];
+  });
 }
 
 function resolveExplicitProviderOwnerPluginIds(
@@ -343,9 +448,7 @@ export function resolvePluginProviders(params: {
       return [];
     }
     const registry = loadOpenClawPlugins(loadState.loadOptions);
-    return registry.providers.map((entry) =>
-      Object.assign({}, entry.provider, { pluginId: entry.pluginId }),
-    );
+    return listProviderRuntimePlugins(registry.providers);
   }
   const loadState = resolveRuntimeProviderPluginLoadState(params, base, snapshot);
   const registry =
@@ -361,7 +464,5 @@ export function resolvePluginProviders(params: {
     return [];
   }
 
-  return registry.providers.map((entry) =>
-    Object.assign({}, entry.provider, { pluginId: entry.pluginId }),
-  );
+  return listProviderRuntimePlugins(registry.providers);
 }
