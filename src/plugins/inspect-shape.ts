@@ -98,7 +98,7 @@ function derivePluginInspectShape(params: {
   return "non-capability";
 }
 
-function readRecordField(
+export function readRegistryRecordField(
   value: unknown,
   field: string,
 ): { ok: true; value: unknown } | { ok: false } {
@@ -112,7 +112,7 @@ function readRecordField(
   }
 }
 
-function readArrayLength(value: unknown): number | undefined {
+export function readRegistryArrayLength(value: unknown): number | undefined {
   try {
     return Array.isArray(value) ? value.length : undefined;
   } catch {
@@ -120,40 +120,60 @@ function readArrayLength(value: unknown): number | undefined {
   }
 }
 
-function readArrayElement(
+export function readRegistryArrayElement(
   value: unknown,
   index: number,
 ): { ok: true; value: unknown } | { ok: false } {
-  return readRecordField(value, String(index));
+  return readRegistryRecordField(value, String(index));
+}
+
+export function registryEntryMatchesPluginId(entry: unknown, pluginId: string): boolean {
+  const entryPluginId = readRegistryRecordField(entry, "pluginId");
+  return entryPluginId.ok && entryPluginId.value === pluginId;
+}
+
+function countPluginOwnedEntries(entries: unknown, pluginId: string): number {
+  const length = readRegistryArrayLength(entries);
+  if (length === undefined) {
+    return 0;
+  }
+  let count = 0;
+  for (let index = 0; index < length; index += 1) {
+    const entry = readRegistryArrayElement(entries, index);
+    if (entry.ok && registryEntryMatchesPluginId(entry.value, pluginId)) {
+      count += 1;
+    }
+  }
+  return count;
 }
 
 export function listPluginOwnedGatewayMethodNames(params: {
   descriptors: unknown;
   pluginId: string;
 }): string[] {
-  const length = readArrayLength(params.descriptors);
+  const length = readRegistryArrayLength(params.descriptors);
   if (length === undefined) {
     return [];
   }
   const names: string[] = [];
   for (let index = 0; index < length; index += 1) {
-    const descriptor = readArrayElement(params.descriptors, index);
+    const descriptor = readRegistryArrayElement(params.descriptors, index);
     if (!descriptor.ok) {
       continue;
     }
-    const owner = readRecordField(descriptor.value, "owner");
+    const owner = readRegistryRecordField(descriptor.value, "owner");
     if (!owner.ok) {
       continue;
     }
-    const ownerKind = readRecordField(owner.value, "kind");
+    const ownerKind = readRegistryRecordField(owner.value, "kind");
     if (!ownerKind.ok || ownerKind.value !== "plugin") {
       continue;
     }
-    const ownerPluginId = readRecordField(owner.value, "pluginId");
+    const ownerPluginId = readRegistryRecordField(owner.value, "pluginId");
     if (!ownerPluginId.ok || ownerPluginId.value !== params.pluginId) {
       continue;
     }
-    const name = readRecordField(descriptor.value, "name");
+    const name = readRegistryRecordField(descriptor.value, "name");
     if (name.ok && typeof name.value === "string") {
       names.push(name.value);
     }
@@ -166,15 +186,9 @@ export function buildPluginShapeSummary(params: {
   report: Pick<PluginRegistry, "hooks" | "typedHooks" | "tools" | "gatewayMethodDescriptors">;
 }): PluginShapeSummary {
   const capabilities = buildPluginCapabilityEntries(params.plugin);
-  const typedHookCount = params.report.typedHooks.filter(
-    (entry) => entry.pluginId === params.plugin.id,
-  ).length;
-  const customHookCount = params.report.hooks.filter(
-    (entry) => entry.pluginId === params.plugin.id,
-  ).length;
-  const toolCount = params.report.tools.filter(
-    (entry) => entry.pluginId === params.plugin.id,
-  ).length;
+  const typedHookCount = countPluginOwnedEntries(params.report.typedHooks, params.plugin.id);
+  const customHookCount = countPluginOwnedEntries(params.report.hooks, params.plugin.id);
+  const toolCount = countPluginOwnedEntries(params.report.tools, params.plugin.id);
   const gatewayMethodCount = listPluginOwnedGatewayMethodNames({
     descriptors: params.report.gatewayMethodDescriptors,
     pluginId: params.plugin.id,
@@ -198,8 +212,30 @@ export function buildPluginShapeSummary(params: {
     capabilityMode: capabilityCount === 0 ? "none" : capabilityCount === 1 ? "plain" : "hybrid",
     capabilityCount,
     capabilities,
-    usesLegacyBeforeAgentStart: params.report.typedHooks.some(
-      (entry) => entry.pluginId === params.plugin.id && entry.hookName === "before_agent_start",
-    ),
+    usesLegacyBeforeAgentStart: hasPluginOwnedLegacyBeforeAgentStartHook({
+      typedHooks: params.report.typedHooks,
+      pluginId: params.plugin.id,
+    }),
   };
+}
+
+function hasPluginOwnedLegacyBeforeAgentStartHook(params: {
+  typedHooks: unknown;
+  pluginId: string;
+}): boolean {
+  const length = readRegistryArrayLength(params.typedHooks);
+  if (length === undefined) {
+    return false;
+  }
+  for (let index = 0; index < length; index += 1) {
+    const entry = readRegistryArrayElement(params.typedHooks, index);
+    if (!entry.ok || !registryEntryMatchesPluginId(entry.value, params.pluginId)) {
+      continue;
+    }
+    const hookName = readRegistryRecordField(entry.value, "hookName");
+    if (hookName.ok && hookName.value === "before_agent_start") {
+      return true;
+    }
+  }
+  return false;
 }

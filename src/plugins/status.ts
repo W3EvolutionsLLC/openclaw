@@ -14,6 +14,10 @@ import { resolveEffectivePluginIds } from "./effective-plugin-ids.js";
 import {
   buildPluginShapeSummary,
   listPluginOwnedGatewayMethodNames,
+  readRegistryArrayElement,
+  readRegistryArrayLength,
+  readRegistryRecordField,
+  registryEntryMatchesPluginId,
   type PluginCapabilityEntry,
   type PluginInspectShape,
 } from "./inspect-shape.js";
@@ -170,6 +174,176 @@ type PluginReportParams = {
   logger?: PluginLogger;
   resolvedConfig?: OpenClawConfig;
 };
+
+function readRegistryStringField(value: unknown, field: string): string | undefined {
+  const read = readRegistryRecordField(value, field);
+  return read.ok && typeof read.value === "string" ? read.value : undefined;
+}
+
+function readRegistryNumberField(value: unknown, field: string): number | undefined {
+  const read = readRegistryRecordField(value, field);
+  return read.ok && typeof read.value === "number" ? read.value : undefined;
+}
+
+function readRegistryBooleanField(value: unknown, field: string): boolean | undefined {
+  const read = readRegistryRecordField(value, field);
+  return read.ok && typeof read.value === "boolean" ? read.value : undefined;
+}
+
+function readRegistryStringArray(value: unknown): string[] | undefined {
+  const length = readRegistryArrayLength(value);
+  if (length === undefined) {
+    return undefined;
+  }
+  const entries: string[] = [];
+  for (let index = 0; index < length; index += 1) {
+    const entry = readRegistryArrayElement(value, index);
+    if (entry.ok && typeof entry.value === "string") {
+      entries.push(entry.value);
+    }
+  }
+  return entries;
+}
+
+function listPluginOwnedTypedHooks(params: {
+  entries: unknown;
+  pluginId: string;
+}): PluginInspectReport["typedHooks"] {
+  const length = readRegistryArrayLength(params.entries);
+  if (length === undefined) {
+    return [];
+  }
+  const hooks: PluginInspectReport["typedHooks"] = [];
+  for (let index = 0; index < length; index += 1) {
+    const entry = readRegistryArrayElement(params.entries, index);
+    if (!entry.ok || !registryEntryMatchesPluginId(entry.value, params.pluginId)) {
+      continue;
+    }
+    const name = readRegistryStringField(entry.value, "hookName");
+    if (!name) {
+      continue;
+    }
+    const priority = readRegistryNumberField(entry.value, "priority");
+    hooks.push({
+      name: name as PluginHookName,
+      ...(priority !== undefined ? { priority } : {}),
+    });
+  }
+  return hooks.toSorted((a, b) => a.name.localeCompare(b.name));
+}
+
+function listPluginOwnedCustomHooks(params: {
+  entries: unknown;
+  pluginId: string;
+}): PluginInspectReport["customHooks"] {
+  const length = readRegistryArrayLength(params.entries);
+  if (length === undefined) {
+    return [];
+  }
+  const hooks: PluginInspectReport["customHooks"] = [];
+  for (let index = 0; index < length; index += 1) {
+    const entry = readRegistryArrayElement(params.entries, index);
+    if (!entry.ok || !registryEntryMatchesPluginId(entry.value, params.pluginId)) {
+      continue;
+    }
+    const hookEntry = readRegistryRecordField(entry.value, "entry");
+    if (!hookEntry.ok) {
+      continue;
+    }
+    const hook = readRegistryRecordField(hookEntry.value, "hook");
+    if (!hook.ok) {
+      continue;
+    }
+    const name = readRegistryStringField(hook.value, "name");
+    if (!name) {
+      continue;
+    }
+    const eventsField = readRegistryRecordField(entry.value, "events");
+    const events = eventsField.ok ? readRegistryStringArray(eventsField.value) : undefined;
+    if (!events) {
+      continue;
+    }
+    hooks.push({
+      name,
+      events: events.toSorted(),
+    });
+  }
+  return hooks.toSorted((a, b) => a.name.localeCompare(b.name));
+}
+
+function listPluginOwnedToolSummaries(params: {
+  entries: unknown;
+  pluginId: string;
+}): PluginInspectReport["tools"] {
+  const length = readRegistryArrayLength(params.entries);
+  if (length === undefined) {
+    return [];
+  }
+  const tools: PluginInspectReport["tools"] = [];
+  for (let index = 0; index < length; index += 1) {
+    const entry = readRegistryArrayElement(params.entries, index);
+    if (!entry.ok || !registryEntryMatchesPluginId(entry.value, params.pluginId)) {
+      continue;
+    }
+    const namesField = readRegistryRecordField(entry.value, "names");
+    const names = namesField.ok ? readRegistryStringArray(namesField.value) : undefined;
+    if (!names) {
+      continue;
+    }
+    tools.push({
+      names,
+      optional: readRegistryBooleanField(entry.value, "optional") === true,
+    });
+  }
+  return tools;
+}
+
+function listPluginOwnedDiagnostics(params: {
+  entries: unknown;
+  pluginId: string;
+}): PluginDiagnostic[] {
+  const length = readRegistryArrayLength(params.entries);
+  if (length === undefined) {
+    return [];
+  }
+  const diagnostics: PluginDiagnostic[] = [];
+  for (let index = 0; index < length; index += 1) {
+    const entry = readRegistryArrayElement(params.entries, index);
+    if (!entry.ok || !registryEntryMatchesPluginId(entry.value, params.pluginId)) {
+      continue;
+    }
+    const level = readRegistryStringField(entry.value, "level");
+    const message = readRegistryStringField(entry.value, "message");
+    if ((level !== "warn" && level !== "error") || !message) {
+      continue;
+    }
+    const source = readRegistryStringField(entry.value, "source");
+    diagnostics.push({
+      level,
+      message,
+      pluginId: params.pluginId,
+      ...(source ? { source } : {}),
+    });
+  }
+  return diagnostics;
+}
+
+function hasPluginOwnedMemoryEmbeddingProviderRegistration(params: {
+  entries: unknown;
+  pluginId: string;
+}): boolean {
+  const length = readRegistryArrayLength(params.entries);
+  if (length === undefined) {
+    return false;
+  }
+  for (let index = 0; index < length; index += 1) {
+    const entry = readRegistryArrayElement(params.entries, index);
+    if (entry.ok && registryEntryMatchesPluginId(entry.value, params.pluginId)) {
+      return true;
+    }
+  }
+  return false;
+}
 
 function buildPluginReport(
   params: PluginReportParams | undefined,
@@ -330,27 +504,13 @@ export function buildPluginInspectReport(params: {
     return null;
   }
 
-  const typedHooks = report.typedHooks
-    .filter((entry) => entry.pluginId === plugin.id)
-    .map((entry) => ({
-      name: entry.hookName,
-      priority: entry.priority,
-    }))
-    .toSorted((a, b) => a.name.localeCompare(b.name));
-  const customHooks = report.hooks
-    .filter((entry) => entry.pluginId === plugin.id)
-    .map((entry) => ({
-      name: entry.entry.hook.name,
-      events: [...entry.events].toSorted(),
-    }))
-    .toSorted((a, b) => a.name.localeCompare(b.name));
-  const tools = report.tools
-    .filter((entry) => entry.pluginId === plugin.id)
-    .map((entry) => ({
-      names: [...entry.names],
-      optional: entry.optional,
-    }));
-  const diagnostics = report.diagnostics.filter((entry) => entry.pluginId === plugin.id);
+  const typedHooks = listPluginOwnedTypedHooks({ entries: report.typedHooks, pluginId: plugin.id });
+  const customHooks = listPluginOwnedCustomHooks({ entries: report.hooks, pluginId: plugin.id });
+  const tools = listPluginOwnedToolSummaries({ entries: report.tools, pluginId: plugin.id });
+  const diagnostics = listPluginOwnedDiagnostics({
+    entries: report.diagnostics,
+    pluginId: plugin.id,
+  });
   const policyEntry = normalizePluginsConfig(config.plugins).entries[plugin.id];
   const shapeSummary = buildPluginShapeSummary({ plugin, report });
   const shape = shapeSummary.shape;
@@ -400,9 +560,11 @@ export function buildPluginInspectReport(params: {
   }
 
   const usesLegacyBeforeAgentStart = shapeSummary.usesLegacyBeforeAgentStart;
-  const hasRuntimeMemoryEmbeddingProviderRegistration = report.memoryEmbeddingProviders.some(
-    (entry) => entry.pluginId === plugin.id,
-  );
+  const hasRuntimeMemoryEmbeddingProviderRegistration =
+    hasPluginOwnedMemoryEmbeddingProviderRegistration({
+      entries: report.memoryEmbeddingProviders,
+      pluginId: plugin.id,
+    });
   const compatibility = buildCompatibilityNoticesForInspect({
     plugin,
     shape,

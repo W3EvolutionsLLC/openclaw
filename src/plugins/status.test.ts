@@ -778,6 +778,101 @@ describe("plugin status reports", () => {
     expect(inspect.gatewayMethods).toEqual(["mockplugin.ready"]);
   });
 
+  it("skips unreadable inspect registry entries while preserving healthy siblings", () => {
+    const unreadablePluginId = {};
+    Object.defineProperty(unreadablePluginId, "pluginId", {
+      get() {
+        throw new Error("unreadable fuzzplugin registry owner");
+      },
+    });
+    const unreadableTypedHook = { pluginId: "mockplugin" };
+    Object.defineProperty(unreadableTypedHook, "hookName", {
+      get() {
+        throw new Error("unreadable fuzzplugin typed hook");
+      },
+    });
+    const unreadableHook = {
+      pluginId: "mockplugin",
+      entry: { hook: {} },
+      events: ["message"],
+    };
+    Object.defineProperty(unreadableHook.entry.hook, "name", {
+      get() {
+        throw new Error("unreadable fuzzplugin custom hook");
+      },
+    });
+    const unreadableHookEvents = {
+      pluginId: "mockplugin",
+      entry: { hook: { name: "eventless-hook" } },
+    };
+    Object.defineProperty(unreadableHookEvents, "events", {
+      get() {
+        throw new Error("unreadable fuzzplugin hook events");
+      },
+    });
+    const unreadableTool = { pluginId: "mockplugin" };
+    Object.defineProperty(unreadableTool, "names", {
+      get() {
+        throw new Error("unreadable fuzzplugin tool names");
+      },
+    });
+    const unreadableDiagnostic = {
+      level: "warn",
+      pluginId: "mockplugin",
+    };
+    Object.defineProperty(unreadableDiagnostic, "message", {
+      get() {
+        throw new Error("unreadable fuzzplugin diagnostic message");
+      },
+    });
+    setPluginLoadResult({
+      plugins: [
+        createPluginRecord({
+          id: "mockplugin",
+          name: "Mock Plugin",
+          hookCount: 1,
+        }),
+      ],
+      typedHooks: [
+        unreadablePluginId as never,
+        unreadableTypedHook as never,
+        createTypedHook({ pluginId: "mockplugin", hookName: "before_agent_start" }),
+      ],
+      hooks: [
+        unreadablePluginId as never,
+        unreadableHook as never,
+        unreadableHookEvents as never,
+        createCustomHook({ pluginId: "mockplugin", events: ["message"], name: "healthy-hook" }),
+      ],
+      tools: [
+        unreadablePluginId as never,
+        unreadableTool as never,
+        {
+          pluginId: "mockplugin",
+          names: ["mockplugin_status"],
+          optional: true,
+        } as never,
+      ],
+      diagnostics: [
+        unreadablePluginId as never,
+        unreadableDiagnostic as never,
+        { level: "warn", pluginId: "mockplugin", message: "healthy diagnostic" },
+      ],
+    });
+
+    const inspect = expectInspectReport("mockplugin");
+
+    expect(inspect.typedHooks).toEqual([{ name: "before_agent_start" }]);
+    expect(inspect.customHooks).toEqual([{ name: "healthy-hook", events: ["message"] }]);
+    expect(inspect.tools).toEqual([{ names: ["mockplugin_status"], optional: true }]);
+    expect(inspect.diagnostics).toEqual([
+      { level: "warn", pluginId: "mockplugin", message: "healthy diagnostic" },
+    ]);
+    expect(inspect.compatibility).toContainEqual(
+      createCompatibilityNotice({ pluginId: "mockplugin", code: "legacy-before-agent-start" }),
+    );
+  });
+
   it("builds inspect reports for every loaded plugin", () => {
     setPluginLoadResult({
       plugins: [
