@@ -173,4 +173,44 @@ describe("channel plugin loader", () => {
         return;
     }
   });
+
+  it("skips unreadable channel registry entries before healthy loader values", async () => {
+    const mockOutbound: ChannelOutboundAdapter = {
+      deliveryMode: "direct",
+      sendText: async () => ({ channel: "mockplugin-loader", messageId: "m1" }),
+      sendMedia: async () => ({ channel: "mockplugin-loader", messageId: "m2" }),
+    };
+    const mockPlugin = createOutboundTestPlugin({
+      id: "mockplugin-loader",
+      label: "Mock Plugin Loader",
+      outbound: mockOutbound,
+    });
+    const registry = createTestRegistry([
+      { pluginId: "mockplugin-loader", plugin: mockPlugin, source: "test" },
+    ]);
+    const unreadableEntry = Object.defineProperty(
+      { pluginId: "fuzzplugin-entry", source: "test" },
+      "plugin",
+      {
+        enumerable: true,
+        get() {
+          throw new Error("fuzzplugin loader entry unreadable");
+        },
+      },
+    );
+    const unreadablePluginId = Object.defineProperty({ meta: { id: "fuzzplugin-loader" } }, "id", {
+      enumerable: true,
+      get() {
+        throw new Error("fuzzplugin loader id unreadable");
+      },
+    });
+    registry.channels.unshift(
+      unreadableEntry as never,
+      { pluginId: "fuzzplugin-loader", plugin: unreadablePluginId, source: "test" } as never,
+    );
+    setActivePluginRegistry(registry);
+
+    expect(await loadChannelPlugin("mockplugin-loader")).toBe(mockPlugin);
+    expect(await loadChannelOutboundAdapter("mockplugin-loader")).toBe(mockOutbound);
+  });
 });
