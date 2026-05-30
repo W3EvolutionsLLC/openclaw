@@ -123,7 +123,7 @@ export function getRuntimeEmbeddingProviderAdapter<TAdapter extends { id: string
       providerId: candidateId,
       cfg: params.cfg,
     }) as TAdapter | undefined;
-    if (provider) {
+    if (provider && readRuntimeEmbeddingAdapterId(provider)) {
       return provider;
     }
   }

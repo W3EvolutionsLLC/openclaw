@@ -146,4 +146,10 @@ describe("embedding provider runtime resolution", () => {
       "mockplugin-embedding",
     ]);
   });
+
+  it("skips unreadable capability adapter ids during direct lookup", () => {
+    mocks.resolvePluginCapabilityProvider.mockReturnValue(createUnreadableIdAdapter());
+
+    expect(runtimeModule.getEmbeddingProvider("fuzzplugin-embedding")).toBeUndefined();
+  });
 });

@@ -192,4 +192,10 @@ describe("memory embedding provider runtime resolution", () => {
       "mockplugin-memory",
     ]);
   });
+
+  it("skips unreadable capability adapter ids during direct lookup", () => {
+    mocks.resolvePluginCapabilityProvider.mockReturnValue(createUnreadableIdAdapter());
+
+    expect(runtimeModule.getMemoryEmbeddingProvider("fuzzplugin-memory")).toBeUndefined();
+  });
 });
