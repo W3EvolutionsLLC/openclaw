@@ -150,11 +150,21 @@ function loadSetupRegistryRuntime(): SetupRegistryRuntimeModule | null {
   return null;
 }
 
+function readSetupCliBackendRuntimeId(entry: SetupCliBackendRuntimeEntry): string | null {
+  try {
+    const id = (entry.backend as { id?: unknown }).id;
+    return typeof id === "string" ? id : null;
+  } catch {
+    return null;
+  }
+}
+
 export function resolvePluginSetupCliBackendDescriptor(params: SetupCliBackendRuntimeLookupParams) {
   const normalized = normalizeProviderId(params.backend);
-  return resolveSetupCliBackendDescriptors(params).find(
-    (entry) => normalizeProviderId(entry.backend.id) === normalized,
-  );
+  return resolveSetupCliBackendDescriptors(params).find((entry) => {
+    const id = readSetupCliBackendRuntimeId(entry);
+    return id ? normalizeProviderId(id) === normalized : false;
+  });
 }
 
 export function resolvePluginSetupCliBackendRuntime(params: SetupCliBackendRuntimeLookupParams) {
@@ -163,8 +173,9 @@ export function resolvePluginSetupCliBackendRuntime(params: SetupCliBackendRunti
   if (runtime !== null) {
     return runtime.resolvePluginSetupCliBackend(params);
   }
-  return resolveBundledSetupCliBackends(params).find(
-    (entry) => normalizeProviderId(entry.backend.id) === normalized,
-  );
+  return resolveBundledSetupCliBackends(params).find((entry) => {
+    const id = readSetupCliBackendRuntimeId(entry);
+    return id ? normalizeProviderId(id) === normalized : false;
+  });
 }
 export { testing as __testing };

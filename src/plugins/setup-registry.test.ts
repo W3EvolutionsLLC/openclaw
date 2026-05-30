@@ -729,6 +729,72 @@ describe("setup-registry module loader", () => {
     expect(mockArg(mocks.createJiti, 0, 0)).toBe(path.join(openaiRoot, "setup-api.js"));
   });
 
+  it("skips unreadable setup provider and cli backend ids while preserving healthy registrations", () => {
+    const pluginRoot = makeTempDir();
+    fs.writeFileSync(path.join(pluginRoot, "setup-api.js"), "export default {};\n", "utf-8");
+    mockSinglePlugin({
+      id: "fuzzplugin",
+      rootDir: pluginRoot,
+      setup: {
+        providers: [{ id: "mockplugin-provider" }],
+        cliBackends: ["mockplugin-cli"],
+      },
+    });
+
+    const unreadableProvider = {
+      label: "Fuzz Plugin",
+      auth: [],
+    };
+    Object.defineProperty(unreadableProvider, "id", {
+      get() {
+        throw new Error("fuzzplugin setup provider id getter failed");
+      },
+    });
+    const unreadableBackend = {
+      config: { command: "fuzzplugin" },
+    };
+    Object.defineProperty(unreadableBackend, "id", {
+      get() {
+        throw new Error("fuzzplugin setup cli backend id getter failed");
+      },
+    });
+
+    mocks.createJiti.mockImplementation(() => {
+      return () => ({
+        default: {
+          register(api: {
+            registerProvider: (provider: unknown) => void;
+            registerCliBackend: (backend: unknown) => void;
+          }) {
+            api.registerProvider(unreadableProvider);
+            api.registerProvider({
+              id: "mockplugin-provider",
+              label: "Mock Plugin",
+              auth: [],
+            });
+            api.registerCliBackend(unreadableBackend);
+            api.registerCliBackend({
+              id: "mockplugin-cli",
+              config: { command: "mockplugin" },
+            });
+          },
+        },
+      });
+    });
+
+    const registry = resolvePluginSetupRegistry({ env: {} });
+
+    expect(registry.providers.map((entry) => entry.provider.id)).toEqual(["mockplugin-provider"]);
+    expect(registry.cliBackends.map((entry) => entry.backend.id)).toEqual(["mockplugin-cli"]);
+    expect(registry.diagnostics).toStrictEqual([]);
+    expect(resolvePluginSetupProvider({ provider: "mockplugin-provider", env: {} })?.id).toBe(
+      "mockplugin-provider",
+    );
+    expect(resolvePluginSetupCliBackend({ backend: "mockplugin-cli", env: {} })?.backend.id).toBe(
+      "mockplugin-cli",
+    );
+  });
+
   it("keeps synchronously registered cli backends even when register returns a promise", () => {
     mockOpenAiCliBackendRegistration({
       requiresRuntime: true,

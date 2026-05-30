@@ -325,14 +325,47 @@ function ignoreAsyncSetupRegisterResult(result: void | Promise<void>): void {
   void Promise.resolve(result).catch(() => undefined);
 }
 
+function readSetupProviderId(provider: ProviderPlugin): string | null {
+  try {
+    const id = (provider as { id?: unknown }).id;
+    return typeof id === "string" ? id : null;
+  } catch {
+    return null;
+  }
+}
+
+function readSetupCliBackendId(backend: CliBackendPlugin): string | null {
+  try {
+    const id = (backend as { id?: unknown }).id;
+    return typeof id === "string" ? id : null;
+  } catch {
+    return null;
+  }
+}
+
+function readSetupProviderStringList(
+  provider: ProviderPlugin,
+  key: "aliases" | "hookAliases",
+): string[] {
+  try {
+    return normalizeStringEntries(
+      (provider as Record<typeof key, unknown>)[key] as ReadonlyArray<unknown> | undefined,
+    );
+  } catch {
+    return [];
+  }
+}
+
 function matchesProvider(provider: ProviderPlugin, providerId: string): boolean {
   const normalized = normalizeProviderId(providerId);
-  if (normalizeProviderId(provider.id) === normalized) {
+  const id = readSetupProviderId(provider);
+  if (id && normalizeProviderId(id) === normalized) {
     return true;
   }
-  return [...(provider.aliases ?? []), ...(provider.hookAliases ?? [])].some(
-    (alias) => normalizeProviderId(alias) === normalized,
-  );
+  return [
+    ...readSetupProviderStringList(provider, "aliases"),
+    ...readSetupProviderStringList(provider, "hookAliases"),
+  ].some((alias) => normalizeProviderId(alias) === normalized);
 }
 
 function loadSetupManifestRegistry(params?: {
@@ -414,11 +447,15 @@ function pushSetupDescriptorDriftDiagnostics(params: {
     }
     for (const provider of params.providers) {
       if (!declaredProviderIds.some((declaredId) => matchesProvider(provider, declaredId))) {
+        const runtimeId = readSetupProviderId(provider);
+        if (!runtimeId) {
+          continue;
+        }
         params.diagnostics.push({
           pluginId: params.record.id,
           code: "setup-descriptor-provider-runtime-undeclared",
-          runtimeId: provider.id,
-          message: `setup runtime registered provider "${provider.id}" but setup.providers does not declare it.`,
+          runtimeId,
+          message: `setup runtime registered provider "${runtimeId}" but setup.providers does not declare it.`,
         });
       }
     }
@@ -427,7 +464,12 @@ function pushSetupDescriptorDriftDiagnostics(params: {
   const declaredCliBackendIds = params.record.setup?.cliBackends;
   if (declaredCliBackendIds) {
     const declaredCliBackends = mapNormalizedIds(declaredCliBackendIds);
-    const runtimeCliBackends = mapNormalizedIds(params.cliBackends.map((backend) => backend.id));
+    const runtimeCliBackends = mapNormalizedIds(
+      params.cliBackends.flatMap((backend) => {
+        const id = readSetupCliBackendId(backend);
+        return id ? [id] : [];
+      }),
+    );
     for (const [normalized, declaredId] of declaredCliBackends) {
       if (!runtimeCliBackends.has(normalized)) {
         params.diagnostics.push({
@@ -513,7 +555,12 @@ export function resolvePluginSetupRegistry(params?: {
       setupSource: setupRegistration.setupSource,
       handlers: {
         registerProvider(provider) {
-          const key = `${record.id}:${normalizeProviderId(provider.id)}`;
+          const providerId = readSetupProviderId(provider);
+          const normalizedProviderId = providerId ? normalizeProviderId(providerId) : "";
+          if (!normalizedProviderId) {
+            return;
+          }
+          const key = `${record.id}:${normalizedProviderId}`;
           if (providerKeys.has(key)) {
             return;
           }
@@ -525,7 +572,12 @@ export function resolvePluginSetupRegistry(params?: {
           recordProviders.push(provider);
         },
         registerCliBackend(backend) {
-          const key = `${record.id}:${normalizeProviderId(backend.id)}`;
+          const backendId = readSetupCliBackendId(backend);
+          const normalizedBackendId = backendId ? normalizeProviderId(backendId) : "";
+          if (!normalizedBackendId) {
+            return;
+          }
+          const key = `${record.id}:${normalizedBackendId}`;
           if (cliBackendKeys.has(key)) {
             return;
           }
@@ -614,7 +666,11 @@ export function resolvePluginSetupProvider(params: {
     setupSource: setupRegistration.setupSource,
     handlers: {
       registerProvider(provider) {
-        const key = normalizeProviderId(provider.id);
+        const providerId = readSetupProviderId(provider);
+        const key = providerId ? normalizeProviderId(providerId) : "";
+        if (!key) {
+          return;
+        }
         if (localProviderKeys.has(key)) {
           return;
         }
@@ -682,7 +738,11 @@ export function resolvePluginSetupCliBackend(params: {
       registerConfigMigration() {},
       registerAutoEnableProbe() {},
       registerCliBackend(backend) {
-        const key = normalizeProviderId(backend.id);
+        const backendId = readSetupCliBackendId(backend);
+        const key = backendId ? normalizeProviderId(backendId) : "";
+        if (!key) {
+          return;
+        }
         if (localBackendKeys.has(key)) {
           return;
         }
