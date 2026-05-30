@@ -556,6 +556,59 @@ describe("provider install catalog", () => {
     });
   });
 
+  it("skips unreadable provider-index plugin metadata while preserving healthy entries", () => {
+    const unreadableProvider = {
+      id: "fuzzprovider",
+      name: "Fuzz Provider",
+      authChoices: [
+        {
+          method: "api-key",
+          choiceId: "fuzzprovider-api-key",
+          choiceLabel: "Fuzz Provider API key",
+        },
+      ],
+    };
+    Object.defineProperty(unreadableProvider, "plugin", {
+      get() {
+        throw new Error("fuzzplugin provider plugin failed");
+      },
+    });
+    loadOpenClawProviderIndex.mockReturnValue({
+      version: 1,
+      providers: {
+        fuzzprovider: unreadableProvider as never,
+        mockprovider: {
+          id: "mockprovider",
+          name: "Mock Provider",
+          plugin: {
+            id: "mockplugin",
+            package: "@openclaw/plugin-mockprovider",
+            install: {
+              npmSpec: "@openclaw/plugin-mockprovider@1.2.3",
+              defaultChoice: "npm",
+            },
+          },
+          authChoices: [
+            {
+              method: "api-key",
+              choiceId: "mockprovider-api-key",
+              choiceLabel: "Mock Provider API key",
+            },
+          ],
+        },
+      },
+    });
+
+    expect(resolveProviderInstallCatalogEntries().map((entry) => entry.choiceId)).toEqual([
+      "mockprovider-api-key",
+    ]);
+    expect(resolveProviderInstallCatalogEntry("mockprovider-api-key")).toMatchObject({
+      pluginId: "mockplugin",
+      providerId: "mockprovider",
+      choiceLabel: "Mock Provider API key",
+    });
+  });
+
   it("surfaces official external provider install metadata when the provider plugin is not installed", () => {
     listOfficialExternalProviderCatalogEntries.mockReturnValue([
       {

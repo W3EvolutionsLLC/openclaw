@@ -61,6 +61,7 @@ type ProviderInstallCatalogChoiceFields = Pick<
   | "cliDescription"
   | "onboardingScopes"
 >;
+type ProviderIndexAuthChoice = NonNullable<OpenClawProviderIndexProvider["authChoices"]>[number];
 
 const INSTALL_ORIGIN_PRIORITY: Readonly<Record<PluginOrigin, number>> = {
   config: 0,
@@ -157,26 +158,76 @@ function resolveInstallInfoFromRegistryRecord(params: {
   );
 }
 
+function readProviderIndexStringField(
+  provider: OpenClawProviderIndexProvider,
+  field: "id" | "name",
+): string | undefined {
+  try {
+    return normalizeOptionalString((provider as Record<string, unknown>)[field]);
+  } catch {
+    return undefined;
+  }
+}
+
+function readProviderIndexPluginField(
+  provider: OpenClawProviderIndexProvider,
+  field: "id" | "package" | "install",
+): unknown {
+  try {
+    const plugin = (provider as { plugin?: unknown }).plugin;
+    if (!isRecord(plugin)) {
+      return undefined;
+    }
+    return plugin[field];
+  } catch {
+    return undefined;
+  }
+}
+
+function readProviderIndexInstallStringField(
+  install: Record<string, unknown>,
+  field: "clawhubSpec" | "npmSpec" | "defaultChoice" | "minHostVersion" | "expectedIntegrity",
+): string | undefined {
+  try {
+    return normalizeOptionalString(install[field]);
+  } catch {
+    return undefined;
+  }
+}
+
+function readProviderIndexAuthChoices(
+  provider: OpenClawProviderIndexProvider,
+): ProviderIndexAuthChoice[] {
+  try {
+    return Array.isArray(provider.authChoices) ? [...provider.authChoices] : [];
+  } catch {
+    return [];
+  }
+}
+
 function resolveInstallInfoFromProviderIndex(
   provider: OpenClawProviderIndexProvider,
 ): PluginPackageInstall | null {
-  const install = provider.plugin.install;
-  if (!install) {
+  const install = readProviderIndexPluginField(provider, "install");
+  if (!isRecord(install)) {
     return null;
   }
-  const clawhubSpec = install.clawhubSpec?.trim();
-  const npmSpec = install.npmSpec?.trim();
+  const clawhubSpec = readProviderIndexInstallStringField(install, "clawhubSpec");
+  const npmSpec = readProviderIndexInstallStringField(install, "npmSpec");
   if (!clawhubSpec && !npmSpec) {
     return null;
   }
   const defaultChoice =
-    normalizeDefaultChoice(install.defaultChoice) ?? (clawhubSpec ? "clawhub" : "npm");
+    normalizeDefaultChoice(readProviderIndexInstallStringField(install, "defaultChoice")) ??
+    (clawhubSpec ? "clawhub" : "npm");
+  const minHostVersion = readProviderIndexInstallStringField(install, "minHostVersion");
+  const expectedIntegrity = readProviderIndexInstallStringField(install, "expectedIntegrity");
   return {
     ...(clawhubSpec ? { clawhubSpec } : {}),
     ...(npmSpec ? { npmSpec } : {}),
     defaultChoice,
-    ...(install.minHostVersion ? { minHostVersion: install.minHostVersion } : {}),
-    ...(install.expectedIntegrity ? { expectedIntegrity: install.expectedIntegrity } : {}),
+    ...(minHostVersion ? { minHostVersion } : {}),
+    ...(expectedIntegrity ? { expectedIntegrity } : {}),
   };
 }
 
@@ -231,20 +282,21 @@ function resolveProviderIndexInstallCatalogEntries(params: {
   const entries: ProviderInstallCatalogEntry[] = [];
   const index = loadOpenClawProviderIndex();
   for (const provider of Object.values(index.providers)) {
-    if (params.installedPluginIds.has(provider.plugin.id)) {
+    const pluginId = normalizeOptionalString(readProviderIndexPluginField(provider, "id"));
+    if (!pluginId || params.installedPluginIds.has(pluginId)) {
       continue;
     }
     const install = resolveInstallInfoFromProviderIndex(provider);
     if (!install) {
       continue;
     }
-    for (const choice of provider.authChoices ?? []) {
+    for (const choice of readProviderIndexAuthChoices(provider)) {
       if (params.seenChoiceIds.has(choice.choiceId)) {
         continue;
       }
       entries.push({
-        pluginId: provider.plugin.id,
-        providerId: provider.id,
+        pluginId,
+        providerId: readProviderIndexStringField(provider, "id") ?? pluginId,
         methodId: choice.method,
         choiceId: choice.choiceId,
         choiceLabel: choice.choiceLabel,
@@ -261,11 +313,13 @@ function resolveProviderIndexInstallCatalogEntries(params: {
           cliDescription: choice.cliDescription,
           onboardingScopes: choice.onboardingScopes ? [...choice.onboardingScopes] : undefined,
         }),
-        label: provider.name,
+        label: readProviderIndexStringField(provider, "name") ?? pluginId,
         origin: "bundled",
         install,
         installSource: describePluginInstallSource(install, {
-          expectedPackageName: provider.plugin.package,
+          expectedPackageName: normalizeOptionalString(
+            readProviderIndexPluginField(provider, "package"),
+          ),
         }),
       });
     }
