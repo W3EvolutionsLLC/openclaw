@@ -201,4 +201,44 @@ describe("loadPreferredProviderPickerCatalog", () => {
     ]);
     expect(unreadableProvider.catalog?.run).not.toHaveBeenCalled();
   });
+
+  it("skips unreadable live catalog model rows while preserving healthy siblings", async () => {
+    const models = [
+      textModel("hidden-model", "Hidden Model"),
+      textModel("mock-model", "Mock Model"),
+    ];
+    Object.defineProperty(models, 0, {
+      get() {
+        throw new Error("fuzzplugin model row unavailable");
+      },
+    });
+    const provider = {
+      id: "mockprovider",
+      label: "Mock Provider",
+      envVars: ["MOCKPROVIDER_API_KEY"],
+      auth: [],
+      catalog: {
+        run: async () => ({
+          provider: {
+            baseUrl: "https://mock.invalid/v1",
+            models,
+          },
+        }),
+      },
+    } satisfies ProviderPlugin;
+    providerCatalogListMocks.resolveProviderCatalogPluginIdsForFilter.mockResolvedValueOnce([
+      "mockplugin",
+    ]);
+    providerDiscoveryMocks.resolveRuntimePluginDiscoveryProviders.mockResolvedValue([provider]);
+
+    const rows = await loadPreferredProviderPickerCatalog({
+      cfg: {} as OpenClawConfig,
+      preferredProvider: "mockprovider",
+      env: { MOCKPROVIDER_API_KEY: "mock-secret" },
+    });
+
+    expect(rows.map((entry) => `${entry.provider}/${entry.id}`)).toEqual([
+      "mockprovider/mock-model",
+    ]);
+  });
 });

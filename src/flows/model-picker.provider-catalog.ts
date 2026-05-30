@@ -8,7 +8,6 @@ import {
 } from "../agents/models-config.providers.secrets.js";
 import { normalizeProviderId } from "../agents/provider-id.js";
 import { resolveProviderCatalogPluginIdsForFilter } from "../commands/models/list.provider-catalog.js";
-import type { ModelDefinitionConfig, ModelProviderConfig } from "../config/types.models.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
@@ -39,6 +38,16 @@ function readStringField(record: unknown, field: string): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
+function readNumberField(record: unknown, field: string): number | undefined {
+  const value = readRecordValue(record, field);
+  return typeof value === "number" ? value : undefined;
+}
+
+function readBooleanField(record: unknown, field: string): boolean | undefined {
+  const value = readRecordValue(record, field);
+  return typeof value === "boolean" ? value : undefined;
+}
+
 function readStringArrayField(record: unknown, field: string): string[] {
   const value = readRecordValue(record, field);
   try {
@@ -61,6 +70,31 @@ function readStringArrayField(record: unknown, field: string): string[] {
   } catch {
     return [];
   }
+}
+
+function copyModelRows(value: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  let length: number;
+  try {
+    length = value.length;
+  } catch {
+    return [];
+  }
+  const rows: Record<string, unknown>[] = [];
+  for (let index = 0; index < length; index += 1) {
+    let entry: unknown;
+    try {
+      entry = value[index];
+    } catch {
+      continue;
+    }
+    if (typeof entry === "object" && entry !== null && !Array.isArray(entry)) {
+      rows.push(entry as Record<string, unknown>);
+    }
+  }
+  return rows;
 }
 
 function readProviderCandidateIds(provider: unknown): string[] {
@@ -194,25 +228,33 @@ function resolveProviderEnvApiKey(
 
 function modelFromProviderCatalog(params: {
   provider: string;
-  providerConfig: ModelProviderConfig;
-  model: ModelDefinitionConfig;
-}): ModelCatalogEntry {
-  const id = normalizeConfiguredProviderCatalogModelId(params.provider, params.model.id);
+  providerConfig: unknown;
+  model: unknown;
+}): ModelCatalogEntry | undefined {
+  const rawModelId = readStringField(params.model, "id");
+  if (!rawModelId) {
+    return undefined;
+  }
+  const id = normalizeConfiguredProviderCatalogModelId(params.provider, rawModelId);
+  const modelName = readStringField(params.model, "name");
   const contextWindow =
-    positiveNumber(params.model.contextWindow) ??
-    positiveNumber(params.providerConfig.contextWindow);
+    positiveNumber(readNumberField(params.model, "contextWindow")) ??
+    positiveNumber(readNumberField(params.providerConfig, "contextWindow"));
   const contextTokens =
-    positiveNumber(params.model.contextTokens) ??
-    positiveNumber(params.providerConfig.contextTokens);
+    positiveNumber(readNumberField(params.model, "contextTokens")) ??
+    positiveNumber(readNumberField(params.providerConfig, "contextTokens"));
+  const reasoning = readBooleanField(params.model, "reasoning");
+  const input = readStringArrayField(params.model, "input");
+  const compat = readRecordValue(params.model, "compat") as ModelCatalogEntry["compat"];
   return {
     id,
-    name: params.model.name || id,
+    name: modelName || id,
     provider: params.provider,
     ...(contextWindow !== undefined ? { contextWindow } : {}),
     ...(contextTokens !== undefined ? { contextTokens } : {}),
-    reasoning: params.model.reasoning,
-    input: params.model.input,
-    ...(params.model.compat ? { compat: params.model.compat } : {}),
+    ...(reasoning !== undefined ? { reasoning } : {}),
+    ...(input.length > 0 ? { input: input as ModelCatalogEntry["input"] } : {}),
+    ...(compat ? { compat } : {}),
   };
 }
 
@@ -309,16 +351,19 @@ export async function loadPreferredProviderPickerCatalog(params: {
       }
       for (const [providerIdRaw, providerConfig] of readProviderCatalogEntries(normalized)) {
         const providerId = normalizeProviderId(providerIdRaw);
-        const models = readRecordValue(providerConfig, "models");
-        if (providerId !== providerFilter || !Array.isArray(models)) {
+        const models = copyModelRows(readRecordValue(providerConfig, "models"));
+        if (providerId !== providerFilter || models.length === 0) {
           continue;
         }
         for (const model of models) {
           const entry = modelFromProviderCatalog({
             provider: providerId,
-            providerConfig: providerConfig as ModelProviderConfig,
-            model: model as ModelDefinitionConfig,
+            providerConfig,
+            model,
           });
+          if (!entry) {
+            continue;
+          }
           const key = `${entry.provider}/${entry.id}`;
           if (seen.has(key)) {
             continue;
