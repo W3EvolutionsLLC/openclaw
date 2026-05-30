@@ -5,7 +5,10 @@ import type { HookRunner } from "../plugins/hooks.js";
 import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
 import { setActivePluginRegistry } from "../plugins/runtime.js";
 import { PluginApprovalResolutions } from "../plugins/types.js";
-import { runBeforeToolCallHook } from "./agent-tools.before-tool-call.js";
+import {
+  getBeforeToolCallPolicyDiagnosticState,
+  runBeforeToolCallHook,
+} from "./agent-tools.before-tool-call.js";
 import { callGatewayTool } from "./tools/gateway.js";
 
 vi.mock("../plugins/hook-runner-global.js", async () => {
@@ -311,6 +314,48 @@ describe("runBeforeToolCallHook — embedded mode approvals", () => {
     expect(approvalCall.request.twoPhase).toBe(true);
     expect(approvalCall.options.expectFinal).toBe(false);
     expect(runBeforeToolCallMock).not.toHaveBeenCalled();
+  });
+
+  it("projects trusted policy diagnostics without reading hostile policy ids", () => {
+    const registry = createEmptyPluginRegistry();
+    const unreadablePolicy: Record<string, unknown> = {
+      description: "fuzz",
+      evaluate: () => ({ allow: true }),
+    };
+    Object.defineProperty(unreadablePolicy, "id", {
+      enumerable: true,
+      get() {
+        throw new Error("fuzzplugin trusted policy id is unreadable");
+      },
+    });
+    registry.trustedToolPolicies = [
+      {
+        pluginId: "fuzzplugin",
+        pluginName: "Fuzz Plugin",
+        source: "test",
+        policy: unreadablePolicy as never,
+      },
+      {
+        pluginId: "mockplugin",
+        pluginName: "Mock Plugin",
+        source: "test",
+        policy: {
+          id: "mockpolicy",
+          description: "mock",
+          evaluate: () => ({ allow: true }),
+        },
+      },
+    ];
+    setActivePluginRegistry(registry);
+    (hookRunner.hasHooks as ReturnType<typeof vi.fn>).mockReturnValue(false);
+
+    expect(getBeforeToolCallPolicyDiagnosticState()).toEqual({
+      hasBeforeToolCallHook: false,
+      trustedToolPolicies: [
+        { id: "fuzzplugin", pluginId: "fuzzplugin", pluginName: "Fuzz Plugin" },
+        { id: "mockpolicy", pluginId: "mockplugin", pluginName: "Mock Plugin" },
+      ],
+    });
   });
 
   it("preserves trusted policy params when before_tool_call hooks leave params unchanged", async () => {

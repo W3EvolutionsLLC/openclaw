@@ -9,15 +9,34 @@ import type {
   PluginHookToolKind,
 } from "./hook-types.js";
 import { getPluginSessionExtensionStateSync } from "./host-hook-state.js";
-import type { PluginJsonValue } from "./host-hooks.js";
-import type { PluginTrustedToolPolicyRegistryRegistration } from "./registry-types.js";
+import type { PluginJsonValue, PluginTrustedToolPolicyRegistration } from "./host-hooks.js";
+import type {
+  PluginRegistry,
+  PluginTrustedToolPolicyRegistryRegistration,
+} from "./registry-types.js";
 import { getActivePluginRegistry } from "./runtime.js";
 
 export function hasTrustedToolPolicies(): boolean {
-  return (getActivePluginRegistry()?.trustedToolPolicies?.length ?? 0) > 0;
+  return copyTrustedPolicyRegistrations(getActivePluginRegistry()).length > 0;
 }
 
 type TrustedPolicyRegistration = PluginTrustedToolPolicyRegistryRegistration;
+
+export type TrustedToolPolicyDiagnosticEntry = {
+  id: string;
+  pluginId: string;
+  pluginName?: string;
+};
+
+function unreadableTrustedPolicyRegistration(): TrustedPolicyRegistration {
+  return {
+    pluginId: "unknown-plugin",
+    source: "runtime",
+    get policy(): PluginTrustedToolPolicyRegistration {
+      throw new Error("trusted policy registration is unreadable");
+    },
+  };
+}
 
 type TrustedPolicyDecisionField =
   | "allow"
@@ -47,13 +66,89 @@ type TrustedPolicyPlainObjectRead =
       ok: false;
     };
 
-function readTrustedPolicyId(registration: TrustedPolicyRegistration): string {
-  try {
-    const id = registration.policy.id;
-    return typeof id === "string" && id.trim() ? id.trim() : registration.pluginId;
-  } catch {
-    return registration.pluginId;
+function copyTrustedPolicyRegistrations(
+  registry: PluginRegistry | null | undefined,
+): TrustedPolicyRegistration[] {
+  const policies = registry?.trustedToolPolicies;
+  if (policies == null) {
+    return [];
   }
+  if (!Array.isArray(policies)) {
+    return [unreadableTrustedPolicyRegistration()];
+  }
+  let length = 0;
+  try {
+    length = policies.length;
+  } catch {
+    return [unreadableTrustedPolicyRegistration()];
+  }
+  const copied: TrustedPolicyRegistration[] = [];
+  for (let index = 0; index < length; index += 1) {
+    try {
+      copied.push(policies[index]);
+    } catch {
+      copied.push(unreadableTrustedPolicyRegistration());
+    }
+  }
+  return copied;
+}
+
+function readTrustedPolicyPluginId(registration: TrustedPolicyRegistration): string {
+  try {
+    const pluginId = registration.pluginId;
+    return typeof pluginId === "string" && pluginId.trim() ? pluginId.trim() : "unknown-plugin";
+  } catch {
+    return "unknown-plugin";
+  }
+}
+
+function readTrustedPolicyPluginName(registration: TrustedPolicyRegistration): string | undefined {
+  try {
+    const pluginName = registration.pluginName;
+    return typeof pluginName === "string" && pluginName.trim() ? pluginName : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function readTrustedPolicy(
+  registration: TrustedPolicyRegistration,
+): PluginTrustedToolPolicyRegistration | null {
+  try {
+    return registration.policy;
+  } catch {
+    return null;
+  }
+}
+
+function readTrustedPolicyId(registration: TrustedPolicyRegistration): string {
+  const fallback = readTrustedPolicyPluginId(registration);
+  const policy = readTrustedPolicy(registration);
+  if (!policy) {
+    return fallback;
+  }
+  try {
+    const id = policy.id;
+    return typeof id === "string" && id.trim() ? id.trim() : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+export function listTrustedToolPolicyDiagnosticEntries(
+  registry: PluginRegistry | null | undefined = getActivePluginRegistry(),
+): TrustedToolPolicyDiagnosticEntry[] {
+  return copyTrustedPolicyRegistrations(registry).map((registration) => {
+    const entry: TrustedToolPolicyDiagnosticEntry = {
+      id: readTrustedPolicyId(registration),
+      pluginId: readTrustedPolicyPluginId(registration),
+    };
+    const pluginName = readTrustedPolicyPluginName(registration);
+    if (pluginName) {
+      entry.pluginName = pluginName;
+    }
+    return entry;
+  });
 }
 
 function trustedPolicyDefaultBlockReason(registration: TrustedPolicyRegistration): string {
@@ -149,7 +244,7 @@ export async function runTrustedToolPolicies(
       | undefined;
   },
 ): Promise<PluginHookBeforeToolCallResult | undefined> {
-  const policies = getActivePluginRegistry()?.trustedToolPolicies ?? [];
+  const policies = copyTrustedPolicyRegistrations(getActivePluginRegistry());
   let adjustedParams = event.params;
   let hasAdjustedParams = false;
   let approval: PluginHookBeforeToolCallResult["requireApproval"];
@@ -184,13 +279,14 @@ export async function runTrustedToolPolicies(
     };
   };
   for (const registration of policies) {
+    const pluginId = readTrustedPolicyPluginId(registration);
     const policyCtx: PluginHookToolContext = {
       ...ctxWithoutToolIdentity,
       ...currentContextToolIdentity,
       // oxlint-disable-next-line typescript/no-unnecessary-type-parameters -- Plugin callers type JSON reads by namespace.
       getSessionExtension: <T extends PluginJsonValue = PluginJsonValue>(namespace: string) => {
         const normalizedNamespace = namespace.trim();
-        const cacheKey = registration.pluginId;
+        const cacheKey = pluginId;
         if (!sessionExtensionStateCache.has(cacheKey)) {
           const config = ctx.sessionKey ? resolveSessionConfig() : undefined;
           sessionExtensionStateCache.set(
@@ -198,7 +294,7 @@ export async function runTrustedToolPolicies(
             config
               ? getPluginSessionExtensionStateSync({
                   cfg: config,
-                  pluginId: registration.pluginId,
+                  pluginId,
                   sessionKey: ctx.sessionKey,
                 })
               : undefined,
@@ -211,9 +307,13 @@ export async function runTrustedToolPolicies(
         return pluginState[normalizedNamespace] as T | undefined;
       },
     };
+    const policy = readTrustedPolicy(registration);
+    if (!policy) {
+      return trustedPolicyFailureResult(registration, "policy is unreadable");
+    }
     let decision: unknown;
     try {
-      decision = await registration.policy.evaluate(buildEvent(), policyCtx);
+      decision = await policy.evaluate(buildEvent(), policyCtx);
     } catch {
       return trustedPolicyFailureResult(registration, "policy evaluation failed");
     }

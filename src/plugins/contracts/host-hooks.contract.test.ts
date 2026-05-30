@@ -1283,6 +1283,73 @@ describe("host-hook fixture plugin contract", () => {
     });
   });
 
+  it("fails closed when a trusted policy registration is unreadable", async () => {
+    const registry = createEmptyPluginRegistry();
+    const unreadableRegistration = {
+      pluginId: "fuzzplugin",
+      pluginName: "Fuzz Plugin",
+      source: "test",
+    };
+    Object.defineProperty(unreadableRegistration, "policy", {
+      enumerable: true,
+      get() {
+        throw new Error("fuzzplugin trusted policy is unreadable");
+      },
+    });
+    registry.trustedToolPolicies = [
+      unreadableRegistration as never,
+      {
+        pluginId: "mockplugin",
+        pluginName: "Mock Plugin",
+        source: "test",
+        policy: {
+          id: "mockpolicy",
+          description: "mock",
+          evaluate: () => ({ allow: true }),
+        },
+      },
+    ];
+    setActivePluginRegistry(registry);
+
+    await expect(
+      runTrustedToolPolicies({ toolName: "exec", params: {} }, { toolName: "exec" }),
+    ).resolves.toEqual({
+      block: true,
+      blockReason: "blocked by fuzzplugin: policy is unreadable",
+    });
+  });
+
+  it("fails closed when a trusted policy registry row is unreadable", async () => {
+    const registry = createEmptyPluginRegistry();
+    const trustedToolPolicies: unknown[] = [
+      {
+        pluginId: "mockplugin",
+        pluginName: "Mock Plugin",
+        source: "test",
+        policy: {
+          id: "mockpolicy",
+          description: "mock",
+          evaluate: () => ({ allow: true }),
+        },
+      },
+    ];
+    Object.defineProperty(trustedToolPolicies, "0", {
+      enumerable: true,
+      get() {
+        throw new Error("fuzzplugin trusted policy row is unreadable");
+      },
+    });
+    registry.trustedToolPolicies = trustedToolPolicies as never;
+    setActivePluginRegistry(registry);
+
+    await expect(
+      runTrustedToolPolicies({ toolName: "exec", params: {} }, { toolName: "exec" }),
+    ).resolves.toEqual({
+      block: true,
+      blockReason: "blocked by unknown-plugin: policy is unreadable",
+    });
+  });
+
   it("fails closed when a trusted policy returns an unreadable decision", async () => {
     const registry = createEmptyPluginRegistry();
     registry.trustedToolPolicies = [
