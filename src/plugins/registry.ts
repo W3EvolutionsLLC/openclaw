@@ -110,6 +110,7 @@ import type { PluginDiagnostic } from "./manifest-types.js";
 import {
   getRegisteredMemoryEmbeddingProvider,
   registerMemoryEmbeddingProvider,
+  type MemoryEmbeddingProviderAdapter,
 } from "./memory-embedding-providers.js";
 import {
   registerMemoryCapability,
@@ -1904,6 +1905,178 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
     });
     if (!record.embeddingProviderIds.includes(id)) {
       record.embeddingProviderIds.push(id);
+    }
+  };
+
+  const registerMemoryEmbeddingProviderForPlugin = (
+    record: PluginRecord,
+    adapter: MemoryEmbeddingProviderAdapter,
+  ) => {
+    const idValue = readHostHookField(adapter, "id");
+    if (!idValue.ok) {
+      pushDiagnostic({
+        level: "error",
+        pluginId: record.id,
+        source: record.source,
+        message: "memory embedding provider registration has unreadable field: id",
+      });
+      return;
+    }
+    const id = normalizeOptionalString(idValue.value) ?? "";
+    if (!id) {
+      pushDiagnostic({
+        level: "error",
+        pluginId: record.id,
+        source: record.source,
+        message: "memory embedding provider registration missing id",
+      });
+      return;
+    }
+    if (hasKind(record.kind, "memory")) {
+      if (Array.isArray(record.kind) && record.kind.length > 1 && !record.memorySlotSelected) {
+        pushDiagnostic({
+          level: "warn",
+          pluginId: record.id,
+          source: record.source,
+          message:
+            "dual-kind plugin not selected for memory slot; skipping memory embedding provider registration",
+        });
+        return;
+      }
+    } else if (!(record.contracts?.memoryEmbeddingProviders ?? []).includes(id)) {
+      pushDiagnostic({
+        level: "error",
+        pluginId: record.id,
+        source: record.source,
+        message: `plugin must own memory slot or declare contracts.memoryEmbeddingProviders for adapter: ${id}`,
+      });
+      return;
+    }
+    const createValue = readHostHookField(adapter, "create");
+    if (!createValue.ok) {
+      pushDiagnostic({
+        level: "error",
+        pluginId: record.id,
+        source: record.source,
+        message: "memory embedding provider registration has unreadable field: create",
+      });
+      return;
+    }
+    if (typeof createValue.value !== "function") {
+      pushDiagnostic({
+        level: "error",
+        pluginId: record.id,
+        source: record.source,
+        message: `memory embedding provider registration missing or invalid create: ${id}`,
+      });
+      return;
+    }
+    const defaultModelValue = readHostHookField(adapter, "defaultModel");
+    const transportValue = readHostHookField(adapter, "transport");
+    const authProviderIdValue = readHostHookField(adapter, "authProviderId");
+    const autoSelectPriorityValue = readHostHookField(adapter, "autoSelectPriority");
+    const allowExplicitValue = readHostHookField(adapter, "allowExplicitWhenConfiguredAuto");
+    const supportsMultimodalValue = readHostHookField(adapter, "supportsMultimodalEmbeddings");
+    const formatSetupErrorValue = readHostHookField(adapter, "formatSetupError");
+    const shouldContinueAutoSelectionValue = readHostHookField(
+      adapter,
+      "shouldContinueAutoSelection",
+    );
+    const unreadableField = (
+      [
+        ["defaultModel", defaultModelValue],
+        ["transport", transportValue],
+        ["authProviderId", authProviderIdValue],
+        ["autoSelectPriority", autoSelectPriorityValue],
+        ["allowExplicitWhenConfiguredAuto", allowExplicitValue],
+        ["supportsMultimodalEmbeddings", supportsMultimodalValue],
+        ["formatSetupError", formatSetupErrorValue],
+        ["shouldContinueAutoSelection", shouldContinueAutoSelectionValue],
+      ] satisfies Array<[string, ReturnType<typeof readHostHookField>]>
+    ).find(([, value]) => !value.ok)?.[0];
+    if (unreadableField) {
+      pushDiagnostic({
+        level: "error",
+        pluginId: record.id,
+        source: record.source,
+        message: `memory embedding provider registration has unreadable field: ${unreadableField}`,
+      });
+      return;
+    }
+    const defaultModel = readHostHookFieldValue(defaultModelValue);
+    const transport = readHostHookFieldValue(transportValue);
+    const authProviderId = readHostHookFieldValue(authProviderIdValue);
+    const autoSelectPriority = readHostHookFieldValue(autoSelectPriorityValue);
+    const allowExplicitWhenConfiguredAuto = readHostHookFieldValue(allowExplicitValue);
+    const supportsMultimodalEmbeddings = readHostHookFieldValue(supportsMultimodalValue);
+    const formatSetupError = readHostHookFieldValue(formatSetupErrorValue);
+    const shouldContinueAutoSelection = readHostHookFieldValue(shouldContinueAutoSelectionValue);
+    const normalizedAdapter: MemoryEmbeddingProviderAdapter = {
+      id,
+      ...(typeof defaultModel === "string" ? { defaultModel } : {}),
+      ...(transport === "local" || transport === "remote" ? { transport } : {}),
+      ...(typeof authProviderId === "string" ? { authProviderId } : {}),
+      ...(typeof autoSelectPriority === "number" ? { autoSelectPriority } : {}),
+      ...(typeof allowExplicitWhenConfiguredAuto === "boolean"
+        ? { allowExplicitWhenConfiguredAuto }
+        : {}),
+      create: (options) =>
+        (createValue.value as NonNullable<MemoryEmbeddingProviderAdapter["create"]>).call(
+          adapter,
+          options,
+        ),
+      ...(typeof supportsMultimodalEmbeddings === "function"
+        ? {
+            supportsMultimodalEmbeddings: (params) =>
+              (
+                supportsMultimodalEmbeddings as NonNullable<
+                  MemoryEmbeddingProviderAdapter["supportsMultimodalEmbeddings"]
+                >
+              ).call(adapter, params),
+          }
+        : {}),
+      ...(typeof formatSetupError === "function"
+        ? {
+            formatSetupError: (err) =>
+              (
+                formatSetupError as NonNullable<MemoryEmbeddingProviderAdapter["formatSetupError"]>
+              ).call(adapter, err),
+          }
+        : {}),
+      ...(typeof shouldContinueAutoSelection === "function"
+        ? {
+            shouldContinueAutoSelection: (err) =>
+              (
+                shouldContinueAutoSelection as NonNullable<
+                  MemoryEmbeddingProviderAdapter["shouldContinueAutoSelection"]
+                >
+              ).call(adapter, err),
+          }
+        : {}),
+    };
+    const existing = getRegisteredMemoryEmbeddingProvider(id);
+    if (existing) {
+      const ownerDetail = existing.ownerPluginId ? ` (owner: ${existing.ownerPluginId})` : "";
+      pushDiagnostic({
+        level: "error",
+        pluginId: record.id,
+        source: record.source,
+        message: `memory embedding provider already registered: ${id}${ownerDetail}`,
+      });
+      return;
+    }
+    registerMemoryEmbeddingProvider(normalizedAdapter, {
+      ownerPluginId: record.id,
+    });
+    registry.memoryEmbeddingProviders.push({
+      pluginId: record.id,
+      pluginName: record.name,
+      provider: normalizedAdapter,
+      source: record.source,
+      rootDir: record.rootDir,
+    });
+    if (!record.memoryEmbeddingProviderIds.includes(id)) {
+      record.memoryEmbeddingProviderIds.push(id);
     }
   };
 
@@ -4827,57 +5000,8 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
                 }
                 registerMemoryRuntimeForPlugin(record.id, runtime);
               },
-              registerMemoryEmbeddingProvider: (adapter) => {
-                if (hasKind(record.kind, "memory")) {
-                  if (
-                    Array.isArray(record.kind) &&
-                    record.kind.length > 1 &&
-                    !record.memorySlotSelected
-                  ) {
-                    pushDiagnostic({
-                      level: "warn",
-                      pluginId: record.id,
-                      source: record.source,
-                      message:
-                        "dual-kind plugin not selected for memory slot; skipping memory embedding provider registration",
-                    });
-                    return;
-                  }
-                } else if (
-                  !(record.contracts?.memoryEmbeddingProviders ?? []).includes(adapter.id)
-                ) {
-                  pushDiagnostic({
-                    level: "error",
-                    pluginId: record.id,
-                    source: record.source,
-                    message: `plugin must own memory slot or declare contracts.memoryEmbeddingProviders for adapter: ${adapter.id}`,
-                  });
-                  return;
-                }
-                const existing = getRegisteredMemoryEmbeddingProvider(adapter.id);
-                if (existing) {
-                  const ownerDetail = existing.ownerPluginId
-                    ? ` (owner: ${existing.ownerPluginId})`
-                    : "";
-                  pushDiagnostic({
-                    level: "error",
-                    pluginId: record.id,
-                    source: record.source,
-                    message: `memory embedding provider already registered: ${adapter.id}${ownerDetail}`,
-                  });
-                  return;
-                }
-                registerMemoryEmbeddingProvider(adapter, {
-                  ownerPluginId: record.id,
-                });
-                registry.memoryEmbeddingProviders.push({
-                  pluginId: record.id,
-                  pluginName: record.name,
-                  provider: adapter,
-                  source: record.source,
-                  rootDir: record.rootDir,
-                });
-              },
+              registerMemoryEmbeddingProvider: (adapter) =>
+                registerMemoryEmbeddingProviderForPlugin(record, adapter),
               on: (hookName, handler, opts) =>
                 registerTypedHook(record, hookName, handler, opts, params.hookPolicy),
             }

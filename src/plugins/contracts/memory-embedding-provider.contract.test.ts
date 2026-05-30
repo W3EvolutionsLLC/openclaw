@@ -78,6 +78,73 @@ describe("memory embedding provider registration", () => {
     expect(provider?.ownerPluginId).toBe("memory-core");
   });
 
+  it("rejects malformed adapters without aborting sibling memory providers", async () => {
+    const { config, registry } = createPluginRegistryFixture();
+    const unreadableId = Object.defineProperty({}, "id", {
+      get() {
+        throw new Error("fuzzplugin memory embedding id getter failed");
+      },
+    });
+    const invalidCreate = {
+      id: "fuzzplugin-memory-invalid-create",
+      create: undefined,
+    };
+
+    registerVirtualTestPlugin({
+      registry,
+      config,
+      id: "fuzzplugin-memory",
+      name: "Fuzz Plugin Memory",
+      kind: "memory",
+      register(api) {
+        api.registerMemoryEmbeddingProvider(unreadableId as never);
+        api.registerMemoryEmbeddingProvider(invalidCreate as never);
+      },
+    });
+
+    class MockMemoryEmbeddingProvider {
+      #marker = "private-state";
+      id = "mockplugin-memory";
+
+      async create() {
+        return { provider: this.#marker };
+      }
+    }
+
+    registerVirtualTestPlugin({
+      registry,
+      config,
+      id: "mockplugin-memory",
+      name: "Mock Plugin Memory",
+      kind: "memory",
+      register(api) {
+        api.registerMemoryEmbeddingProvider(
+          new MockMemoryEmbeddingProvider() as unknown as Parameters<
+            typeof api.registerMemoryEmbeddingProvider
+          >[0],
+        );
+      },
+    });
+
+    const provider = getRegisteredMemoryEmbeddingProvider("mockplugin-memory");
+    expect(provider?.adapter.id).toBe("mockplugin-memory");
+    expect(provider?.ownerPluginId).toBe("mockplugin-memory");
+    await expect(provider?.adapter.create({} as never)).resolves.toEqual({
+      provider: "private-state",
+    });
+    expect(registry.registry.memoryEmbeddingProviders.map((entry) => entry.provider.id)).toEqual([
+      "mockplugin-memory",
+    ]);
+    expect(
+      registry.registry.diagnostics
+        .filter((entry) => entry.pluginId === "fuzzplugin-memory")
+        .map((entry) => entry.message),
+    ).toEqual([
+      "memory embedding provider registration has unreadable field: id",
+      "memory embedding provider registration missing or invalid create: fuzzplugin-memory-invalid-create",
+    ]);
+  });
+
   it("keeps companion embedding providers available during tool discovery", () => {
     const { config, registry } = createPluginRegistryFixture();
     const record = createPluginRecord({
