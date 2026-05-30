@@ -125,4 +125,59 @@ describe("channel registry helpers", () => {
     expect(normalizeAnyChannelId("a")).toBe("alpha");
     expect(normalizeAnyChannelIdLight("a")).toBe("alpha");
   });
+
+  it("skips unreadable channel registry entries while preserving healthy aliases", () => {
+    const registry = createEmptyPluginRegistry();
+    const unreadableEntry = Object.create(null, {
+      plugin: {
+        enumerable: true,
+        get() {
+          throw new Error("fuzzplugin channel entry is unreadable");
+        },
+      },
+    });
+    const unreadablePluginId = {
+      plugin: Object.create(null, {
+        id: {
+          enumerable: true,
+          get() {
+            throw new Error("fuzzplugin channel id is unreadable");
+          },
+        },
+      }),
+    };
+    const unreadableAliases = {
+      plugin: Object.create(null, {
+        id: { enumerable: true, value: "fuzzplugin-chat" },
+        meta: {
+          enumerable: true,
+          value: Object.create(null, {
+            aliases: {
+              enumerable: true,
+              get() {
+                throw new Error("fuzzplugin channel aliases are unreadable");
+              },
+            },
+          }),
+        },
+      }),
+    };
+    const healthy = createRegistryWithRegisteredChannel("mockplugin-chat", ["mockchat"])
+      .channels[0];
+    const channels = [unreadableEntry, unreadablePluginId, unreadableAliases, healthy];
+    Object.defineProperty(channels, "0", {
+      enumerable: true,
+      get() {
+        throw new Error("fuzzplugin channel array entry is unreadable");
+      },
+    });
+    registry.channels = channels as never;
+    setActivePluginRegistry(registry);
+
+    expect(normalizeAnyChannelId("mockchat")).toBe("mockplugin-chat");
+    expect(normalizeAnyChannelIdLight("mockchat")).toBe("mockplugin-chat");
+    expect(listRegisteredChannelPluginIds()).toEqual(["fuzzplugin-chat", "mockplugin-chat"]);
+    expect(getRegisteredChannelPluginMeta("mockplugin-chat")?.aliases).toEqual(["mockchat"]);
+    expect(getRegisteredChannelPluginMeta("fuzzplugin-chat")?.aliases).toBeUndefined();
+  });
 });
