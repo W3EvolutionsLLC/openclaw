@@ -100,6 +100,10 @@ function readStringValue(record: unknown, key: string): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
+function readModelApiValue(record: unknown, key: string): ModelCatalogEntry["api"] | undefined {
+  return readStringValue(record, key) as ModelCatalogEntry["api"] | undefined;
+}
+
 export type ModelAliasIndex = {
   byAlias: Map<string, { alias: string; ref: ModelRef }>;
   byKey: Map<string, string[]>;
@@ -1247,7 +1251,7 @@ export function buildConfiguredModelCatalog(params: {
         provider: providerId,
         id,
         name,
-        api: model.api ?? provider.api,
+        api: readModelApiValue(model, "api") ?? readModelApiValue(provider, "api"),
         contextWindow,
         contextTokens,
         reasoning,
