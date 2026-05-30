@@ -191,6 +191,91 @@ describe("method scope resolution", () => {
     ]);
   });
 
+  it("skips unreadable session action ids while resolving healthy sibling scopes", () => {
+    const registry = createEmptyPluginRegistry();
+    const unreadableAction = Object.create(null, {
+      id: {
+        enumerable: true,
+        get() {
+          throw new Error("fuzzplugin action id is unreadable");
+        },
+      },
+      requiredScopes: { enumerable: true, value: ["operator.admin"] },
+      handler: { enumerable: true, value: () => ({ result: { ok: true } }) },
+    });
+    registry.sessionActions = [
+      {
+        pluginId: "mockplugin",
+        pluginName: "Mock Plugin",
+        source: "test",
+        action: unreadableAction,
+      } as never,
+      {
+        pluginId: "mockplugin",
+        pluginName: "Mock Plugin",
+        source: "test",
+        action: {
+          id: "inspect",
+          requiredScopes: ["operator.read"],
+          handler: () => ({ result: { ok: true } }),
+        },
+      },
+    ];
+    setActivePluginRegistry(registry);
+
+    expect(
+      resolveLeastPrivilegeOperatorScopesForMethod("plugins.sessionAction", {
+        pluginId: "mockplugin",
+        actionId: "inspect",
+      }),
+    ).toEqual(["operator.read"]);
+    expect(
+      authorizeOperatorScopesForMethod("plugins.sessionAction", ["operator.read"], {
+        pluginId: "mockplugin",
+        actionId: "inspect",
+      }),
+    ).toEqual({ allowed: true });
+  });
+
+  it("fails closed when matched session action scopes are unreadable", () => {
+    const registry = createEmptyPluginRegistry();
+    const unreadableScopedAction = Object.create(null, {
+      id: { enumerable: true, value: "inspect" },
+      requiredScopes: {
+        enumerable: true,
+        get() {
+          throw new Error("fuzzplugin action scopes are unreadable");
+        },
+      },
+      handler: { enumerable: true, value: () => ({ result: { ok: true } }) },
+    });
+    registry.sessionActions = [
+      {
+        pluginId: "fuzzplugin",
+        pluginName: "Fuzz Plugin",
+        source: "test",
+        action: unreadableScopedAction,
+      } as never,
+    ];
+    setActivePluginRegistry(registry);
+
+    const params = { pluginId: "fuzzplugin", actionId: "inspect" };
+    expect(resolveLeastPrivilegeOperatorScopesForMethod("plugins.sessionAction", params)).toEqual([
+      "operator.admin",
+    ]);
+    expect(
+      authorizeOperatorScopesForMethod("plugins.sessionAction", ["operator.write"], params),
+    ).toEqual({
+      allowed: false,
+      missingScope: "operator.admin",
+    });
+    expect(
+      authorizeOperatorScopesForMethod("plugins.sessionAction", ["operator.admin"], params),
+    ).toEqual({
+      allowed: true,
+    });
+  });
+
   it("returns empty scopes for unknown methods", () => {
     expect(resolveLeastPrivilegeOperatorScopesForMethod("totally.unknown.method")).toStrictEqual(
       [],

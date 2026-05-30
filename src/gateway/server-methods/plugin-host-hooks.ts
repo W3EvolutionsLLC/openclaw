@@ -8,7 +8,10 @@ import {
 } from "../../../packages/gateway-protocol/src/index.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
-import { isPluginJsonValue } from "../../plugins/host-hooks.js";
+import {
+  isPluginJsonValue,
+  type PluginSessionActionRegistration,
+} from "../../plugins/host-hooks.js";
 import { getActivePluginRegistry } from "../../plugins/runtime.js";
 import {
   validateJsonSchemaValue,
@@ -17,7 +20,13 @@ import {
 } from "../../plugins/schema-validator.js";
 import { isRecord } from "../../shared/record-coerce.js";
 import { normalizeOptionalString } from "../../shared/string-coerce.js";
-import { ADMIN_SCOPE, READ_SCOPE, WRITE_SCOPE } from "../operator-scopes.js";
+import {
+  ADMIN_SCOPE,
+  READ_SCOPE,
+  WRITE_SCOPE,
+  isOperatorScope,
+  type OperatorScope,
+} from "../operator-scopes.js";
 import type { GatewayRequestHandlers } from "./types.js";
 
 const log = createSubsystemLogger("gateway/plugin-host-hooks");
@@ -113,6 +122,122 @@ function projectControlUiDescriptor(entry: unknown): Record<string, unknown> | u
   };
 }
 
+function readOperatorScopesField(
+  value: unknown,
+  field: string,
+): OperatorScope[] | undefined | null {
+  const read = readRecordField(value, field);
+  if (!read.ok) {
+    return null;
+  }
+  if (read.value === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(read.value)) {
+    return null;
+  }
+  const scopes: OperatorScope[] = [];
+  for (const scope of read.value) {
+    if (typeof scope !== "string") {
+      return null;
+    }
+    const trimmed = scope.trim();
+    if (!isOperatorScope(trimmed)) {
+      return null;
+    }
+    scopes.push(trimmed);
+  }
+  return scopes.length > 0 ? scopes : undefined;
+}
+
+function readSessionActionSchema(action: unknown): JsonSchemaValue | undefined | null {
+  const read = readRecordField(action, "schema");
+  if (!read.ok) {
+    return null;
+  }
+  if (read.value === undefined) {
+    return undefined;
+  }
+  if (
+    !isPluginJsonValue(read.value) ||
+    (typeof read.value !== "boolean" && !isRecord(read.value))
+  ) {
+    return null;
+  }
+  return read.value as JsonSchemaValue;
+}
+
+function readSessionActionHandler(
+  action: unknown,
+): PluginSessionActionRegistration["handler"] | undefined {
+  const read = readRecordField(action, "handler");
+  if (!read.ok || typeof read.value !== "function") {
+    return undefined;
+  }
+  return read.value as PluginSessionActionRegistration["handler"];
+}
+
+function isPluginLoaded(registry: unknown, pluginId: string): boolean {
+  const plugins = readRecordField(registry, "plugins");
+  if (!plugins.ok || !Array.isArray(plugins.value)) {
+    return false;
+  }
+  return plugins.value.some((plugin) => {
+    return (
+      readNonEmptyStringField(plugin, "id") === pluginId &&
+      readNonEmptyStringField(plugin, "status") === "loaded"
+    );
+  });
+}
+
+type SessionActionRegistrationLookup =
+  | { status: "missing" }
+  | { status: "malformed" }
+  | {
+      status: "found";
+      handler: PluginSessionActionRegistration["handler"];
+      requiredScopes: OperatorScope[] | undefined;
+      schema: JsonSchemaValue | undefined;
+    };
+
+function resolveSessionActionRegistration(
+  registry: unknown,
+  pluginId: string,
+  actionId: string,
+): SessionActionRegistrationLookup {
+  const sessionActions = readRecordField(registry, "sessionActions");
+  if (!sessionActions.ok || !Array.isArray(sessionActions.value)) {
+    return { status: "missing" };
+  }
+  let sawMalformedPluginAction = false;
+  for (const entry of sessionActions.value) {
+    if (readNonEmptyStringField(entry, "pluginId") !== pluginId) {
+      continue;
+    }
+    const action = readRecordField(entry, "action");
+    if (!action.ok) {
+      sawMalformedPluginAction = true;
+      continue;
+    }
+    const registeredActionId = readNonEmptyStringField(action.value, "id");
+    if (!registeredActionId) {
+      sawMalformedPluginAction = true;
+      continue;
+    }
+    if (registeredActionId !== actionId) {
+      continue;
+    }
+    const requiredScopes = readOperatorScopesField(action.value, "requiredScopes");
+    const schema = readSessionActionSchema(action.value);
+    const handler = readSessionActionHandler(action.value);
+    if (requiredScopes === null || schema === null || !handler) {
+      return { status: "malformed" };
+    }
+    return { status: "found", handler, requiredScopes, schema };
+  }
+  return sawMalformedPluginAction ? { status: "malformed" } : { status: "missing" };
+}
+
 function validatePluginSessionActionJsonFields(
   result: Record<string, unknown>,
 ): string | undefined {
@@ -170,13 +295,9 @@ export const pluginHostHookHandlers: GatewayRequestHandlers = {
       return;
     }
     const registry = getActivePluginRegistry();
-    const pluginLoaded = Boolean(
-      registry?.plugins.some((plugin) => plugin.id === pluginId && plugin.status === "loaded"),
-    );
-    const registration = (registry?.sessionActions ?? []).find(
-      (entry) => entry.pluginId === pluginId && entry.action.id === actionId,
-    );
-    if (!registration || !pluginLoaded) {
+    const pluginLoaded = isPluginLoaded(registry, pluginId);
+    const registration = resolveSessionActionRegistration(registry, pluginId, actionId);
+    if (registration.status !== "found" || !pluginLoaded) {
       respond(
         false,
         undefined,
@@ -189,10 +310,7 @@ export const pluginHostHookHandlers: GatewayRequestHandlers = {
     }
     const scopes = Array.isArray(client?.connect.scopes) ? client.connect.scopes : [];
     const hasAdmin = scopes.includes(ADMIN_SCOPE);
-    const requiredScopes =
-      registration.action.requiredScopes && registration.action.requiredScopes.length > 0
-        ? registration.action.requiredScopes
-        : [WRITE_SCOPE];
+    const requiredScopes = registration.requiredScopes ?? [WRITE_SCOPE];
     const missingScope = requiredScopes.find(
       (scope) =>
         !hasAdmin &&
@@ -219,23 +337,9 @@ export const pluginHostHookHandlers: GatewayRequestHandlers = {
         );
         return;
       }
-      if (registration.action.schema !== undefined) {
-        if (
-          typeof registration.action.schema !== "boolean" &&
-          !isRecord(registration.action.schema)
-        ) {
-          respond(
-            false,
-            undefined,
-            errorShape(
-              ErrorCodes.INVALID_REQUEST,
-              "plugin session action schema must be an object or boolean",
-            ),
-          );
-          return;
-        }
+      if (registration.schema !== undefined) {
         const validation = validateJsonSchemaValue({
-          schema: registration.action.schema as JsonSchemaValue,
+          schema: registration.schema,
           cacheKey: `plugin-session-action:${pluginId}:${actionId}`,
           value: params.payload,
         });
@@ -251,7 +355,7 @@ export const pluginHostHookHandlers: GatewayRequestHandlers = {
           return;
         }
       }
-      const result = await registration.action.handler({
+      const result = await registration.handler({
         pluginId,
         actionId,
         ...(sessionKey ? { sessionKey } : {}),
