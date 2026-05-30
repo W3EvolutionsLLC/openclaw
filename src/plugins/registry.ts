@@ -68,6 +68,7 @@ import { clearPluginCommandsForPlugin, pluginCommands } from "./command-registry
 import {
   getRegisteredCompactionProvider,
   registerCompactionProvider,
+  type CompactionProvider,
 } from "./compaction-provider.js";
 import { getPluginCompatRecord } from "./compat/registry.js";
 import {
@@ -4740,13 +4741,17 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
               registerCompactionProvider: (
                 provider: Parameters<OpenClawPluginApi["registerCompactionProvider"]>[0],
               ) => {
-                const id = normalizeOptionalString(
-                  (
-                    provider as Partial<
-                      Parameters<OpenClawPluginApi["registerCompactionProvider"]>[0]
-                    > | null
-                  )?.id,
-                );
+                const idValue = readHostHookField(provider, "id");
+                if (!idValue.ok) {
+                  pushDiagnostic({
+                    level: "error",
+                    pluginId: record.id,
+                    source: record.source,
+                    message: "compaction provider registration has unreadable field: id",
+                  });
+                  return;
+                }
+                const id = normalizeOptionalString(idValue.value);
                 if (!id) {
                   pushDiagnostic({
                     level: "error",
@@ -4756,7 +4761,17 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
                   });
                   return;
                 }
-                if (typeof provider?.summarize !== "function") {
+                const summarizeValue = readHostHookField(provider, "summarize");
+                if (!summarizeValue.ok) {
+                  pushDiagnostic({
+                    level: "error",
+                    pluginId: record.id,
+                    source: record.source,
+                    message: `compaction provider "${id}" registration has unreadable field: summarize`,
+                  });
+                  return;
+                }
+                if (typeof summarizeValue.value !== "function") {
                   pushDiagnostic({
                     level: "error",
                     pluginId: record.id,
@@ -4765,6 +4780,17 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
                   });
                   return;
                 }
+                const labelValue = readHostHookField(provider, "label");
+                const label = readHostHookFieldValue(labelValue);
+                const normalizedProvider: CompactionProvider = {
+                  id,
+                  label: typeof label === "string" ? label : id,
+                  summarize: (params) =>
+                    (summarizeValue.value as CompactionProvider["summarize"]).call(
+                      provider,
+                      params,
+                    ),
+                };
                 const existing = getRegisteredCompactionProvider(id);
                 if (existing) {
                   const ownerDetail = existing.ownerPluginId
@@ -4778,7 +4804,7 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
                   });
                   return;
                 }
-                registerCompactionProvider(provider, { ownerPluginId: record.id });
+                registerCompactionProvider(normalizedProvider, { ownerPluginId: record.id });
               },
               registerCodexAppServerExtensionFactory: (factory) => {
                 registerCodexAppServerExtensionFactory(record, factory);

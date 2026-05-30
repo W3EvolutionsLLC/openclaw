@@ -28,6 +28,21 @@ function makeProvider(id: string, label?: string): CompactionProvider {
   };
 }
 
+function makeUnreadableIdProvider(): CompactionProvider {
+  const provider = {
+    label: "Fuzz Plugin",
+    async summarize() {
+      return "summary-from-fuzzplugin";
+    },
+  };
+  Object.defineProperty(provider, "id", {
+    get() {
+      throw new Error("fuzzplugin compaction provider id getter failed");
+    },
+  });
+  return provider as CompactionProvider;
+}
+
 function requireCompactionProvider(id: string): CompactionProvider {
   const provider = getCompactionProvider(id);
   if (!provider) {
@@ -114,6 +129,22 @@ describe("compaction provider registry", () => {
     expect(listCompactionProviderIds()).toEqual(["dup"]);
   });
 
+  it("skips unreadable compaction provider ids while preserving healthy providers", () => {
+    const unreadable = makeUnreadableIdProvider();
+    const healthy = makeProvider("mockplugin-compactor");
+
+    expect(() =>
+      registerCompactionProvider(unreadable, { ownerPluginId: "fuzzplugin" }),
+    ).not.toThrow();
+    registerCompactionProvider(healthy, { ownerPluginId: "mockplugin" });
+
+    expect(listCompactionProviderIds()).toEqual(["mockplugin-compactor"]);
+    expect(getCompactionProvider("mockplugin-compactor")).toBe(healthy);
+    expect(getRegisteredCompactionProvider("mockplugin-compactor")?.ownerPluginId).toBe(
+      "mockplugin",
+    );
+  });
+
   describe("lifecycle (clear / restore)", () => {
     it("clear removes all providers", () => {
       registerCompactionProvider(makeProvider("a"));
@@ -148,6 +179,29 @@ describe("compaction provider registry", () => {
       registerCompactionProvider(makeProvider("x"));
       restoreRegisteredCompactionProviders([]);
       expect(listCompactionProviderIds()).toStrictEqual([]);
+    });
+
+    it("skips unreadable snapshot provider ids while restoring healthy entries", () => {
+      const healthy = makeProvider("mockplugin-compactor");
+
+      expect(() =>
+        restoreRegisteredCompactionProviders([
+          {
+            provider: makeUnreadableIdProvider(),
+            ownerPluginId: "fuzzplugin",
+          },
+          {
+            provider: healthy,
+            ownerPluginId: "mockplugin",
+          },
+        ]),
+      ).not.toThrow();
+
+      expect(listCompactionProviderIds()).toEqual(["mockplugin-compactor"]);
+      expect(getCompactionProvider("mockplugin-compactor")).toBe(healthy);
+      expect(getRegisteredCompactionProvider("mockplugin-compactor")?.ownerPluginId).toBe(
+        "mockplugin",
+      );
     });
   });
 });

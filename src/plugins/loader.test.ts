@@ -4861,6 +4861,32 @@ module.exports = { id: "throws-after-import", register() {} };`,
         },
       },
       {
+        label: "skips unreadable compaction provider ids while preserving healthy providers",
+        pluginId: "fuzzplugin-compaction-provider",
+        body: `module.exports = { id: "fuzzplugin-compaction-provider", register(api) {
+  const unreadable = { label: "Fuzz Plugin", summarize: async () => "fuzzplugin" };
+  Object.defineProperty(unreadable, "id", {
+    get() {
+      throw new Error("fuzzplugin compaction provider id getter failed");
+    }
+  });
+  api.registerCompactionProvider(unreadable);
+  api.registerCompactionProvider({
+    id: "mockplugin-compactor",
+    label: "Mock Plugin",
+    summarize: async () => "mockplugin"
+  });
+} };`,
+        assert: (registry: ReturnType<typeof loadOpenClawPlugins>) => {
+          expectRegistryErrorDiagnostic({
+            registry,
+            pluginId: "fuzzplugin-compaction-provider",
+            message: "compaction provider registration has unreadable field: id",
+          });
+          expect(listCompactionProviderIds()).toContain("mockplugin-compactor");
+        },
+      },
+      {
         label: "rejects malformed memory prompt supplement registration",
         pluginId: "memory-prompt-supplement-malformed",
         body: `module.exports = { id: "memory-prompt-supplement-malformed", register(api) {

@@ -71,6 +71,15 @@ function getCompactionProviderRegistryState(): CompactionProviderRegistryState {
 // Registration
 // ---------------------------------------------------------------------------
 
+function readCompactionProviderId(provider: CompactionProvider): string | undefined {
+  try {
+    const id = (provider as { id?: unknown }).id;
+    return typeof id === "string" && id ? id : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Register a compaction provider implementation.
  * Pass `ownerPluginId` so the loader can snapshot/restore correctly.
@@ -79,7 +88,11 @@ export function registerCompactionProvider(
   provider: CompactionProvider,
   options?: { ownerPluginId?: string },
 ): void {
-  getCompactionProviderRegistryState().providers.set(provider.id, {
+  const id = readCompactionProviderId(provider);
+  if (!id) {
+    return;
+  }
+  getCompactionProviderRegistryState().providers.set(id, {
     provider,
     ownerPluginId: options?.ownerPluginId,
   });
@@ -127,6 +140,9 @@ export function restoreRegisteredCompactionProviders(
   const map = getCompactionProviderRegistryState().providers;
   map.clear();
   for (const entry of entries) {
-    map.set(entry.provider.id, entry);
+    const id = readCompactionProviderId(entry.provider);
+    if (id) {
+      map.set(id, entry);
+    }
   }
 }
