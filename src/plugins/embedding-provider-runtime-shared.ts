@@ -71,19 +71,35 @@ export function resolveRuntimeEmbeddingProviderLookupIds(params: {
   return ids;
 }
 
+function readRuntimeEmbeddingAdapterId(adapter: unknown): string {
+  try {
+    const id = (adapter as { id?: unknown }).id;
+    return typeof id === "string" ? id : "";
+  } catch {
+    return "";
+  }
+}
+
 export function listRuntimeEmbeddingProviderAdapters<TAdapter extends { id: string }>(params: {
   key: EmbeddingProviderCapabilityKey;
   cfg?: OpenClawConfig;
   registered: TAdapter[];
 }): TAdapter[] {
-  const merged = new Map(params.registered.map((adapter) => [adapter.id, adapter]));
+  const merged = new Map<string, TAdapter>();
+  for (const adapter of params.registered) {
+    const id = readRuntimeEmbeddingAdapterId(adapter);
+    if (id) {
+      merged.set(id, adapter);
+    }
+  }
   const capabilityAdapters = resolvePluginCapabilityProviders({
     key: params.key,
     cfg: params.cfg,
   }) as unknown as TAdapter[];
   for (const adapter of capabilityAdapters) {
-    if (!merged.has(adapter.id)) {
-      merged.set(adapter.id, adapter);
+    const id = readRuntimeEmbeddingAdapterId(adapter);
+    if (id && !merged.has(id)) {
+      merged.set(id, adapter);
     }
   }
   return [...merged.values()];

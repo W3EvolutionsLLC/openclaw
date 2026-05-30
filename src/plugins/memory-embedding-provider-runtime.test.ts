@@ -28,6 +28,20 @@ function createCapabilityAdapter(id: string): MemoryEmbeddingProviderAdapter {
   };
 }
 
+function createUnreadableIdAdapter(): MemoryEmbeddingProviderAdapter {
+  return Object.defineProperty(
+    {
+      create: async () => ({ provider: null }),
+    },
+    "id",
+    {
+      get() {
+        throw new Error("fuzzplugin memory embedding adapter id getter failed");
+      },
+    },
+  ) as MemoryEmbeddingProviderAdapter;
+}
+
 beforeEach(async () => {
   clearMemoryEmbeddingProviders();
   mocks.resolvePluginCapabilityProviders.mockReset();
@@ -166,5 +180,16 @@ describe("memory embedding provider runtime resolution", () => {
       "openai",
     ]);
     expect(mocks.resolvePluginCapabilityProviders).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips unreadable capability adapter ids while preserving healthy siblings", () => {
+    mocks.resolvePluginCapabilityProviders.mockReturnValue([
+      createUnreadableIdAdapter(),
+      createCapabilityAdapter("mockplugin-memory"),
+    ]);
+
+    expect(runtimeModule.listMemoryEmbeddingProviders().map((adapter) => adapter.id)).toEqual([
+      "mockplugin-memory",
+    ]);
   });
 });
