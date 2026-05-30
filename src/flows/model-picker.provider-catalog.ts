@@ -23,15 +23,97 @@ import type { ProviderPlugin } from "../plugins/types.js";
 const log = createSubsystemLogger("model-picker-provider-catalog");
 const DISCOVERY_ORDERS = ["simple", "profile", "paired", "late"] as const;
 
+function readRecordValue(record: unknown, field: string): unknown {
+  if (typeof record !== "object" || record === null) {
+    return undefined;
+  }
+  try {
+    return (record as Record<string, unknown>)[field];
+  } catch {
+    return undefined;
+  }
+}
+
+function readStringField(record: unknown, field: string): string | undefined {
+  const value = readRecordValue(record, field);
+  return typeof value === "string" ? value : undefined;
+}
+
+function readStringArrayField(record: unknown, field: string): string[] {
+  const value = readRecordValue(record, field);
+  try {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+    const strings: string[] = [];
+    for (let index = 0; index < value.length; index++) {
+      let entry: unknown;
+      try {
+        entry = value[index];
+      } catch {
+        continue;
+      }
+      if (typeof entry === "string") {
+        strings.push(entry);
+      }
+    }
+    return strings;
+  } catch {
+    return [];
+  }
+}
+
+function readProviderCandidateIds(provider: unknown): string[] {
+  return [
+    readStringField(provider, "id"),
+    ...readStringArrayField(provider, "aliases"),
+    ...readStringArrayField(provider, "hookAliases"),
+  ]
+    .map((providerId) => (typeof providerId === "string" ? normalizeProviderId(providerId) : ""))
+    .filter(Boolean);
+}
+
+function readProviderAuthId(provider: unknown, providerId?: string): string | undefined {
+  const normalizedProviderId = normalizeProviderId(providerId?.trim() ?? "");
+  if (normalizedProviderId) {
+    return providerId?.trim();
+  }
+  return readStringField(provider, "id");
+}
+
+function hasRunnableProviderHook(provider: unknown, field: "catalog" | "discovery"): boolean {
+  return typeof readRecordValue(readRecordValue(provider, field), "run") === "function";
+}
+
+function readProviderCatalogEntries(normalized: unknown): Array<[string, { models?: unknown }]> {
+  if (typeof normalized !== "object" || normalized === null) {
+    return [];
+  }
+  let keys: string[];
+  try {
+    keys = Object.keys(normalized);
+  } catch {
+    return [];
+  }
+  const record = normalized as Record<string, { models?: unknown }>;
+  const entries: Array<[string, { models?: unknown }]> = [];
+  for (const key of keys) {
+    try {
+      entries.push([key, record[key]]);
+    } catch {
+      continue;
+    }
+  }
+  return entries;
+}
+
 function providerMatchesFilter(params: {
   provider: Pick<ProviderPlugin, "id" | "aliases" | "hookAliases">;
   providerFilter: string;
 }): boolean {
-  return [
-    params.provider.id,
-    ...(params.provider.aliases ?? []),
-    ...(params.provider.hookAliases ?? []),
-  ].some((providerId) => normalizeProviderId(providerId) === params.providerFilter);
+  return readProviderCandidateIds(params.provider).some(
+    (providerId) => providerId === params.providerFilter,
+  );
 }
 
 function positiveNumber(value: number | undefined): number | undefined {
@@ -39,14 +121,12 @@ function positiveNumber(value: number | undefined): number | undefined {
 }
 
 function providerAuthIds(provider: ProviderPlugin): string[] {
-  return [provider.id, ...(provider.aliases ?? []), ...(provider.hookAliases ?? [])]
-    .map(normalizeProviderId)
-    .filter(Boolean);
+  return readProviderCandidateIds(provider);
 }
 
 function hasLiveProviderCatalog(provider: ProviderPlugin): boolean {
   return (
-    typeof provider.catalog?.run === "function" || typeof provider.discovery?.run === "function"
+    hasRunnableProviderHook(provider, "catalog") || hasRunnableProviderHook(provider, "discovery")
   );
 }
 
@@ -99,7 +179,7 @@ function resolveProviderEnvApiKey(
       discoveryApiKey?: string;
     }
   | undefined {
-  for (const envVar of provider.envVars ?? []) {
+  for (const envVar of readStringArrayField(provider, "envVars")) {
     const normalized = envVar.trim();
     const value = env[normalized]?.trim();
     if (normalized && value) {
@@ -177,15 +257,19 @@ export async function loadPreferredProviderPickerCatalog(params: {
     }));
   const resolveProviderApiKey = createProviderApiKeyResolver(env, getAuthStore, params.cfg);
   const resolveProviderAuth = createProviderAuthResolver(env, getAuthStore, params.cfg);
-  const resolveFastProviderApiKey = (provider: ProviderPlugin, providerId = provider.id) => {
-    const normalizedProviderId = normalizeProviderId(providerId);
+  const resolveFastProviderApiKey = (provider: ProviderPlugin, providerId?: string) => {
+    const resolvedProviderId = readProviderAuthId(provider, providerId);
+    if (!resolvedProviderId) {
+      return { apiKey: undefined, discoveryApiKey: undefined };
+    }
+    const normalizedProviderId = normalizeProviderId(resolvedProviderId);
     if (providerAuthIds(provider).includes(normalizedProviderId)) {
       const fromEnv = resolveProviderEnvApiKey(provider, env);
       if (fromEnv) {
         return fromEnv;
       }
     }
-    return resolveProviderApiKey(providerId);
+    return resolveProviderApiKey(resolvedProviderId);
   };
   const byOrder = groupPluginDiscoveryProvidersByOrder(providers);
   const rows: ModelCatalogEntry[] = [];
@@ -195,11 +279,11 @@ export async function loadPreferredProviderPickerCatalog(params: {
     for (const provider of byOrder[order]) {
       let result: Awaited<ReturnType<typeof runProviderCatalog>>;
       const resolveCatalogProviderApiKey = (providerId?: string) =>
-        resolveFastProviderApiKey(provider, providerId?.trim() || provider.id);
+        resolveFastProviderApiKey(provider, providerId);
       const resolveCatalogProviderAuth = (
         providerId?: string,
         options?: { oauthMarker?: string },
-      ) => resolveProviderAuth(providerId?.trim() || provider.id, options);
+      ) => resolveProviderAuth(readProviderAuthId(provider, providerId) ?? "", options);
       try {
         result = await runProviderCatalog({
           provider,
@@ -211,21 +295,29 @@ export async function loadPreferredProviderPickerCatalog(params: {
           ...(params.workspaceDir !== undefined ? { workspaceDir: params.workspaceDir } : {}),
         });
       } catch (error) {
-        log.warn(`provider catalog failed for ${provider.id}: ${formatErrorMessage(error)}`);
+        log.warn(
+          `provider catalog failed for ${readStringField(provider, "id") ?? "unknown"}: ${formatErrorMessage(error)}`,
+        );
         continue;
       }
 
-      const normalized = normalizePluginDiscoveryResult({ provider, result });
-      for (const [providerIdRaw, providerConfig] of Object.entries(normalized)) {
+      let normalized: ReturnType<typeof normalizePluginDiscoveryResult>;
+      try {
+        normalized = normalizePluginDiscoveryResult({ provider, result });
+      } catch {
+        continue;
+      }
+      for (const [providerIdRaw, providerConfig] of readProviderCatalogEntries(normalized)) {
         const providerId = normalizeProviderId(providerIdRaw);
-        if (providerId !== providerFilter || !Array.isArray(providerConfig.models)) {
+        const models = readRecordValue(providerConfig, "models");
+        if (providerId !== providerFilter || !Array.isArray(models)) {
           continue;
         }
-        for (const model of providerConfig.models) {
+        for (const model of models) {
           const entry = modelFromProviderCatalog({
             provider: providerId,
-            providerConfig,
-            model,
+            providerConfig: providerConfig as ModelProviderConfig,
+            model: model as ModelDefinitionConfig,
           });
           const key = `${entry.provider}/${entry.id}`;
           if (seen.has(key)) {

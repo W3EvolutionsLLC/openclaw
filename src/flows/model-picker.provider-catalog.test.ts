@@ -140,4 +140,65 @@ describe("loadPreferredProviderPickerCatalog", () => {
       cache: false,
     });
   });
+
+  it("skips unreadable discovery provider rows while preserving healthy live catalogs", async () => {
+    const unreadableProvider = Object.defineProperty(
+      {
+        label: "Fuzz Provider",
+        auth: [],
+        catalog: {
+          run: vi.fn(async () => ({
+            provider: {
+              models: [textModel("fuzz-hidden", "Fuzz Hidden")],
+            },
+          })),
+        },
+      },
+      "id",
+      {
+        get() {
+          throw new Error("fuzzplugin provider id unavailable");
+        },
+      },
+    ) as ProviderPlugin;
+    const mockProvider = {
+      id: "mockprovider",
+      label: "Mock Provider",
+      envVars: ["MOCKPROVIDER_API_KEY"],
+      auth: [],
+      catalog: {
+        run: async (ctx) => {
+          expect(ctx.resolveProviderApiKey()).toEqual({
+            apiKey: "mock-secret",
+            discoveryApiKey: "mock-secret",
+          });
+          return {
+            provider: {
+              baseUrl: "https://mock.invalid/v1",
+              models: [textModel("mock-model", "Mock Model")],
+            },
+          };
+        },
+      },
+    } satisfies ProviderPlugin;
+    providerCatalogListMocks.resolveProviderCatalogPluginIdsForFilter.mockResolvedValueOnce([
+      "fuzzplugin",
+      "mockplugin",
+    ]);
+    providerDiscoveryMocks.resolveRuntimePluginDiscoveryProviders.mockResolvedValue([
+      unreadableProvider,
+      mockProvider,
+    ]);
+
+    const rows = await loadPreferredProviderPickerCatalog({
+      cfg: {} as OpenClawConfig,
+      preferredProvider: "mockprovider",
+      env: { MOCKPROVIDER_API_KEY: "mock-secret" },
+    });
+
+    expect(rows.map((entry) => `${entry.provider}/${entry.id}`)).toEqual([
+      "mockprovider/mock-model",
+    ]);
+    expect(unreadableProvider.catalog?.run).not.toHaveBeenCalled();
+  });
 });
