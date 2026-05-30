@@ -11,7 +11,11 @@ import type { ModelProviderConfig } from "../config/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { normalizeOptionalString } from "../shared/string-coerce.js";
-import { sortUniqueStrings, uniqueStrings } from "../shared/string-normalization.js";
+import {
+  normalizeStringEntries,
+  sortUniqueStrings,
+  uniqueStrings,
+} from "../shared/string-normalization.js";
 import { normalizeProviderModelIdWithManifest } from "./manifest-model-id-normalization.js";
 import { loadPluginMetadataSnapshot } from "./plugin-metadata-snapshot.js";
 import { resolvePluginDiscoveryProvidersRuntime } from "./provider-discovery.runtime.js";
@@ -90,17 +94,41 @@ import type {
 const log = createSubsystemLogger("plugins/provider-runtime");
 const warnedExternalAuthFallbackPluginIds = new Set<string>();
 
+function readProviderPluginStringField(provider: ProviderPlugin, key: "id"): string | undefined {
+  try {
+    const value = (provider as Record<typeof key, unknown>)[key];
+    return typeof value === "string" ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function readProviderPluginStringList(
+  provider: ProviderPlugin,
+  key: "aliases" | "hookAliases",
+): string[] {
+  try {
+    return normalizeStringEntries(
+      (provider as Record<typeof key, unknown>)[key] as ReadonlyArray<unknown> | undefined,
+    );
+  } catch {
+    return [];
+  }
+}
+
 function matchesProviderPluginRef(provider: ProviderPlugin, providerId: string): boolean {
   const normalized = normalizeProviderId(providerId);
   if (!normalized) {
     return false;
   }
-  if (normalizeProviderId(provider.id) === normalized) {
+  const id = readProviderPluginStringField(provider, "id");
+  if (id && normalizeProviderId(id) === normalized) {
     return true;
   }
-  return [...(provider.aliases ?? []), ...(provider.hookAliases ?? [])].some(
-    (alias) => normalizeProviderId(alias) === normalized,
-  );
+  return [
+    ...readProviderPluginStringList(provider, "aliases"),
+    ...readProviderPluginStringList(provider, "hookAliases"),
+  ].some((alias) => normalizeProviderId(alias) === normalized);
 }
 
 function resolveProviderHookRefs(

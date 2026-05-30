@@ -5,6 +5,7 @@ import {
   normalizeLowercaseStringOrEmpty,
   normalizeOptionalString,
 } from "../shared/string-coerce.js";
+import { normalizeStringEntries } from "../shared/string-normalization.js";
 import { getLoadedRuntimePluginRegistry } from "./active-runtime-registry.js";
 import {
   createPluginCacheKey,
@@ -57,17 +58,41 @@ export function clearProviderRuntimePluginCacheForTest(): void {
   defaultProviderRuntimePluginCache.clear();
 }
 
+function readProviderPluginStringField(provider: ProviderPlugin, key: "id"): string | undefined {
+  try {
+    const value = (provider as Record<typeof key, unknown>)[key];
+    return typeof value === "string" ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function readProviderPluginStringList(
+  provider: ProviderPlugin,
+  key: "aliases" | "hookAliases",
+): string[] {
+  try {
+    return normalizeStringEntries(
+      (provider as Record<typeof key, unknown>)[key] as ReadonlyArray<unknown> | undefined,
+    );
+  } catch {
+    return [];
+  }
+}
+
 function matchesProviderId(provider: ProviderPlugin, providerId: string): boolean {
   const normalized = normalizeProviderId(providerId);
   if (!normalized) {
     return false;
   }
-  if (normalizeProviderId(provider.id) === normalized) {
+  const id = readProviderPluginStringField(provider, "id");
+  if (id && normalizeProviderId(id) === normalized) {
     return true;
   }
-  return [...(provider.aliases ?? []), ...(provider.hookAliases ?? [])].some(
-    (alias) => normalizeProviderId(alias) === normalized,
-  );
+  return [
+    ...readProviderPluginStringList(provider, "aliases"),
+    ...readProviderPluginStringList(provider, "hookAliases"),
+  ].some((alias) => normalizeProviderId(alias) === normalized);
 }
 
 function resolveProviderRuntimePluginCacheKey(
@@ -96,7 +121,8 @@ function resolveProviderRuntimePluginCacheKey(
 
 function matchesProviderLiteralId(provider: ProviderPlugin, providerId: string): boolean {
   const normalized = normalizeLowercaseStringOrEmpty(providerId);
-  return !!normalized && normalizeLowercaseStringOrEmpty(provider.id) === normalized;
+  const id = readProviderPluginStringField(provider, "id");
+  return !!normalized && normalizeLowercaseStringOrEmpty(id) === normalized;
 }
 
 function resolveProviderRuntimeLookupModelId(
@@ -173,17 +199,24 @@ function findProviderRuntimePluginInRegistry(params: {
   provider: string;
   apiOwnerHint?: string;
 }): ProviderPlugin | undefined {
-  return params.registry.providers
-    .map((entry) => Object.assign({}, entry.provider, { pluginId: entry.pluginId }))
-    .find((plugin) => {
-      if (params.apiOwnerHint) {
-        return (
-          matchesProviderLiteralId(plugin, params.provider) ||
-          matchesProviderId(plugin, params.apiOwnerHint)
-        );
-      }
-      return matchesProviderId(plugin, params.provider);
-    });
+  for (const entry of params.registry.providers) {
+    const plugin = entry.provider;
+    const matches = params.apiOwnerHint
+      ? matchesProviderLiteralId(plugin, params.provider) ||
+        matchesProviderId(plugin, params.apiOwnerHint)
+      : matchesProviderId(plugin, params.provider);
+    if (!matches) {
+      continue;
+    }
+    return Object.create(plugin, {
+      pluginId: {
+        configurable: true,
+        enumerable: true,
+        value: entry.pluginId,
+      },
+    }) as ProviderPlugin;
+  }
+  return undefined;
 }
 
 export function resolveProviderPluginsForHooks(params: {

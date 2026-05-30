@@ -414,6 +414,38 @@ describe("provider-runtime", () => {
     });
   });
 
+  it("skips unreadable provider hook refs while preserving healthy providers", () => {
+    const unreadableProvider = {
+      label: "Fuzz Plugin",
+      auth: [],
+    };
+    Object.defineProperty(unreadableProvider, "id", {
+      get() {
+        throw new Error("fuzzplugin provider id getter failed");
+      },
+    });
+    Object.defineProperty(unreadableProvider, "aliases", {
+      get() {
+        throw new Error("fuzzplugin provider aliases getter failed");
+      },
+    });
+
+    resolvePluginProvidersMock.mockReturnValue([
+      unreadableProvider,
+      {
+        id: "mockplugin",
+        label: "Mock Plugin",
+        hookAliases: ["mockplugin-cli"],
+        auth: [],
+      },
+    ] as never);
+
+    expectProviderRuntimePluginLoad({
+      provider: "mockplugin-cli",
+      expectedPluginId: "mockplugin",
+    });
+  });
+
   it("passes model refs for cli-backend runtime hook lookup", () => {
     resolvePluginProvidersMock.mockReturnValue([
       {
