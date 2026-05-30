@@ -135,4 +135,26 @@ describe("OpenAI strict tool schema normalization", () => {
       },
     ]);
   });
+
+  it("treats unreadable synthetic tool rows as strict-incompatible diagnostics", () => {
+    const healthyTool = {
+      name: "mockplugin_lookup",
+      parameters: { type: "object", properties: {}, additionalProperties: false },
+    };
+    const tools = [undefined, healthyTool] as unknown[];
+    Object.defineProperty(tools, "0", {
+      enumerable: true,
+      get() {
+        throw new Error("fuzzplugin tool row exploded");
+      },
+    });
+
+    expect(resolveOpenAIStrictToolFlagForInventory(tools as never, true)).toBe(false);
+    expect(findOpenAIStrictToolSchemaDiagnostics(tools as never)).toEqual([
+      {
+        toolIndex: 0,
+        violations: ["tool[0].parameters"],
+      },
+    ]);
+  });
 });

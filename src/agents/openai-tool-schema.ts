@@ -176,6 +176,44 @@ type OpenAIStrictToolSchemaDiagnostic = {
   violations: string[];
 };
 
+type OpenAIToolEntryRead =
+  | {
+      ok: true;
+      tool: ToolWithParameters;
+      toolIndex: number;
+    }
+  | {
+      ok: false;
+      toolIndex: number;
+      violations: string[];
+    };
+
+function unreadableOpenAIToolEntry(toolIndex: number): OpenAIToolEntryRead {
+  return {
+    ok: false,
+    toolIndex,
+    violations: [`tool[${toolIndex}].parameters`],
+  };
+}
+
+function copyOpenAIToolEntries(tools: readonly ToolWithParameters[]): OpenAIToolEntryRead[] {
+  let length = 0;
+  try {
+    length = tools.length;
+  } catch {
+    return [unreadableOpenAIToolEntry(0)];
+  }
+  const entries: OpenAIToolEntryRead[] = [];
+  for (let toolIndex = 0; toolIndex < length; toolIndex += 1) {
+    try {
+      entries.push({ ok: true, tool: tools[toolIndex], toolIndex });
+    } catch {
+      entries.push(unreadableOpenAIToolEntry(toolIndex));
+    }
+  }
+  return entries;
+}
+
 function readOpenAIToolName(tool: ToolWithParameters): string | undefined {
   try {
     const name = tool.name;
@@ -200,7 +238,16 @@ function formatOpenAIToolSchemaDiagnosticPath(toolName: string | undefined, tool
 export function findOpenAIStrictToolSchemaDiagnostics(
   tools: readonly ToolWithParameters[],
 ): OpenAIStrictToolSchemaDiagnostic[] {
-  return tools.flatMap((tool, toolIndex) => {
+  return copyOpenAIToolEntries(tools).flatMap((entry) => {
+    if (!entry.ok) {
+      return [
+        {
+          toolIndex: entry.toolIndex,
+          violations: entry.violations,
+        },
+      ];
+    }
+    const { tool, toolIndex } = entry;
     const toolName = readOpenAIToolName(tool);
     const diagnosticPath = formatOpenAIToolSchemaDiagnosticPath(toolName, toolIndex);
     const parameters = readOpenAIToolParameters(tool);
@@ -355,7 +402,11 @@ export function resolveOpenAIStrictToolFlagForInventory(
   if (strict !== true) {
     return strict === false ? false : undefined;
   }
-  return tools.every((tool) => {
+  return copyOpenAIToolEntries(tools).every((entry) => {
+    if (!entry.ok) {
+      return false;
+    }
+    const { tool } = entry;
     const parameters = readOpenAIToolParameters(tool);
     if (!parameters.ok) {
       return false;
