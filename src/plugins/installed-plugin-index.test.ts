@@ -8,6 +8,10 @@ import {
   readPersistedInstalledPluginIndexInstallRecordsSync,
   writePersistedInstalledPluginIndexInstallRecords,
 } from "./installed-plugin-index-records.js";
+import type {
+  InstalledPluginIndex,
+  InstalledPluginIndexRecord,
+} from "./installed-plugin-index-types.js";
 import {
   diffInstalledPluginIndexInvalidationReasons,
   getInstalledPluginRecord,
@@ -196,6 +200,42 @@ function createRichPluginFixture(params: { id?: string; packageVersion?: string 
         },
       },
     }),
+  };
+}
+
+function makeInstalledPluginRecord(
+  pluginId: string,
+  overrides: Partial<InstalledPluginIndexRecord> = {},
+): InstalledPluginIndexRecord {
+  return {
+    pluginId,
+    manifestPath: `plugins/${pluginId}/openclaw.plugin.json`,
+    manifestHash: `${pluginId}-manifest-hash`,
+    rootDir: `plugins/${pluginId}`,
+    origin: "global",
+    enabled: true,
+    startup: {
+      sidecar: false,
+      memory: false,
+      deferConfiguredChannelFullLoadUntilAfterListen: false,
+      agentHarnesses: [],
+    },
+    compat: [],
+    ...overrides,
+  };
+}
+
+function makeInstalledPluginIndex(plugins: readonly unknown[]): InstalledPluginIndex {
+  return {
+    version: 1,
+    hostContractVersion: "2026.4.25",
+    compatRegistryVersion: "test",
+    migrationVersion: 1,
+    policyHash: "test-policy",
+    generatedAtMs: 0,
+    installRecords: {},
+    plugins: plugins as readonly InstalledPluginIndexRecord[],
+    diagnostics: [],
   };
 }
 
@@ -592,6 +632,47 @@ describe("installed plugin index", () => {
     });
     expect(record?.installRecord).toBeUndefined();
     expect(isInstalledPluginEnabled(index, "demo")).toBe(true);
+  });
+
+  it("skips unreadable synthetic installed plugin rows while preserving healthy records", () => {
+    const unreadablePluginId = {};
+    Object.defineProperty(unreadablePluginId, "pluginId", {
+      enumerable: true,
+      get() {
+        throw new Error("fuzzplugin installed plugin id getter failed");
+      },
+    });
+    const unreadableEnabled = makeInstalledPluginRecord("fuzzplugin");
+    Object.defineProperty(unreadableEnabled, "enabled", {
+      enumerable: true,
+      get() {
+        throw new Error("fuzzplugin installed plugin enabled getter failed");
+      },
+    });
+
+    const plugins: unknown[] = [];
+    Object.defineProperty(plugins, "0", {
+      enumerable: true,
+      get() {
+        throw new Error("fuzzplugin installed plugin row read failed");
+      },
+    });
+    plugins[1] = unreadablePluginId;
+    plugins[2] = unreadableEnabled;
+    plugins[3] = makeInstalledPluginRecord("mockplugin");
+    const index = makeInstalledPluginIndex(plugins);
+
+    expect(listInstalledPluginRecords(index).map((plugin) => plugin.pluginId)).toEqual([
+      "fuzzplugin",
+      "mockplugin",
+    ]);
+    expect(listEnabledInstalledPluginRecords(index).map((plugin) => plugin.pluginId)).toEqual([
+      "mockplugin",
+    ]);
+    expect(getInstalledPluginRecord(index, "mockplugin")?.pluginId).toBe("mockplugin");
+    expect(getInstalledPluginRecord(index, "missing")).toBeUndefined();
+    expect(isInstalledPluginEnabled(index, "fuzzplugin")).toBe(false);
+    expect(isInstalledPluginEnabled(index, "mockplugin")).toBe(true);
   });
 
   it("keeps disabled plugins in inventory while excluding them from cold owner resolution", () => {

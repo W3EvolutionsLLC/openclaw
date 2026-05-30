@@ -41,6 +41,105 @@ export { extractPluginInstallRecordsFromInstalledPluginIndex } from "./installed
 export { diffInstalledPluginIndexInvalidationReasons } from "./installed-plugin-index-invalidation.js";
 export { resolveInstalledPluginIndexPolicyHash } from "./installed-plugin-index-policy.js";
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function readRecordValue(record: unknown, key: string): unknown {
+  if (!isRecord(record)) {
+    return undefined;
+  }
+  try {
+    return record[key];
+  } catch {
+    return undefined;
+  }
+}
+
+function readInstalledPluginIndexRecords(
+  pluginIndex: InstalledPluginIndex,
+): InstalledPluginIndexRecord[] {
+  const plugins = readRecordValue(pluginIndex, "plugins");
+  if (!Array.isArray(plugins)) {
+    return [];
+  }
+  let length: number;
+  try {
+    length = plugins.length;
+  } catch {
+    return [];
+  }
+
+  const records: InstalledPluginIndexRecord[] = [];
+  for (let slotIndex = 0; slotIndex < length; slotIndex += 1) {
+    let record: unknown;
+    try {
+      record = plugins[slotIndex];
+    } catch {
+      continue;
+    }
+    if (typeof readRecordValue(record, "pluginId") === "string") {
+      records.push(record as InstalledPluginIndexRecord);
+    }
+  }
+  return records;
+}
+
+function readInstalledPluginRecordId(record: InstalledPluginIndexRecord): string | undefined {
+  const pluginId = readRecordValue(record, "pluginId");
+  return typeof pluginId === "string" && pluginId ? pluginId : undefined;
+}
+
+function readInstalledPluginRecordEnabled(record: InstalledPluginIndexRecord): boolean {
+  return readRecordValue(record, "enabled") === true;
+}
+
+function readInstalledPluginRecordOrigin(
+  record: InstalledPluginIndexRecord,
+): InstalledPluginIndexRecord["origin"] | undefined {
+  const origin = readRecordValue(record, "origin");
+  return origin === "bundled" ||
+    origin === "global" ||
+    origin === "workspace" ||
+    origin === "config"
+    ? origin
+    : undefined;
+}
+
+function readStringArray(value: unknown): readonly string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  let length: number;
+  try {
+    length = value.length;
+  } catch {
+    return [];
+  }
+  const entries: string[] = [];
+  for (let index = 0; index < length; index += 1) {
+    let entry: unknown;
+    try {
+      entry = value[index];
+    } catch {
+      continue;
+    }
+    if (typeof entry === "string") {
+      entries.push(entry);
+    }
+  }
+  return entries;
+}
+
+function isInstalledPluginRecordEnabledByDefault(record: InstalledPluginIndexRecord): boolean {
+  return isPluginEnabledByDefaultForPlatform({
+    enabledByDefault: readRecordValue(record, "enabledByDefault") === true,
+    enabledByDefaultOnPlatforms: readStringArray(
+      readRecordValue(record, "enabledByDefaultOnPlatforms"),
+    ),
+  });
+}
+
 function buildInstalledPluginIndex(
   params: LoadInstalledPluginIndexParams & { refreshReason?: InstalledPluginIndexRefreshReason },
 ): { index: InstalledPluginIndex; discovery: PluginDiscoveryResult | undefined } {
@@ -104,7 +203,7 @@ export function refreshInstalledPluginIndex(
 export function listInstalledPluginRecords(
   index: InstalledPluginIndex,
 ): readonly InstalledPluginIndexRecord[] {
-  return index.plugins;
+  return readInstalledPluginIndexRecords(index);
 }
 
 export function listEnabledInstalledPluginRecords(
@@ -112,16 +211,21 @@ export function listEnabledInstalledPluginRecords(
   config?: OpenClawConfig,
 ): readonly InstalledPluginIndexRecord[] {
   if (!config) {
-    return index.plugins.filter((plugin) => plugin.enabled);
+    return readInstalledPluginIndexRecords(index).filter(readInstalledPluginRecordEnabled);
   }
-  return index.plugins.filter((plugin) => isInstalledPluginEnabled(index, plugin.pluginId, config));
+  return readInstalledPluginIndexRecords(index).filter((plugin) => {
+    const pluginId = readInstalledPluginRecordId(plugin);
+    return Boolean(pluginId && isInstalledPluginEnabled(index, pluginId, config));
+  });
 }
 
 export function getInstalledPluginRecord(
   index: InstalledPluginIndex,
   pluginId: string,
 ): InstalledPluginIndexRecord | undefined {
-  return index.plugins.find((plugin) => plugin.pluginId === pluginId);
+  return readInstalledPluginIndexRecords(index).find(
+    (plugin) => readInstalledPluginRecordId(plugin) === pluginId,
+  );
 }
 
 export function isInstalledPluginEnabled(
@@ -133,16 +237,25 @@ export function isInstalledPluginEnabled(
   if (!record) {
     return false;
   }
+  const recordPluginId = readInstalledPluginRecordId(record);
+  if (!recordPluginId) {
+    return false;
+  }
+  const recordEnabled = readInstalledPluginRecordEnabled(record);
   if (!config) {
-    return record.enabled;
+    return recordEnabled;
+  }
+  const origin = readInstalledPluginRecordOrigin(record);
+  if (!origin) {
+    return false;
   }
   const normalizedConfig = normalizePluginsConfig(config?.plugins);
   const state = resolveEffectivePluginActivationState({
-    id: record.pluginId,
-    origin: record.origin,
+    id: recordPluginId,
+    origin,
     config: normalizedConfig,
     rootConfig: config,
-    enabledByDefault: isPluginEnabledByDefaultForPlatform(record),
+    enabledByDefault: isInstalledPluginRecordEnabledByDefault(record),
   });
-  return state.enabled && (record.enabled || state.explicitlyEnabled);
+  return state.enabled && (recordEnabled || state.explicitlyEnabled);
 }
