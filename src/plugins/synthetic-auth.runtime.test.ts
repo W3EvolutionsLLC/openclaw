@@ -283,4 +283,96 @@ describe("synthetic auth runtime refs", () => {
     ]);
     expect(pluginRegistryMocks.loadPluginRegistrySnapshotWithMetadata).not.toHaveBeenCalled();
   });
+
+  it("skips unreadable active runtime synthetic auth entries while preserving healthy refs", () => {
+    const unreadableRuntimePlugin = Object.defineProperties(
+      {},
+      {
+        syntheticAuthRefs: {
+          get() {
+            throw new Error("fuzzplugin synthetic refs getter failed");
+          },
+        },
+        contracts: {
+          get() {
+            throw new Error("fuzzplugin external refs getter failed");
+          },
+        },
+      },
+    );
+    const unreadableProvider = {
+      provider: Object.defineProperty(
+        {
+          resolveSyntheticAuth: () => undefined,
+          resolveExternalAuthProfiles: () => [],
+        },
+        "id",
+        {
+          get() {
+            throw new Error("fuzzplugin provider id getter failed");
+          },
+        },
+      ),
+    };
+    const unreadableBackend = {
+      backend: Object.defineProperty(
+        {
+          resolveSyntheticAuth: () => undefined,
+          resolveExternalOAuthProfiles: () => [],
+        },
+        "id",
+        {
+          get() {
+            throw new Error("fuzzplugin backend id getter failed");
+          },
+        },
+      ),
+    };
+
+    getPluginRegistryState.mockReturnValue({
+      activeRegistry: {
+        plugins: [
+          unreadableRuntimePlugin,
+          {
+            syntheticAuthRefs: ["mockplugin-manifest"],
+            contracts: {
+              externalAuthProviders: ["mockplugin-external"],
+            },
+          },
+        ],
+        providers: [
+          unreadableProvider,
+          {
+            provider: {
+              id: "mockplugin-provider",
+              resolveSyntheticAuth: () => undefined,
+              resolveExternalAuthProfiles: () => [],
+            },
+          },
+        ],
+        cliBackends: [
+          unreadableBackend,
+          {
+            backend: {
+              id: "mockplugin-cli",
+              resolveSyntheticAuth: () => undefined,
+              resolveExternalOAuthProfiles: () => [],
+            },
+          },
+        ],
+      },
+    });
+
+    expect(resolveRuntimeSyntheticAuthProviderRefs()).toEqual([
+      "mockplugin-manifest",
+      "mockplugin-provider",
+      "mockplugin-cli",
+    ]);
+    expect(resolveRuntimeExternalAuthProviderRefs()).toEqual([
+      "mockplugin-external",
+      "mockplugin-provider",
+      "mockplugin-cli",
+    ]);
+    expect(pluginRegistryMocks.loadPluginRegistrySnapshotWithMetadata).not.toHaveBeenCalled();
+  });
 });

@@ -19,6 +19,72 @@ function uniqueProviderRefs(values: readonly string[]): string[] {
   return next;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function readRecordValue(value: unknown, key: string): unknown {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  try {
+    return value[key];
+  } catch {
+    return undefined;
+  }
+}
+
+function copyArrayEntries(value: unknown): unknown[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  let length = 0;
+  try {
+    length = value.length;
+  } catch {
+    return [];
+  }
+  const entries: unknown[] = [];
+  for (let index = 0; index < length; index += 1) {
+    try {
+      entries.push(value[index]);
+    } catch {
+      // Skip unreadable runtime registry entries; later healthy entries can still supply refs.
+    }
+  }
+  return entries;
+}
+
+function copyStringArrayEntries(value: unknown): string[] {
+  return copyArrayEntries(value).filter((entry): entry is string => typeof entry === "string");
+}
+
+function listRuntimePluginSyntheticAuthRefs(plugin: unknown): string[] {
+  return copyStringArrayEntries(readRecordValue(plugin, "syntheticAuthRefs"));
+}
+
+function listRuntimePluginExternalAuthProviderRefs(plugin: unknown): string[] {
+  return copyStringArrayEntries(
+    readRecordValue(readRecordValue(plugin, "contracts"), "externalAuthProviders"),
+  );
+}
+
+function readHookProviderId(
+  entry: unknown,
+  ownerKey: "provider" | "backend",
+  hookNames: string[],
+): string[] {
+  const owner = readRecordValue(entry, ownerKey);
+  const hasHook = hookNames.some(
+    (hookName) => typeof readRecordValue(owner, hookName) === "function",
+  );
+  if (!hasHook) {
+    return [];
+  }
+  const id = readRecordValue(owner, "id");
+  return typeof id === "string" ? [id] : [];
+}
+
 function resolveManifestSyntheticAuthProviderRefState(
   params: SyntheticAuthProviderRefParams = {},
 ): { refs: string[]; complete: boolean } {
@@ -73,21 +139,13 @@ export function resolveRuntimeSyntheticAuthProviderRefState(
   if (registry) {
     return {
       refs: uniqueProviderRefs([
-        ...registry.plugins.flatMap((plugin) => plugin.syntheticAuthRefs ?? []),
-        ...(registry.providers ?? [])
-          .filter(
-            (entry) =>
-              "resolveSyntheticAuth" in entry.provider &&
-              typeof entry.provider.resolveSyntheticAuth === "function",
-          )
-          .map((entry) => entry.provider.id),
-        ...(registry.cliBackends ?? [])
-          .filter(
-            (entry) =>
-              "resolveSyntheticAuth" in entry.backend &&
-              typeof entry.backend.resolveSyntheticAuth === "function",
-          )
-          .map((entry) => entry.backend.id),
+        ...copyArrayEntries(registry.plugins).flatMap(listRuntimePluginSyntheticAuthRefs),
+        ...copyArrayEntries(registry.providers).flatMap((entry) =>
+          readHookProviderId(entry, "provider", ["resolveSyntheticAuth"]),
+        ),
+        ...copyArrayEntries(registry.cliBackends).flatMap((entry) =>
+          readHookProviderId(entry, "backend", ["resolveSyntheticAuth"]),
+        ),
       ]),
       complete: true,
     };
@@ -101,25 +159,19 @@ export function resolveRuntimeExternalAuthProviderRefs(
   const registry = getPluginRegistryState()?.activeRegistry;
   if (registry) {
     return uniqueProviderRefs([
-      ...registry.plugins.flatMap((plugin) => plugin.contracts?.externalAuthProviders ?? []),
-      ...(registry.providers ?? [])
-        .filter(
-          (entry) =>
-            ("resolveExternalAuthProfiles" in entry.provider &&
-              typeof entry.provider.resolveExternalAuthProfiles === "function") ||
-            ("resolveExternalOAuthProfiles" in entry.provider &&
-              typeof entry.provider.resolveExternalOAuthProfiles === "function"),
-        )
-        .map((entry) => entry.provider.id),
-      ...(registry.cliBackends ?? [])
-        .filter(
-          (entry) =>
-            ("resolveExternalAuthProfiles" in entry.backend &&
-              typeof entry.backend.resolveExternalAuthProfiles === "function") ||
-            ("resolveExternalOAuthProfiles" in entry.backend &&
-              typeof entry.backend.resolveExternalOAuthProfiles === "function"),
-        )
-        .map((entry) => entry.backend.id),
+      ...copyArrayEntries(registry.plugins).flatMap(listRuntimePluginExternalAuthProviderRefs),
+      ...copyArrayEntries(registry.providers).flatMap((entry) =>
+        readHookProviderId(entry, "provider", [
+          "resolveExternalAuthProfiles",
+          "resolveExternalOAuthProfiles",
+        ]),
+      ),
+      ...copyArrayEntries(registry.cliBackends).flatMap((entry) =>
+        readHookProviderId(entry, "backend", [
+          "resolveExternalAuthProfiles",
+          "resolveExternalOAuthProfiles",
+        ]),
+      ),
     ]);
   }
   return resolveManifestExternalAuthProviderRefs(params);
