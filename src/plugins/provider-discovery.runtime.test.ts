@@ -187,6 +187,91 @@ function createProvider(params: { id: string; mode: "static" | "catalog" }): Pro
   };
 }
 
+function createUnreadableDiscoveryProviderFixtures(): {
+  staticCatalog: NonNullable<ProviderPlugin["staticCatalog"]>;
+  unreadableProvider: ProviderPlugin;
+  unreadableAuthProvider: ProviderPlugin;
+  healthyProvider: ProviderPlugin;
+} {
+  const staticCatalog = {
+    run: async () => ({
+      provider: {
+        baseUrl: "https://mock.example.test/v1",
+        models: [],
+      },
+    }),
+  };
+  const unreadableProvider = Object.create(null, {
+    id: {
+      enumerable: true,
+      get() {
+        throw new Error("fuzzplugin provider id getter failed");
+      },
+    },
+    label: {
+      enumerable: true,
+      value: "Fuzz Provider",
+    },
+    auth: {
+      enumerable: true,
+      value: [],
+    },
+    staticCatalog: {
+      enumerable: true,
+      value: staticCatalog,
+    },
+  }) as ProviderPlugin;
+  const unreadableAuthProvider = Object.create(null, {
+    id: {
+      enumerable: true,
+      value: "fuzzauthprovider",
+    },
+    label: {
+      enumerable: true,
+      value: "Fuzz Auth Provider",
+    },
+    auth: {
+      enumerable: true,
+      get() {
+        throw new Error("fuzzplugin provider auth getter failed");
+      },
+    },
+    staticCatalog: {
+      enumerable: true,
+      value: staticCatalog,
+    },
+  }) as ProviderPlugin;
+  const healthyProvider = Object.create(null, {
+    id: {
+      enumerable: true,
+      value: "mockprovider",
+    },
+    aliases: {
+      enumerable: true,
+      get() {
+        throw new Error("mockplugin provider aliases getter failed");
+      },
+    },
+    hookAliases: {
+      enumerable: true,
+      value: ["mockprovider-cli"],
+    },
+    label: {
+      enumerable: true,
+      value: "Mock Provider",
+    },
+    auth: {
+      enumerable: true,
+      value: [],
+    },
+    staticCatalog: {
+      enumerable: true,
+      value: staticCatalog,
+    },
+  }) as ProviderPlugin;
+  return { staticCatalog, unreadableProvider, unreadableAuthProvider, healthyProvider };
+}
+
 function requireResolvePluginProvidersParams(index = 0): {
   onlyPluginIds?: string[];
 } {
@@ -244,6 +329,172 @@ describe("resolvePluginDiscoveryProvidersRuntime", () => {
       { ...staticProvider, pluginId: "deepseek" },
     ]);
     expect(mocks.resolvePluginProviders).not.toHaveBeenCalled();
+  });
+
+  it("skips unreadable discovery entry providers while preserving healthy entries", () => {
+    const { staticCatalog, unreadableProvider, unreadableAuthProvider, healthyProvider } =
+      createUnreadableDiscoveryProviderFixtures();
+    const healthyFallbackProvider = createProvider({ id: "fuzzprovider", mode: "static" });
+    mocks.resolveDiscoveredProviderPluginIds.mockReturnValue(["fuzzplugin", "mockplugin"]);
+    mocks.loadPluginMetadataSnapshot.mockReturnValue({
+      index: { plugins: [] },
+      manifestRegistry: {
+        plugins: [createManifestPlugin("fuzzplugin"), createManifestPlugin("mockplugin")],
+        diagnostics: [],
+      },
+    });
+    mocks.loadSource.mockImplementation((modulePath: string) =>
+      modulePath.includes("/fuzzplugin/")
+        ? [unreadableProvider, unreadableAuthProvider, healthyFallbackProvider]
+        : healthyProvider,
+    );
+
+    const providers = resolvePluginDiscoveryProvidersRuntime({ discoveryEntriesOnly: true });
+
+    expect(providers.map((provider) => provider.id)).toEqual(["fuzzprovider", "mockprovider"]);
+    expect(Object.getPrototypeOf(providers[0])).toBe(Object.prototype);
+    expect(providers[0]?.pluginId).toBe("fuzzplugin");
+    expect(providers[0]?.label).toBe("fuzzprovider");
+    expect(providers[0]?.auth).toEqual([]);
+    expect(providers[1]?.pluginId).toBe("mockplugin");
+    expect(providers[1]?.aliases).toEqual([]);
+    expect(providers[1]?.hookAliases).toEqual(["mockprovider-cli"]);
+    expect(providers[1]?.staticCatalog).toBe(staticCatalog);
+    expect(mocks.resolvePluginProviders).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the full provider loader when discovery projection rejects an entry", () => {
+    const { unreadableProvider, healthyProvider } = createUnreadableDiscoveryProviderFixtures();
+    const healthyFallbackProvider = createProvider({ id: "fuzzprovider", mode: "catalog" });
+    const fullProvider = createProvider({ id: "fullprovider", mode: "catalog" });
+    mocks.resolveDiscoveredProviderPluginIds.mockReturnValue(["fuzzplugin", "mockplugin"]);
+    mocks.loadPluginMetadataSnapshot.mockReturnValue({
+      index: { plugins: [] },
+      manifestRegistry: {
+        plugins: [createManifestPlugin("fuzzplugin"), createManifestPlugin("mockplugin")],
+        diagnostics: [],
+      },
+    });
+    mocks.loadSource.mockImplementation((modulePath: string) =>
+      modulePath.includes("/fuzzplugin/")
+        ? [unreadableProvider, healthyFallbackProvider]
+        : healthyProvider,
+    );
+    mocks.resolvePluginProviders.mockReturnValue([fullProvider]);
+
+    const providers = resolvePluginDiscoveryProvidersRuntime({ onlyPluginIds: ["fuzzplugin"] });
+
+    expect(providers.map((provider) => provider.id)).toEqual(["mockprovider", "fullprovider"]);
+    expect(providers[0]?.pluginId).toBe("mockplugin");
+    expect(mocks.resolvePluginProviders).toHaveBeenCalledTimes(1);
+    expect(requireResolvePluginProvidersParams().onlyPluginIds).toEqual(["fuzzplugin"]);
+  });
+
+  it("returns no discovery-only providers when complete discovery coverage is required and projection fails", () => {
+    const { unreadableProvider, healthyProvider } = createUnreadableDiscoveryProviderFixtures();
+    const healthyFallbackProvider = createProvider({ id: "fuzzprovider", mode: "static" });
+    mocks.resolveDiscoveredProviderPluginIds.mockReturnValue(["fuzzplugin", "mockplugin"]);
+    mocks.loadPluginMetadataSnapshot.mockReturnValue({
+      index: { plugins: [] },
+      manifestRegistry: {
+        plugins: [createManifestPlugin("fuzzplugin"), createManifestPlugin("mockplugin")],
+        diagnostics: [],
+      },
+    });
+    mocks.loadSource.mockImplementation((modulePath: string) =>
+      modulePath.includes("/fuzzplugin/")
+        ? [unreadableProvider, healthyFallbackProvider]
+        : healthyProvider,
+    );
+
+    expect(
+      resolvePluginDiscoveryProvidersRuntime({
+        discoveryEntriesOnly: true,
+        requireCompleteDiscoveryEntryCoverage: true,
+      }),
+    ).toEqual([]);
+    expect(mocks.resolvePluginProviders).not.toHaveBeenCalled();
+  });
+
+  it("keeps requested plugins without discovery entries in the fallback load when every runtime entry falls back", () => {
+    const { unreadableProvider } = createUnreadableDiscoveryProviderFixtures();
+    const staticFallbackProvider = createProvider({ id: "fuzzprovider", mode: "static" });
+    const fullProviders = [createProvider({ id: "plainprovider", mode: "catalog" })];
+    mocks.resolveDiscoveredProviderPluginIds.mockReturnValue(["fuzzplugin", "plainplugin"]);
+    mocks.loadPluginMetadataSnapshot.mockReturnValue({
+      index: { plugins: [] },
+      manifestRegistry: {
+        plugins: [
+          createManifestPlugin("fuzzplugin"),
+          createManifestPluginWithoutDiscovery({ id: "plainplugin" }),
+        ],
+        diagnostics: [],
+      },
+    });
+    mocks.loadSource.mockReturnValue([unreadableProvider, staticFallbackProvider]);
+    mocks.resolvePluginProviders.mockReturnValue(fullProviders);
+
+    expect(
+      resolvePluginDiscoveryProvidersRuntime({
+        onlyPluginIds: ["fuzzplugin", "plainplugin"],
+      }),
+    ).toEqual(fullProviders);
+    expect(requireResolvePluginProvidersParams().onlyPluginIds).toEqual([
+      "fuzzplugin",
+      "plainplugin",
+    ]);
+  });
+
+  it("keeps manifest model catalog providers when the same plugin discovery entry falls back", () => {
+    const { unreadableProvider } = createUnreadableDiscoveryProviderFixtures();
+    const fullProvider = createProvider({ id: "fullprovider", mode: "catalog" });
+    mocks.resolveDiscoveredProviderPluginIds.mockReturnValue(["fuzzplugin"]);
+    mocks.loadPluginMetadataSnapshot.mockReturnValue({
+      index: { plugins: [] },
+      manifestRegistry: {
+        plugins: [
+          {
+            ...createManifestPluginWithModelCatalog("fuzzplugin"),
+            providerDiscoverySource: "/tmp/fuzzplugin/provider-discovery.ts",
+          },
+        ],
+        diagnostics: [],
+      },
+    });
+    mocks.loadSource.mockReturnValue(unreadableProvider);
+    mocks.resolvePluginProviders.mockReturnValue([fullProvider]);
+
+    const providers = resolvePluginDiscoveryProvidersRuntime({ onlyPluginIds: ["fuzzplugin"] });
+
+    expect(providers.map((provider) => provider.id)).toEqual(["fuzzplugin", "fullprovider"]);
+    expect(providers[0]?.staticCatalog).toBeDefined();
+    expect(requireResolvePluginProvidersParams().onlyPluginIds).toEqual(["fuzzplugin"]);
+  });
+
+  it("full-loads a plugin when its discovery module fails beside a manifest model catalog", () => {
+    const fullProvider = createProvider({ id: "fullprovider", mode: "catalog" });
+    mocks.resolveDiscoveredProviderPluginIds.mockReturnValue(["fuzzplugin"]);
+    mocks.loadPluginMetadataSnapshot.mockReturnValue({
+      index: { plugins: [] },
+      manifestRegistry: {
+        plugins: [
+          {
+            ...createManifestPluginWithModelCatalog("fuzzplugin"),
+            providerDiscoverySource: "/tmp/fuzzplugin/provider-discovery.ts",
+          },
+        ],
+        diagnostics: [],
+      },
+    });
+    mocks.loadSource.mockImplementation(() => {
+      throw new Error("fuzzplugin discovery module failed");
+    });
+    mocks.resolvePluginProviders.mockReturnValue([fullProvider]);
+
+    const providers = resolvePluginDiscoveryProvidersRuntime({ onlyPluginIds: ["fuzzplugin"] });
+
+    expect(providers.map((provider) => provider.id)).toEqual(["fuzzplugin", "fullprovider"]);
+    expect(requireResolvePluginProvidersParams().onlyPluginIds).toEqual(["fuzzplugin"]);
   });
 
   it("does not synthesize manifest entry providers for runtime-discovered catalogs", () => {

@@ -15,6 +15,7 @@ import {
   createPluginModuleLoaderCache,
   getCachedPluginModuleLoader,
 } from "./plugin-module-loader-cache.js";
+import { createProviderRuntimeProjection } from "./provider-plugin-projection.js";
 import { resolveDiscoveredProviderPluginIds } from "./providers.js";
 import { resolvePluginProviders } from "./providers.runtime.js";
 import type { ProviderPlugin } from "./types.js";
@@ -31,10 +32,13 @@ type ProviderDiscoveryModule =
 type ProviderDiscoveryEntryResult = {
   providers: ProviderPlugin[];
   complete: boolean;
+  entriesOnlyComplete: boolean;
   pluginRecords: PluginManifestRecord[];
   entryPluginIds: Set<string>;
   manifestEntryPluginIds: Set<string>;
   runtimeManifestCatalogPluginIds: Set<string>;
+  fallbackPluginIds: Set<string>;
+  manifestProviderRefs: WeakSet<ProviderPlugin>;
 };
 
 const providerDiscoveryModuleLoaders = createPluginModuleLoaderCache();
@@ -295,7 +299,9 @@ function resolveProviderDiscoveryEntryPlugins(params: {
   const entryRecords = pluginRecords.filter((plugin) => plugin.providerDiscoverySource);
   const entryPluginIds = new Set(entryRecords.map((plugin) => plugin.id));
   const manifestProviders = resolveManifestModelCatalogProviders(pluginRecords);
+  const manifestProviderRefs = new WeakSet(manifestProviders);
   const manifestEntryPluginIds = new Set<string>();
+  const fallbackPluginIds = new Set<string>();
   for (const pluginId of manifestProviders.map((provider) => provider.pluginId)) {
     if (pluginId) {
       manifestEntryPluginIds.add(pluginId);
@@ -313,10 +319,13 @@ function resolveProviderDiscoveryEntryPlugins(params: {
     return {
       providers: manifestProviders,
       complete,
+      entriesOnlyComplete,
       pluginRecords,
       entryPluginIds,
       manifestEntryPluginIds,
       runtimeManifestCatalogPluginIds,
+      fallbackPluginIds,
+      manifestProviderRefs,
     };
   }
   if (
@@ -326,10 +335,13 @@ function resolveProviderDiscoveryEntryPlugins(params: {
     return {
       providers: [],
       complete: false,
+      entriesOnlyComplete: false,
       pluginRecords,
       entryPluginIds,
       manifestEntryPluginIds,
       runtimeManifestCatalogPluginIds,
+      fallbackPluginIds,
+      manifestProviderRefs,
     };
   }
   const providers: ProviderPlugin[] = [];
@@ -340,31 +352,54 @@ function resolveProviderDiscoveryEntryPlugins(params: {
         modulePath: manifest.providerDiscoverySource!,
         rootDir: manifest.rootDir,
       });
-      providers.push(
-        ...normalizeDiscoveryModule(moduleExport).map((provider) =>
-          Object.assign({}, provider, { pluginId: manifest.id }),
-        ),
-      );
+      const entryProviders = normalizeDiscoveryModule(moduleExport);
+      const projectedProviders: ProviderPlugin[] = [];
+      let hasProjectionFailure = false;
+      for (const provider of entryProviders) {
+        const projected = createProviderRuntimeProjection({ pluginId: manifest.id, provider });
+        if (!projected) {
+          hasProjectionFailure = true;
+          continue;
+        }
+        projectedProviders.push(projected);
+      }
+      if (hasProjectionFailure) {
+        if (!manifestEntryPluginIds.has(manifest.id)) {
+          entryPluginIds.delete(manifest.id);
+        }
+        fallbackPluginIds.add(manifest.id);
+      }
+      providers.push(...projectedProviders);
     } catch {
       // Discovery fast path is optional. Fall back to the full plugin loader
       // below so existing plugin diagnostics/load behavior remains canonical.
+      if (!manifestEntryPluginIds.has(manifest.id)) {
+        entryPluginIds.delete(manifest.id);
+      }
+      fallbackPluginIds.add(manifest.id);
       return {
         providers: manifestProviders,
         complete: false,
+        entriesOnlyComplete: manifestEntryPluginIds.size === pluginIdSet.size,
         pluginRecords,
         entryPluginIds,
         manifestEntryPluginIds,
         runtimeManifestCatalogPluginIds,
+        fallbackPluginIds,
+        manifestProviderRefs,
       };
     }
   }
   return {
     providers: [...manifestProviders, ...providers],
-    complete,
+    complete: complete && fallbackPluginIds.size === 0,
+    entriesOnlyComplete: entriesOnlyComplete && fallbackPluginIds.size === 0,
     pluginRecords,
     entryPluginIds,
     manifestEntryPluginIds,
     runtimeManifestCatalogPluginIds,
+    fallbackPluginIds,
+    manifestProviderRefs,
   };
 }
 
@@ -378,6 +413,7 @@ function resolveSelectiveFullPluginIds(params: {
     .map((plugin) => plugin.id);
   const runtimeManifestCatalogPluginIds = listRuntimeManifestCatalogPluginIds(params.entryResult);
   return sortUniqueStrings([
+    ...params.entryResult.fallbackPluginIds,
     ...missingEntryCredentialPluginIds,
     ...runtimeManifestCatalogPluginIds,
   ]);
@@ -388,9 +424,12 @@ function listRuntimeManifestCatalogPluginIds(entryResult: ProviderDiscoveryEntry
 }
 
 function resolveMissingEntryPluginIds(entryResult: ProviderDiscoveryEntryResult): string[] {
-  return entryResult.pluginRecords
-    .filter((plugin) => !entryResult.entryPluginIds.has(plugin.id))
-    .map((plugin) => plugin.id);
+  return sortUniqueStrings([
+    ...entryResult.fallbackPluginIds,
+    ...entryResult.pluginRecords
+      .filter((plugin) => !entryResult.entryPluginIds.has(plugin.id))
+      .map((plugin) => plugin.id),
+  ]);
 }
 
 function resolveRuntimeEntryProviders(entryResult: ProviderDiscoveryEntryResult): ProviderPlugin[] {
@@ -407,6 +446,7 @@ function resolveRuntimeEntryProviders(entryResult: ProviderDiscoveryEntryResult)
 }
 
 function withoutFullLoadedPluginEntries(
+  entryResult: ProviderDiscoveryEntryResult,
   providers: ProviderPlugin[],
   pluginIds: readonly string[],
 ): ProviderPlugin[] {
@@ -414,7 +454,23 @@ function withoutFullLoadedPluginEntries(
     return providers;
   }
   const pluginIdSet = new Set(pluginIds);
-  return providers.filter((provider) => !provider.pluginId || !pluginIdSet.has(provider.pluginId));
+  return providers.filter(
+    (provider) =>
+      entryResult.manifestProviderRefs.has(provider) ||
+      !provider.pluginId ||
+      !pluginIdSet.has(provider.pluginId),
+  );
+}
+
+function isFallbackProvider(
+  entryResult: ProviderDiscoveryEntryResult,
+  provider: ProviderPlugin,
+): boolean {
+  return Boolean(
+    provider.pluginId &&
+    entryResult.fallbackPluginIds.has(provider.pluginId) &&
+    !entryResult.manifestProviderRefs.has(provider),
+  );
 }
 
 export function resolvePluginDiscoveryProvidersRuntime(params: {
@@ -433,18 +489,24 @@ export function resolvePluginDiscoveryProvidersRuntime(params: {
   const entryResult = resolveProviderDiscoveryEntryPlugins({ ...params, env });
   const entryProviders = entryResult.providers.filter(hasProviderCatalogHook);
   const runtimeEntryProviders = resolveRuntimeEntryProviders(entryResult);
+  const nonFallbackRuntimeEntryProviders = runtimeEntryProviders.filter(
+    (provider) => !isFallbackProvider(entryResult, provider),
+  );
   if (params.discoveryEntriesOnly === true) {
+    if (params.requireCompleteDiscoveryEntryCoverage && !entryResult.entriesOnlyComplete) {
+      return [];
+    }
     return entryProviders;
   }
   if (
     entryResult.providers.length > 0 &&
     entryResult.complete &&
-    runtimeEntryProviders.length === entryResult.providers.length &&
+    nonFallbackRuntimeEntryProviders.length === entryResult.providers.length &&
     entryResult.runtimeManifestCatalogPluginIds.size === 0
   ) {
-    return runtimeEntryProviders;
+    return nonFallbackRuntimeEntryProviders;
   }
-  if (params.onlyPluginIds === undefined && runtimeEntryProviders.length > 0) {
+  if (params.onlyPluginIds === undefined && nonFallbackRuntimeEntryProviders.length > 0) {
     const fullPluginIds = resolveSelectiveFullPluginIds({
       entryResult,
       env,
@@ -459,11 +521,15 @@ export function resolvePluginDiscoveryProvidersRuntime(params: {
           })
         : [];
     return [
-      ...withoutFullLoadedPluginEntries(runtimeEntryProviders, fullPluginIds),
+      ...withoutFullLoadedPluginEntries(
+        entryResult,
+        nonFallbackRuntimeEntryProviders,
+        fullPluginIds,
+      ),
       ...fullProviders,
     ];
   }
-  if (runtimeEntryProviders.length > 0) {
+  if (nonFallbackRuntimeEntryProviders.length > 0) {
     const fullPluginIds = sortUniqueStrings([
       ...resolveMissingEntryPluginIds(entryResult),
       ...listRuntimeManifestCatalogPluginIds(entryResult),
@@ -478,7 +544,11 @@ export function resolvePluginDiscoveryProvidersRuntime(params: {
           })
         : [];
     return [
-      ...withoutFullLoadedPluginEntries(runtimeEntryProviders, fullPluginIds),
+      ...withoutFullLoadedPluginEntries(
+        entryResult,
+        nonFallbackRuntimeEntryProviders,
+        fullPluginIds,
+      ),
       ...fullProviders,
     ];
   }
@@ -492,18 +562,25 @@ export function resolvePluginDiscoveryProvidersRuntime(params: {
     });
   }
   if (entryProviders.length > 0) {
+    const entryProviderPluginIds = entryProviders
+      .map((provider) => provider.pluginId)
+      .filter((pluginId): pluginId is string => typeof pluginId === "string" && pluginId !== "");
     const fullPluginIds = sortUniqueStrings(
-      entryProviders
-        .map((provider) => provider.pluginId)
-        .filter((pluginId): pluginId is string => typeof pluginId === "string" && pluginId !== ""),
+      entryResult.fallbackPluginIds.size > 0
+        ? [...entryProviderPluginIds, ...resolveMissingEntryPluginIds(entryResult)]
+        : entryProviderPluginIds,
     );
     if (fullPluginIds.length > 0) {
-      return resolvePluginProviders({
+      const fullProviders = resolvePluginProviders({
         ...params,
         env,
         bundledProviderVitestCompat,
         onlyPluginIds: fullPluginIds,
       });
+      return [
+        ...entryProviders.filter((provider) => entryResult.manifestProviderRefs.has(provider)),
+        ...fullProviders,
+      ];
     }
   }
   return resolvePluginProviders({
