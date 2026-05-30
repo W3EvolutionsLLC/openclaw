@@ -21,9 +21,96 @@ import { ADMIN_SCOPE, READ_SCOPE, WRITE_SCOPE } from "../operator-scopes.js";
 import type { GatewayRequestHandlers } from "./types.js";
 
 const log = createSubsystemLogger("gateway/plugin-host-hooks");
+const controlUiSurfaces = new Set(["session", "tool", "run", "settings"]);
 
 function formatSessionActionPayloadSchemaErrors(errors: JsonSchemaValidationError[]): string {
   return errors.map((error) => error.text).join("; ");
+}
+
+function readRecordField(
+  value: unknown,
+  field: string,
+): { ok: true; value: unknown } | { ok: false } {
+  try {
+    if ((typeof value !== "object" && typeof value !== "function") || value === null) {
+      return { ok: false };
+    }
+    return { ok: true, value: (value as Record<string, unknown>)[field] };
+  } catch {
+    return { ok: false };
+  }
+}
+
+function readNonEmptyStringField(value: unknown, field: string): string | undefined {
+  const read = readRecordField(value, field);
+  if (!read.ok || typeof read.value !== "string") {
+    return undefined;
+  }
+  const trimmed = read.value.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+function readControlUiDescriptorSchema(value: unknown): JsonSchemaValue | undefined {
+  const read = readRecordField(value, "schema");
+  if (!read.ok || read.value === undefined || !isPluginJsonValue(read.value)) {
+    return undefined;
+  }
+  return read.value as JsonSchemaValue;
+}
+
+function readControlUiDescriptorRequiredScopes(value: unknown): string[] | undefined {
+  const read = readRecordField(value, "requiredScopes");
+  if (!read.ok || read.value === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(read.value)) {
+    return undefined;
+  }
+  const scopes: string[] = [];
+  for (const scope of read.value) {
+    if (typeof scope !== "string") {
+      return undefined;
+    }
+    const trimmed = scope.trim();
+    if (!trimmed) {
+      return undefined;
+    }
+    scopes.push(trimmed);
+  }
+  return scopes;
+}
+
+function projectControlUiDescriptor(entry: unknown): Record<string, unknown> | undefined {
+  const pluginId = readNonEmptyStringField(entry, "pluginId");
+  if (!pluginId) {
+    return undefined;
+  }
+  const descriptor = readRecordField(entry, "descriptor");
+  if (!descriptor.ok) {
+    return undefined;
+  }
+  const id = readNonEmptyStringField(descriptor.value, "id");
+  const label = readNonEmptyStringField(descriptor.value, "label");
+  const surface = readNonEmptyStringField(descriptor.value, "surface");
+  if (!id || !label || !surface || !controlUiSurfaces.has(surface)) {
+    return undefined;
+  }
+  const pluginName = readNonEmptyStringField(entry, "pluginName");
+  const description = readNonEmptyStringField(descriptor.value, "description");
+  const placement = readNonEmptyStringField(descriptor.value, "placement");
+  const schema = readControlUiDescriptorSchema(descriptor.value);
+  const requiredScopes = readControlUiDescriptorRequiredScopes(descriptor.value);
+  return {
+    id,
+    pluginId,
+    ...(pluginName ? { pluginName } : {}),
+    surface,
+    label,
+    ...(description ? { description } : {}),
+    ...(placement ? { placement } : {}),
+    ...(schema !== undefined ? { schema } : {}),
+    ...(requiredScopes ? { requiredScopes } : {}),
+  };
 }
 
 function validatePluginSessionActionJsonFields(
@@ -50,12 +137,10 @@ export const pluginHostHookHandlers: GatewayRequestHandlers = {
       );
       return;
     }
-    const descriptors = (getActivePluginRegistry()?.controlUiDescriptors ?? []).map((entry) =>
-      Object.assign({}, entry.descriptor, {
-        pluginId: entry.pluginId,
-        pluginName: entry.pluginName,
-      }),
-    );
+    const descriptors = (getActivePluginRegistry()?.controlUiDescriptors ?? []).flatMap((entry) => {
+      const descriptor = projectControlUiDescriptor(entry);
+      return descriptor ? [descriptor] : [];
+    });
     respond(true, { ok: true, descriptors }, undefined);
   },
   "plugins.sessionAction": async ({ params, client, respond }) => {
