@@ -147,6 +147,70 @@ describe("webHandlers web.login.start", () => {
     expect(stopChannel).toHaveBeenCalledWith("whatsapp", "default");
     expect(startChannel).not.toHaveBeenCalled();
   });
+
+  it("skips unreadable gateway method descriptors while preserving a healthy login provider", async () => {
+    const unreadableDescriptor = Object.create(null, {
+      name: {
+        enumerable: true,
+        get() {
+          throw new Error("fuzzplugin gateway method descriptor name is unreadable");
+        },
+      },
+    });
+    const loginWithQrStart = vi.fn().mockResolvedValue({
+      connected: true,
+      message: "connected",
+    });
+    const unreadableGatewayMethods = [undefined];
+    Object.defineProperty(unreadableGatewayMethods, "0", {
+      enumerable: true,
+      get() {
+        throw new Error("fuzzplugin gateway method entry is unreadable");
+      },
+    });
+    const unreadableDescriptors = [undefined, unreadableDescriptor];
+    Object.defineProperty(unreadableDescriptors, "0", {
+      enumerable: true,
+      get() {
+        throw new Error("fuzzplugin gateway method descriptor entry is unreadable");
+      },
+    });
+    const fuzzPlugin = Object.create(null, {
+      id: { enumerable: true, value: "fuzzplugin" },
+      gatewayMethods: { enumerable: true, value: unreadableGatewayMethods },
+      gatewayMethodDescriptors: { enumerable: true, value: unreadableDescriptors },
+      gateway: { enumerable: true, value: { loginWithQrStart: vi.fn() } },
+    });
+    mocks.listChannelPlugins.mockReturnValue([
+      fuzzPlugin,
+      {
+        id: "mockplugin",
+        gatewayMethodDescriptors: [{ name: "web.login.start" }],
+        gateway: { loginWithQrStart },
+      },
+    ]);
+    const { context, startChannel, stopChannel } = createRunningWhatsappContext();
+    const respond = vi.fn();
+
+    await webHandlers["web.login.start"](
+      createOptions(
+        { accountId: "default" },
+        {
+          respond,
+          context,
+        },
+      ),
+    );
+
+    expect(stopChannel).toHaveBeenCalledWith("mockplugin", "default");
+    expect(startChannel).toHaveBeenCalledWith("mockplugin", "default");
+    expect(loginWithQrStart).toHaveBeenCalledOnce();
+    expect(respond).toHaveBeenCalledWith(
+      true,
+      { connected: true, message: "connected" },
+      undefined,
+    );
+  });
 });
 
 describe("webHandlers web.login.wait", () => {

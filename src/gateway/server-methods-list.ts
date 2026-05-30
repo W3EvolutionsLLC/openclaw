@@ -1,12 +1,8 @@
 import { listLoadedChannelPlugins } from "../channels/plugins/registry-loaded.js";
+import { listChannelPluginGatewayMethodNames } from "./channel-gateway-methods.js";
 import { GATEWAY_EVENT_UPDATE_AVAILABLE } from "./events.js";
 import { listCoreAdvertisedGatewayMethodNames } from "./methods/core-descriptors.js";
 import { GATEWAY_AUX_METHODS } from "./server-aux-methods.js";
-
-type GatewayMethodChannelPlugin = {
-  gatewayMethods?: readonly string[];
-  gatewayMethodDescriptors?: readonly { name: string }[];
-};
 
 export function listCoreGatewayMethods(): string[] {
   return listCoreAdvertisedGatewayMethodNames();
@@ -14,11 +10,8 @@ export function listCoreGatewayMethods(): string[] {
 
 function listChannelGatewayMethods(): string[] {
   const methods: string[] = [];
-  for (const plugin of listLoadedChannelPlugins() as GatewayMethodChannelPlugin[]) {
-    methods.push(...(plugin.gatewayMethods ?? []));
-    for (const descriptor of plugin.gatewayMethodDescriptors ?? []) {
-      methods.push(descriptor.name);
-    }
+  for (const plugin of listLoadedChannelPlugins()) {
+    methods.push(...listChannelPluginGatewayMethodNames(plugin));
   }
   return methods;
 }

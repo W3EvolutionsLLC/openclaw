@@ -1,5 +1,18 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+const loadedChannelPlugins = vi.hoisted(() => ({
+  value: [] as unknown[],
+}));
+
+vi.mock("../channels/plugins/registry-loaded.js", () => ({
+  listLoadedChannelPlugins: () => loadedChannelPlugins.value,
+}));
+
 import { GATEWAY_EVENTS, listGatewayMethods } from "./server-methods-list.js";
+
+afterEach(() => {
+  loadedChannelPlugins.value = [];
+});
 
 describe("GATEWAY_EVENTS", () => {
   it("advertises Talk event streams in hello features", () => {
@@ -61,5 +74,46 @@ describe("listGatewayMethods", () => {
     expect(methods).toContain("talk.session.submitToolResult");
     expect(methods).toContain("talk.session.steer");
     expect(methods).toContain("talk.session.close");
+  });
+
+  it("skips unreadable channel gateway method descriptors while preserving healthy siblings", () => {
+    const unreadableDescriptor = Object.create(null, {
+      name: {
+        enumerable: true,
+        get() {
+          throw new Error("fuzzplugin gateway method descriptor name is unreadable");
+        },
+      },
+    });
+    const unreadableGatewayMethods = [undefined];
+    Object.defineProperty(unreadableGatewayMethods, "0", {
+      enumerable: true,
+      get() {
+        throw new Error("fuzzplugin gateway method entry is unreadable");
+      },
+    });
+    const unreadableDescriptors = [undefined, unreadableDescriptor];
+    Object.defineProperty(unreadableDescriptors, "0", {
+      enumerable: true,
+      get() {
+        throw new Error("fuzzplugin gateway method descriptor entry is unreadable");
+      },
+    });
+    const fuzzPlugin = Object.create(null, {
+      id: { enumerable: true, value: "fuzzplugin" },
+      gatewayMethods: { enumerable: true, value: unreadableGatewayMethods },
+      gatewayMethodDescriptors: { enumerable: true, value: unreadableDescriptors },
+    });
+    loadedChannelPlugins.value = [
+      fuzzPlugin,
+      {
+        id: "mockplugin",
+        gatewayMethodDescriptors: [{ name: "mockplugin.gateway.inspect" }],
+      },
+    ];
+
+    const methods = listGatewayMethods();
+
+    expect(methods).toContain("mockplugin.gateway.inspect");
   });
 });
