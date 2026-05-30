@@ -21,6 +21,20 @@ function createAdapter(id: string): MemoryEmbeddingProviderAdapter {
   };
 }
 
+function createUnreadableIdAdapter(): MemoryEmbeddingProviderAdapter {
+  return Object.defineProperty(
+    {
+      create: async () => ({ provider: null }),
+    },
+    "id",
+    {
+      get() {
+        throw new Error("fuzzplugin memory embedding id getter failed");
+      },
+    },
+  ) as MemoryEmbeddingProviderAdapter;
+}
+
 function expectRegisteredProviderEntry(
   id: string,
   entry: {
@@ -168,5 +182,23 @@ describe("memory embedding provider registry", () => {
       adapter: alpha,
       ownerPluginId: "memory-core",
     });
+  });
+
+  it("skips unreadable adapter ids while preserving healthy registry entries", () => {
+    const mockAdapter = createAdapter("mockplugin-memory");
+
+    expect(() =>
+      registerMemoryEmbeddingProvider(createUnreadableIdAdapter(), {
+        ownerPluginId: "fuzzplugin",
+      }),
+    ).not.toThrow();
+    registerMemoryEmbeddingProvider(mockAdapter, { ownerPluginId: "mockplugin" });
+
+    expectCurrentMemoryEmbeddingProvider("fuzzplugin-memory", undefined);
+    expectRegisteredProviderEntry("mockplugin-memory", {
+      adapter: mockAdapter,
+      ownerPluginId: "mockplugin",
+    });
+    expectMemoryEmbeddingProviderIds(["mockplugin-memory"]);
   });
 });

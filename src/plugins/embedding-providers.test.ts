@@ -21,6 +21,20 @@ function createAdapter(id: string): EmbeddingProviderAdapter {
   };
 }
 
+function createUnreadableIdAdapter(): EmbeddingProviderAdapter {
+  return Object.defineProperty(
+    {
+      create: async () => ({ provider: null }),
+    },
+    "id",
+    {
+      get() {
+        throw new Error("fuzzplugin embedding id getter failed");
+      },
+    },
+  ) as EmbeddingProviderAdapter;
+}
+
 beforeEach(() => {
   clearEmbeddingProviders();
 });
@@ -85,5 +99,24 @@ describe("embedding provider registry", () => {
       adapter,
       ownerPluginId: "local-protocol",
     });
+  });
+
+  it("skips unreadable adapter ids while preserving healthy registry entries", () => {
+    const mockAdapter = createAdapter("mockplugin-embedding");
+
+    expect(() =>
+      registerEmbeddingProvider(createUnreadableIdAdapter(), { ownerPluginId: "fuzzplugin" }),
+    ).not.toThrow();
+    registerEmbeddingProvider(mockAdapter, { ownerPluginId: "mockplugin" });
+
+    expect(getEmbeddingProvider("fuzzplugin-embedding")).toBeUndefined();
+    expect(getRegisteredEmbeddingProvider("mockplugin-embedding")).toEqual({
+      adapter: mockAdapter,
+      ownerPluginId: "mockplugin",
+    });
+    expect(listEmbeddingProviders().map((adapter) => adapter.id)).toEqual([
+      "openai-compatible",
+      "mockplugin-embedding",
+    ]);
   });
 });

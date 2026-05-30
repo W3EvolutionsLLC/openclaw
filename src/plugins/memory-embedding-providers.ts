@@ -113,11 +113,26 @@ function getMemoryEmbeddingProviders(): Map<string, RegisteredMemoryEmbeddingPro
   return created;
 }
 
+function readMemoryEmbeddingProviderAdapterId(
+  adapter: MemoryEmbeddingProviderAdapter,
+): string | undefined {
+  try {
+    const id = (adapter as { id?: unknown }).id;
+    return typeof id === "string" && id ? id : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function registerMemoryEmbeddingProvider(
   adapter: MemoryEmbeddingProviderAdapter,
   options?: { ownerPluginId?: string },
 ): void {
-  getMemoryEmbeddingProviders().set(adapter.id, {
+  const id = readMemoryEmbeddingProviderAdapterId(adapter);
+  if (!id) {
+    return;
+  }
+  getMemoryEmbeddingProviders().set(id, {
     adapter,
     ownerPluginId: options?.ownerPluginId,
   });
@@ -134,7 +149,9 @@ export function getMemoryEmbeddingProvider(id: string): MemoryEmbeddingProviderA
 }
 
 export function listRegisteredMemoryEmbeddingProviders(): RegisteredMemoryEmbeddingProvider[] {
-  return Array.from(getMemoryEmbeddingProviders().values());
+  return Array.from(getMemoryEmbeddingProviders().values()).filter((entry) =>
+    Boolean(readMemoryEmbeddingProviderAdapterId(entry.adapter)),
+  );
 }
 
 export function listMemoryEmbeddingProviders(): MemoryEmbeddingProviderAdapter[] {

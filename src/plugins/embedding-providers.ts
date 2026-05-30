@@ -34,11 +34,24 @@ function getEmbeddingProviders(): Map<string, RegisteredEmbeddingProvider> {
   return created;
 }
 
+function readEmbeddingProviderAdapterId(adapter: EmbeddingProviderAdapter): string | undefined {
+  try {
+    const id = (adapter as { id?: unknown }).id;
+    return typeof id === "string" && id ? id : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function registerEmbeddingProvider(
   adapter: EmbeddingProviderAdapter,
   options?: { ownerPluginId?: string },
 ): void {
-  getEmbeddingProviders().set(adapter.id, {
+  const id = readEmbeddingProviderAdapterId(adapter);
+  if (!id) {
+    return;
+  }
+  getEmbeddingProviders().set(id, {
     adapter,
     ownerPluginId: options?.ownerPluginId,
   });
@@ -49,7 +62,7 @@ export function getRegisteredEmbeddingProvider(
 ): RegisteredEmbeddingProvider | undefined {
   return (
     getEmbeddingProviders().get(id) ??
-    CORE_EMBEDDING_PROVIDERS.find((entry) => entry.adapter.id === id)
+    CORE_EMBEDDING_PROVIDERS.find((entry) => readEmbeddingProviderAdapterId(entry.adapter) === id)
   );
 }
 
@@ -58,11 +71,18 @@ export function getEmbeddingProvider(id: string): EmbeddingProviderAdapter | und
 }
 
 export function listRegisteredEmbeddingProviders(): RegisteredEmbeddingProvider[] {
-  const merged = new Map<string, RegisteredEmbeddingProvider>(
-    CORE_EMBEDDING_PROVIDERS.map((entry) => [entry.adapter.id, entry]),
-  );
+  const merged = new Map<string, RegisteredEmbeddingProvider>();
+  for (const entry of CORE_EMBEDDING_PROVIDERS) {
+    const id = readEmbeddingProviderAdapterId(entry.adapter);
+    if (id) {
+      merged.set(id, entry);
+    }
+  }
   for (const entry of getEmbeddingProviders().values()) {
-    merged.set(entry.adapter.id, entry);
+    const id = readEmbeddingProviderAdapterId(entry.adapter);
+    if (id) {
+      merged.set(id, entry);
+    }
   }
   return Array.from(merged.values());
 }
