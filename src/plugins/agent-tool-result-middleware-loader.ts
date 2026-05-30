@@ -7,6 +7,7 @@ import type {
 } from "./agent-tool-result-middleware-types.js";
 import {
   listAgentToolResultMiddlewares,
+  listAgentToolResultMiddlewaresFromRegistry,
   normalizeAgentToolResultMiddlewareRuntimeIds,
 } from "./agent-tool-result-middleware.js";
 import { loadOpenClawPlugins } from "./loader.js";
@@ -83,9 +84,7 @@ export async function loadAgentToolResultMiddlewaresForRuntime(params: {
         activate: false,
       });
 
-    return runtimeRegistry.agentToolResultMiddlewares
-      .filter((entry) => entry.runtimes.includes(params.runtime))
-      .map((entry) => entry.handler);
+    return listAgentToolResultMiddlewaresFromRegistry(runtimeRegistry, params.runtime);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     log.warn(`[${params.runtime}] failed to load tool result middleware plugins: ${detail}`);

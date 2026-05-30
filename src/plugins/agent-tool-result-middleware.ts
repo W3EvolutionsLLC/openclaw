@@ -3,6 +3,10 @@ import type {
   AgentToolResultMiddlewareOptions,
   AgentToolResultMiddlewareRuntime,
 } from "./agent-tool-result-middleware-types.js";
+import type {
+  PluginAgentToolResultMiddlewareRegistration,
+  PluginRegistry,
+} from "./registry-types.js";
 import { getActivePluginRegistry } from "./runtime.js";
 
 export const AGENT_TOOL_RESULT_MIDDLEWARE_RUNTIMES = [
@@ -91,12 +95,75 @@ export function normalizeAgentToolResultMiddlewareRuntimeIds(
   return normalized;
 }
 
+function copyAgentToolResultMiddlewareEntries(
+  entries: unknown,
+): PluginAgentToolResultMiddlewareRegistration[] {
+  if (!Array.isArray(entries)) {
+    return [];
+  }
+  let length = 0;
+  try {
+    length = entries.length;
+  } catch {
+    return [];
+  }
+  const copied: PluginAgentToolResultMiddlewareRegistration[] = [];
+  for (let index = 0; index < length; index += 1) {
+    try {
+      copied.push(entries[index]);
+    } catch {
+      // Skip unreadable middleware entries; later registrations can still handle results.
+    }
+  }
+  return copied;
+}
+
+function entryTargetsAgentToolResultRuntime(
+  entry: PluginAgentToolResultMiddlewareRegistration,
+  runtime: AgentToolResultMiddlewareRuntime,
+): boolean {
+  try {
+    const runtimes = entry.runtimes;
+    if (!Array.isArray(runtimes)) {
+      return false;
+    }
+    for (const candidate of runtimes) {
+      if (candidate === runtime) {
+        return true;
+      }
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+function readAgentToolResultMiddlewareHandler(
+  entry: PluginAgentToolResultMiddlewareRegistration,
+): AgentToolResultMiddleware | null {
+  try {
+    return typeof entry.handler === "function" ? entry.handler : null;
+  } catch {
+    return null;
+  }
+}
+
+export function listAgentToolResultMiddlewaresFromRegistry(
+  registry: PluginRegistry | null | undefined,
+  runtime: AgentToolResultMiddlewareRuntime,
+): AgentToolResultMiddleware[] {
+  const entries = copyAgentToolResultMiddlewareEntries(registry?.agentToolResultMiddlewares);
+  return entries.flatMap((entry) => {
+    if (!entryTargetsAgentToolResultRuntime(entry, runtime)) {
+      return [];
+    }
+    const handler = readAgentToolResultMiddlewareHandler(entry);
+    return handler ? [handler] : [];
+  });
+}
+
 export function listAgentToolResultMiddlewares(
   runtime: AgentToolResultMiddlewareRuntime,
 ): AgentToolResultMiddleware[] {
-  return (
-    getActivePluginRegistry()
-      ?.agentToolResultMiddlewares?.filter((entry) => entry.runtimes.includes(runtime))
-      .map((entry) => entry.handler) ?? []
-  );
+  return listAgentToolResultMiddlewaresFromRegistry(getActivePluginRegistry(), runtime);
 }

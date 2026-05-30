@@ -1,5 +1,12 @@
-import { describe, expect, it } from "vitest";
-import { normalizeAgentToolResultMiddlewareRuntimes } from "./agent-tool-result-middleware.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { AgentToolResultMiddleware } from "./agent-tool-result-middleware-types.js";
+import {
+  listAgentToolResultMiddlewares,
+  normalizeAgentToolResultMiddlewareRuntimes,
+} from "./agent-tool-result-middleware.js";
+import { createEmptyPluginRegistry } from "./registry-empty.js";
+import type { PluginAgentToolResultMiddlewareRegistration } from "./registry-types.js";
+import { setActivePluginRegistry } from "./runtime.js";
 
 describe("normalizeAgentToolResultMiddlewareRuntimes", () => {
   it("defaults omitted runtimes to every supported runtime", () => {
@@ -50,5 +57,49 @@ describe("normalizeAgentToolResultMiddlewareRuntimes", () => {
         runtimes: [{} as never, " codex ", 1 as never, "openclaw"],
       }),
     ).toEqual(["codex", "openclaw"]);
+  });
+});
+
+describe("listAgentToolResultMiddlewares", () => {
+  afterEach(() => {
+    setActivePluginRegistry(createEmptyPluginRegistry());
+  });
+
+  it("skips unreadable synthetic middleware entries while preserving healthy handlers", () => {
+    const registry = createEmptyPluginRegistry();
+    const healthyHandler: AgentToolResultMiddleware = vi.fn();
+    const unreadableEntry = {
+      pluginId: "fuzzplugin",
+      pluginName: "Fuzz Plugin",
+      rawHandler: vi.fn(),
+      source: "synthetic",
+    } as PluginAgentToolResultMiddlewareRegistration;
+    Object.defineProperties(unreadableEntry, {
+      runtimes: {
+        enumerable: true,
+        get() {
+          throw new Error("fuzzplugin middleware runtime read failed");
+        },
+      },
+      handler: {
+        enumerable: true,
+        get() {
+          throw new Error("fuzzplugin middleware handler read failed");
+        },
+      },
+    });
+    registry.agentToolResultMiddlewares.push(unreadableEntry, {
+      pluginId: "mockplugin",
+      pluginName: "Mock Plugin",
+      rawHandler: healthyHandler,
+      handler: healthyHandler,
+      runtimes: ["codex"],
+      source: "synthetic",
+    });
+
+    setActivePluginRegistry(registry);
+
+    expect(listAgentToolResultMiddlewares("codex")).toEqual([healthyHandler]);
+    expect(listAgentToolResultMiddlewares("openclaw")).toEqual([]);
   });
 });
