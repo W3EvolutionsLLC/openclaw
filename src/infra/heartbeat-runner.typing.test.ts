@@ -11,6 +11,7 @@ const TELEGRAM_TARGET = "-1001234567890";
 function installHeartbeatTypingPlugin(params: {
   sendTyping: NonNullable<NonNullable<ChannelPlugin["heartbeat"]>["sendTyping"]>;
   clearTyping?: NonNullable<ChannelPlugin["heartbeat"]>["clearTyping"];
+  withHostileEntry?: boolean;
 }) {
   const plugin: ChannelPlugin = {
     ...createOutboundTestPlugin({
@@ -27,7 +28,23 @@ function installHeartbeatTypingPlugin(params: {
       ...(params.clearTyping ? { clearTyping: params.clearTyping } : {}),
     },
   };
-  setActivePluginRegistry(createTestRegistry([{ pluginId: "telegram", plugin, source: "test" }]));
+  const hostileEntry = Object.defineProperty(
+    {
+      pluginId: "fuzzplugin",
+      source: "test",
+    },
+    "plugin",
+    {
+      get() {
+        throw new Error("fuzzplugin channel entry is unreadable");
+      },
+    },
+  );
+  const registry = createTestRegistry([{ pluginId: "telegram", plugin, source: "test" }]);
+  if (params.withHostileEntry) {
+    registry.channels = [hostileEntry, ...registry.channels] as never;
+  }
+  setActivePluginRegistry(registry);
 }
 
 function createHeartbeatConfig(params: {
@@ -107,6 +124,28 @@ describe("runHeartbeatOnce heartbeat typing", () => {
       expect(sendTyping.mock.invocationCallOrder[0]).toBeLessThan(
         replySpy.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
       );
+    });
+  });
+
+  it("skips unreadable channel entries when resolving heartbeat typing plugins", async () => {
+    await withTempHeartbeatSandbox(async ({ tmpDir, storePath, replySpy }) => {
+      const sendTyping = vi.fn(async () => undefined);
+      installHeartbeatTypingPlugin({ sendTyping, withHostileEntry: true });
+      const cfg = createHeartbeatConfig({ tmpDir, storePath });
+      await seedTelegramSession(storePath, cfg);
+      replySpy.mockResolvedValue({ text: "HEARTBEAT_OK" });
+
+      await runHeartbeatOnce({
+        cfg,
+        deps: {
+          getReplyFromConfig: replySpy,
+          getQueueSize: () => 0,
+          nowMs: () => 0,
+        },
+      });
+
+      expect(sendTyping).toHaveBeenCalledOnce();
+      expectTypingCall(sendTyping, { cfg, to: TELEGRAM_TARGET });
     });
   });
 

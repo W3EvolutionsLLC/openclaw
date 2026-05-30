@@ -47,6 +47,7 @@ import type { ReplyPayload } from "../auto-reply/types.js";
 import { normalizeChatType, type ChatType } from "../channels/chat-type.js";
 import { sendDurableMessageBatch } from "../channels/message/runtime.js";
 import { getChannelPlugin } from "../channels/plugins/index.js";
+import { getLoadedChannelPluginForRead } from "../channels/plugins/registry-loaded-read.js";
 import type {
   ChannelHeartbeatDeps,
   ChannelId,
@@ -74,7 +75,6 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { hasActiveCronJobs } from "../cron/active-jobs.js";
 import { resolveCronSession } from "../cron/isolated-agent/session.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
-import { getActivePluginChannelRegistry } from "../plugins/runtime.js";
 import {
   getCommandLaneSnapshots,
   getQueueSize,
@@ -240,9 +240,7 @@ function hasActiveReplyRunForAgent(
 }
 
 function resolveHeartbeatChannelPlugin(channel: string): ChannelPlugin | undefined {
-  const activePlugin = getActivePluginChannelRegistry()?.channels.find(
-    (entry) => entry.plugin.id === channel,
-  )?.plugin;
+  const activePlugin = getLoadedChannelPluginForRead(channel as ChannelId);
   return activePlugin ?? getChannelPlugin(channel as ChannelId);
 }
 
