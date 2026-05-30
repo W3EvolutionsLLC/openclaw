@@ -127,6 +127,56 @@ describe("provider flow install catalog contributions", () => {
     expect(resolvePluginProviders).not.toHaveBeenCalled();
   });
 
+  it("skips unreadable manifest auth choices while preserving healthy setup choices", () => {
+    const unreadableChoice = Object.defineProperty(
+      {
+        pluginId: "fuzzplugin",
+        providerId: "fuzzplugin",
+        methodId: "api-key",
+        choiceLabel: "Fuzz Provider API key",
+      },
+      "choiceId",
+      {
+        get() {
+          throw new Error("fuzzplugin choice id unavailable");
+        },
+      },
+    );
+    resolveManifestProviderAuthChoices.mockReturnValue([
+      unreadableChoice as unknown as ReturnType<ResolveManifestProviderAuthChoices>[number],
+      {
+        pluginId: "mockplugin",
+        providerId: "mockprovider",
+        methodId: "api-key",
+        choiceId: "mockprovider-api-key",
+        choiceLabel: "Mock Provider API key",
+        choiceHint: "Use mock provider",
+        onboardingScopes: ["text-inference"],
+      },
+    ]);
+
+    expect(resolveProviderSetupFlowContributions()).toEqual([
+      {
+        id: "provider:setup:mockprovider-api-key",
+        kind: "provider",
+        surface: "setup",
+        providerId: "mockprovider",
+        pluginId: "mockplugin",
+        option: {
+          value: "mockprovider-api-key",
+          label: "Mock Provider API key",
+          hint: "Use mock provider",
+          group: {
+            id: "mockprovider",
+            label: "Mock Provider API key",
+          },
+        },
+        onboardingScopes: ["text-inference"],
+        source: "manifest",
+      },
+    ]);
+  });
+
   it("prefers manifest setup contributions over duplicate install-catalog entries", () => {
     resolveManifestProviderAuthChoices.mockReturnValue([
       {
@@ -222,6 +272,64 @@ describe("provider flow install catalog contributions", () => {
       (installCatalogOptions as { includeUntrustedWorkspacePlugins?: boolean })
         .includeUntrustedWorkspacePlugins,
     ).toBe(false);
+  });
+
+  it("skips unreadable install-catalog choices while preserving healthy setup choices", () => {
+    const unreadableEntry = Object.defineProperty(
+      {
+        pluginId: "fuzzplugin",
+        providerId: "fuzzprovider",
+        methodId: "api-key",
+        choiceLabel: "Fuzz Provider API key",
+        label: "Fuzz Provider",
+        origin: "global",
+        install: {
+          npmSpec: "@vendor/fuzzplugin",
+        },
+      },
+      "choiceId",
+      {
+        get() {
+          throw new Error("fuzzplugin install choice id unavailable");
+        },
+      },
+    );
+    resolveProviderInstallCatalogEntries.mockReturnValue([
+      unreadableEntry as unknown as ReturnType<ResolveProviderInstallCatalogEntries>[number],
+      {
+        pluginId: "mockplugin",
+        providerId: "mockprovider",
+        methodId: "api-key",
+        choiceId: "mockprovider-api-key",
+        choiceLabel: "Mock Provider API key",
+        groupId: "mockprovider",
+        groupLabel: "Mock Provider",
+        label: "Mock Provider",
+        origin: "global",
+        install: {
+          npmSpec: "@vendor/mockplugin",
+        },
+      },
+    ]);
+
+    expect(resolveProviderSetupFlowContributions()).toEqual([
+      {
+        id: "provider:setup:mockprovider-api-key",
+        kind: "provider",
+        surface: "setup",
+        providerId: "mockprovider",
+        pluginId: "mockplugin",
+        option: {
+          value: "mockprovider-api-key",
+          label: "Mock Provider API key",
+          group: {
+            id: "mockprovider",
+            label: "Mock Provider",
+          },
+        },
+        source: "install-catalog",
+      },
+    ]);
   });
 
   it("adds a fallback group when install-catalog entries omit group metadata", () => {
