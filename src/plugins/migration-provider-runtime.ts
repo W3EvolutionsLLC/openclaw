@@ -8,11 +8,20 @@ import { resolveManifestContractRuntimePluginResolution } from "./manifest-contr
 import { ensureStandaloneRuntimePluginRegistryLoaded } from "./runtime/standalone-runtime-registry-loader.js";
 import type { MigrationProviderPlugin } from "./types.js";
 
+function readMigrationProviderId(provider: MigrationProviderPlugin): string | undefined {
+  try {
+    const id = (provider as { id?: unknown }).id;
+    return typeof id === "string" && id ? id : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function findMigrationProviderById(
   entries: ReadonlyArray<{ provider: MigrationProviderPlugin }>,
   providerId: string,
 ): MigrationProviderPlugin | undefined {
-  return entries.find((entry) => entry.provider.id === providerId)?.provider;
+  return entries.find((entry) => readMigrationProviderId(entry.provider) === providerId)?.provider;
 }
 
 function resolveMigrationProviderConfig(params: {
@@ -40,13 +49,16 @@ function mergeMigrationProviders(
   left: ReadonlyArray<{ provider: MigrationProviderPlugin }>,
   right: ReadonlyArray<{ provider: MigrationProviderPlugin }>,
 ): MigrationProviderPlugin[] {
-  const merged = new Map<string, MigrationProviderPlugin>();
+  const merged = new Map<string, { id: string; provider: MigrationProviderPlugin }>();
   for (const entry of [...left, ...right]) {
-    if (!merged.has(entry.provider.id)) {
-      merged.set(entry.provider.id, entry.provider);
+    const id = readMigrationProviderId(entry.provider);
+    if (id && !merged.has(id)) {
+      merged.set(id, { id, provider: entry.provider });
     }
   }
-  return [...merged.values()].toSorted((a, b) => a.id.localeCompare(b.id));
+  return [...merged.values()]
+    .toSorted((a, b) => a.id.localeCompare(b.id))
+    .map((entry) => entry.provider);
 }
 
 export function ensureStandaloneMigrationProviderRegistryLoaded(

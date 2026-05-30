@@ -86,6 +86,22 @@ function createMigrationProvider(id: string) {
   };
 }
 
+function createUnreadableMigrationProvider() {
+  return Object.defineProperty(
+    {
+      label: "fuzzplugin migration",
+      plan: vi.fn(),
+      apply: vi.fn(),
+    },
+    "id",
+    {
+      get() {
+        throw new Error("fuzzplugin migration provider id getter failed");
+      },
+    },
+  );
+}
+
 function requireMockCallArg(
   mockFn: { mock: { calls: unknown[][] } },
   label: string,
@@ -368,6 +384,68 @@ describe("migration provider runtime", () => {
     expect(resolvePluginMigrationProviders().map((provider) => provider.id)).toEqual([
       "active-import",
       "external-import",
+    ]);
+  });
+
+  it("skips unreadable migration provider ids while preserving healthy providers", () => {
+    const mockProvider = createMigrationProvider("mockplugin-import");
+    const active = createEmptyPluginRegistry();
+    active.migrationProviders.push(
+      {
+        pluginId: "fuzzplugin-active",
+        pluginName: "Fuzz Plugin Active",
+        source: "test",
+        provider: createUnreadableMigrationProvider(),
+      } as never,
+      {
+        pluginId: "mockplugin-active",
+        pluginName: "Mock Plugin Active",
+        source: "test",
+        provider: createMigrationProvider("mockplugin-active"),
+      } as never,
+    );
+    const loaded = createEmptyPluginRegistry();
+    loaded.migrationProviders.push(
+      {
+        pluginId: "fuzzplugin-loaded",
+        pluginName: "Fuzz Plugin Loaded",
+        source: "test",
+        provider: createUnreadableMigrationProvider(),
+      } as never,
+      {
+        pluginId: "mockplugin-loaded",
+        pluginName: "Mock Plugin Loaded",
+        source: "test",
+        provider: mockProvider,
+      } as never,
+    );
+    mocks.resolveRuntimePluginRegistry.mockImplementation((params?: unknown) =>
+      params === undefined ? active : loaded,
+    );
+    mocks.loadPluginRegistrySnapshot.mockReturnValue(
+      createMockPluginIndex([
+        {
+          pluginId: "mockplugin-loaded",
+          origin: "installed",
+          enabled: true,
+        },
+      ]),
+    );
+    mocks.loadPluginManifestRegistry.mockImplementation(() => ({
+      diagnostics: [],
+      plugins: [
+        {
+          id: "mockplugin-loaded",
+          origin: "installed",
+          contracts: { migrationProviders: ["mockplugin-import"] },
+        },
+      ],
+    }));
+
+    expect(resolvePluginMigrationProvider({ providerId: "mockplugin-import" })).toBe(mockProvider);
+    expect(resolvePluginMigrationProviders().map((provider) => provider.id)).toEqual([
+      "mockplugin-active",
+      "mockplugin-import",
     ]);
   });
 });
