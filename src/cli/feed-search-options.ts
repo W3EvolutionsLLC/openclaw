@@ -1,8 +1,4 @@
-import {
-  formatFeedInstallCommand,
-  type FeedEntryResult,
-  type FeedEntryType,
-} from "../../extensions/feeds/api.js";
+import type { FeedEntryResult, FeedEntryType } from "../../extensions/feeds/api.js";
 import { readConfigFileSnapshot } from "../config/config.js";
 import { isRecord } from "../shared/record-coerce.js";
 import { normalizeOptionalString } from "../shared/string-coerce.js";
@@ -78,8 +74,47 @@ export function formatFeedSearchEntry(entry: FeedEntryResult): string {
 }
 
 function feedInstallHint(entry: FeedEntryResult): string {
-  const command = formatFeedInstallCommand(entry);
+  const command = formatFeedInstallCommandForSearch(entry);
   return command === undefined ? "" : `\n  ${theme.muted(`Install: ${command}`)}`;
+}
+
+function formatFeedInstallCommandForSearch(entry: FeedEntryResult): string | undefined {
+  const install = isRecord(entry.install) ? entry.install : {};
+  const source = typeof install.source === "string" ? install.source : undefined;
+  const spec = typeof install.spec === "string" ? install.spec.trim() : "";
+  const clawhubSpec = typeof install.clawhubSpec === "string" ? install.clawhubSpec.trim() : "";
+  const npmSpec = typeof install.npmSpec === "string" ? install.npmSpec.trim() : "";
+  const slug = typeof install.slug === "string" ? install.slug.trim() : "";
+  if (entry.type === "plugin") {
+    const resolvedSpec =
+      clawhubSpec ||
+      (source === "clawhub" && spec ? normalizeClawHubSpec(spec) : "") ||
+      npmSpec ||
+      ((source === "npm" || source === "path" || source === "git") && spec ? spec : "");
+    return resolvedSpec ? formatOpenClawCommand(["plugins", "install", resolvedSpec]) : undefined;
+  }
+  if (entry.type === "skill") {
+    const resolvedSpec =
+      slug ||
+      (source === "clawhub" && spec ? spec.replace(/^clawhub:/u, "") : "") ||
+      ((source === "git" || source === "path" || source === "local") && spec ? spec : "");
+    return resolvedSpec ? formatOpenClawCommand(["skills", "install", resolvedSpec]) : undefined;
+  }
+  return undefined;
+}
+
+function normalizeClawHubSpec(value: string): string {
+  return value.startsWith("clawhub:") ? value : `clawhub:${value}`;
+}
+
+function formatOpenClawCommand(argv: readonly string[]): string {
+  return ["openclaw", ...argv].map(quoteCliArg).join(" ");
+}
+
+function quoteCliArg(value: string): string {
+  return /^[A-Za-z0-9_/:=.,@%+-]+$/u.test(value)
+    ? value
+    : "'" + value.replaceAll("'", "'\\''") + "'";
 }
 
 async function readFeedPluginEnabledForSearch(): Promise<boolean> {
