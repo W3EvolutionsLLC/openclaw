@@ -8,6 +8,7 @@ import {
 } from "../infra/update-check.js";
 import { VERSION } from "../version.js";
 
+/** Runs update probes using the configured channel and current install kind. */
 export async function getUpdateCheckResult(params: {
   timeoutMs: number;
   fetchGit: boolean;
@@ -15,6 +16,8 @@ export async function getUpdateCheckResult(params: {
   updateConfigChannel?: string | null;
 }): Promise<UpdateCheckResult> {
   const configChannel = normalizeUpdateChannel(params.updateConfigChannel);
+  // Resolve the package root at runtime so source checkouts, linked installs,
+  // and packaged builds all probe the correct git/package location.
   const root = await resolveOpenClawPackageRoot({
     moduleUrl: import.meta.url,
     argv1: process.argv[1],
@@ -91,6 +94,8 @@ export function formatUpdateOneLiner(update: UpdateCheckResult): string {
     if (update.registry?.latestVersion) {
       const cmp = compareSemverStrings(VERSION, update.registry.latestVersion);
       if (cmp === 0) {
+        // Git installs can be up to date on npm while still reporting branch
+        // state separately, so only package-manager installs get this label here.
         if (update.installKind !== "git") {
           parts.push("up to date");
         }

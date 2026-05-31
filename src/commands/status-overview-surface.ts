@@ -157,6 +157,8 @@ export function buildStatusOverviewRowsFromSurface(params: {
   decorateTailscaleOff?: (value: string) => string;
   decorateTailscaleWarn?: (value: string) => string;
 }) {
+  // Keep all overview variants on the shared row builder so JSON/fast/full
+  // status disagree only through explicitly supplied extra rows or decorators.
   return buildStatusOverviewSurfaceRows({
     cfg: params.surface.cfg,
     update: params.surface.update,
@@ -205,6 +207,8 @@ export function buildStatusGatewayJsonPayloadFromSurface(params: {
     | "gatewayProbeAuthWarning"
   >;
 }) {
+  // Gateway-only JSON intentionally omits service/node rows while using the same
+  // gateway fields as human-readable status output.
   return buildGatewayStatusJsonPayload({
     gatewayMode: params.surface.gatewayMode,
     gatewayConnection: params.surface.gatewayConnection,
