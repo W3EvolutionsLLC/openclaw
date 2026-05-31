@@ -27,6 +27,8 @@ function buildProviderAliasMap(params: ProviderAliasSource): ReadonlyMap<string,
       const alias = normalizeProviderId(aliasProvider);
       const provider = normalizeProviderId(target.provider);
       if (alias && provider) {
+        // Model catalog aliases are display/list aliases, not auth aliases; keep
+        // the map local to list/configured row canonicalization.
         aliases.set(alias, provider);
       }
     }

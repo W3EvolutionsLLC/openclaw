@@ -41,6 +41,8 @@ function findConfiguredRegistryModel(params: {
       config: params.cfg,
     })
   ) {
+    // Configured-mode registry probes should not resurrect models hidden by the
+    // same suppression rules used by normal list output.
     return undefined;
   }
   return model;
