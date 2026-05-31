@@ -136,6 +136,8 @@ async function applyLocalStatusRpcFallback(params: {
     return params.gatewayProbe;
   }
   const boundedFallbackTimeoutMs = Math.min(2000, Math.max(1000, params.timeoutMs));
+  // Keep fallback quick even when the caller requested a long status timeout;
+  // this path is only a second opinion for local loopback probes.
   const status = await loadGatewayCallModule()
     .then(({ callGateway }) =>
       callGateway({
@@ -256,6 +258,8 @@ export async function resolveGatewayProbeSnapshot(params: {
     gatewayProbeAuthWarning &&
     gatewayProbe?.ok === false
   ) {
+    // Human status has one gateway error slot; merge auth-resolution warnings
+    // into failed probes unless the caller wants separate fields.
     gatewayProbe.error = gatewayProbe.error
       ? `${gatewayProbe.error}; ${gatewayProbeAuthWarning}`
       : gatewayProbeAuthWarning;
@@ -322,6 +326,8 @@ export async function resolveSharedMemoryStatusSnapshot(params: {
     !hasExplicitMemorySearchConfig(cfg, agentId) &&
     !existsSync(defaultStorePath)
   ) {
+    // Default memory slot is lazy-created; do not load the memory stack just to
+    // report an absent default store.
     return null;
   }
   const resolvedMemory = params.resolveMemoryConfig(cfg, agentId);
@@ -331,6 +337,8 @@ export async function resolveSharedMemoryStatusSnapshot(params: {
   const shouldInspectStore =
     hasExplicitMemorySearchConfig(cfg, agentId) || existsSync(resolvedMemory.store.path);
   if (!shouldInspectStore) {
+    // Avoid creating a memory store from status unless the user explicitly
+    // configured memory search or the store already exists.
     return null;
   }
   return await resolveMemoryManagerStatusSnapshot(params, agentId);
@@ -355,6 +363,8 @@ async function resolveMemoryManagerStatusSnapshot(
     try {
       const currentStatus = manager.status();
       if (currentStatus.backend === "builtin" && manager.probeVectorStoreAvailability) {
+        // Built-in memory can report vector-store availability without forcing
+        // a full provider probe.
         await manager.probeVectorStoreAvailability();
       } else {
         await manager.probeVectorAvailability();
