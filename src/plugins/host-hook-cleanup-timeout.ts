@@ -16,6 +16,8 @@ export async function withPluginHostCleanupTimeout<T>(
 ): Promise<T> {
   let timeout: NodeJS.Timeout | undefined;
   try {
+    // Race cleanup against a host-owned timeout so a stuck plugin hook is
+    // reported without blocking the rest of host shutdown.
     return await Promise.race([
       Promise.resolve().then(cleanup),
       new Promise<never>((_, reject) => {
@@ -28,6 +30,8 @@ export async function withPluginHostCleanupTimeout<T>(
     ]);
   } finally {
     if (timeout) {
+      // Always clear the timer after either branch wins; otherwise successful
+      // cleanup could leave a later rejection queued on the event loop.
       clearTimeout(timeout);
     }
   }
