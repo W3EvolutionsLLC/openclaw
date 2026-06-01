@@ -739,6 +739,7 @@ export type ProviderPrepareExtraParamsContext = {
   thinkingLevel?: ThinkLevel;
 };
 
+/** Provider hook input for transport-specific extra-param patches. */
 export type ProviderExtraParamsForTransportContext = Omit<
   ProviderPrepareExtraParamsContext,
   "extraParams"
@@ -748,14 +749,17 @@ export type ProviderExtraParamsForTransportContext = Omit<
   extraParams: Record<string, unknown>;
 };
 
+/** Patch returned by transport-specific extra-param hooks. */
 export type ProviderExtraParamsForTransportResult = {
   patch?: Record<string, unknown> | null;
 };
 
+/** Provider hook input for merging provider-owned system prompt overlays. */
 export type ProviderResolvePromptOverlayContext = ProviderSystemPromptContributionContext & {
   baseOverlay?: ProviderSystemPromptContribution;
 };
 
+/** Provider-owned decision point for fallback follow-up delivery routing. */
 export type ProviderFollowupFallbackRouteContext = {
   config?: OpenClawConfig;
   agentDir?: string;
@@ -769,11 +773,13 @@ export type ProviderFollowupFallbackRouteContext = {
   dispatcherAvailable: boolean;
 };
 
+/** Follow-up fallback route chosen by a provider hook. */
 export type ProviderFollowupFallbackRouteResult = {
   route?: "origin" | "dispatcher" | "drop";
   reason?: string;
 };
 
+/** Provider-owned auth profile selection input for model/runtime resolution. */
 export type ProviderResolveAuthProfileIdContext = {
   config?: OpenClawConfig;
   agentDir?: string;
@@ -786,10 +792,13 @@ export type ProviderResolveAuthProfileIdContext = {
   authStore: AuthProfileStore;
 };
 
+/** Replay sanitization depth for provider transcript policy. */
 export type ProviderReplaySanitizeMode = "full" | "images-only";
 
+/** Tool-call id validation/repair mode for provider replay policy. */
 export type ProviderReplayToolCallIdMode = "strict" | "strict9";
 
+/** Reasoning output representation requested by a provider. */
 export type ProviderReasoningOutputMode = "native" | "tagged";
 
 /**
