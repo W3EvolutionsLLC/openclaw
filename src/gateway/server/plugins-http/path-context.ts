@@ -21,6 +21,7 @@ function normalizeProtectedPrefix(prefix: string): string {
   return collapsed.replace(/\/+$/, "");
 }
 
+/** Matches exact prefix boundaries plus still-encoded slash variants from security canonicalization. */
 export function prefixMatchPath(pathname: string, prefix: string): boolean {
   return (
     pathname === prefix || pathname.startsWith(`${prefix}/`) || pathname.startsWith(`${prefix}%`)
@@ -30,6 +31,7 @@ export function prefixMatchPath(pathname: string, prefix: string): boolean {
 const NORMALIZED_PROTECTED_PLUGIN_ROUTE_PREFIXES =
   PROTECTED_PLUGIN_ROUTE_PREFIXES.map(normalizeProtectedPrefix);
 
+/** Detects protected plugin path prefixes across decoded candidates and malformed raw paths. */
 export function isProtectedPluginRoutePathFromContext(context: PluginRoutePathContext): boolean {
   if (
     context.candidates.some((candidate) =>
@@ -48,6 +50,7 @@ export function isProtectedPluginRoutePathFromContext(context: PluginRoutePathCo
   );
 }
 
+/** Canonicalizes a request path once and carries every decoded candidate used for route matching. */
 export function resolvePluginRoutePathContext(pathname: string): PluginRoutePathContext {
   const canonical = canonicalizePathForSecurity(pathname);
   return {
