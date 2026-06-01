@@ -59,16 +59,23 @@ type RuntimeReplaceConfigFileParams = {
   writeOptions?: RuntimeWriteConfigOptions;
 };
 export type PluginRuntimeThinkingPolicyRequest = {
+  /** Provider id used to resolve model-specific thinking support. */
   provider?: string | null;
+  /** Model id or ref used to resolve supported thinking levels. */
   model?: string | null;
+  /** Optional catalog snapshot; omitted means use runtime model catalog state. */
   catalog?: import("../../auto-reply/thinking.js").ThinkingCatalogEntry[];
 };
 export type PluginRuntimeThinkingPolicyLevel = {
+  /** Stable thinking-level id accepted by model/runtime config. */
   id: import("../../auto-reply/thinking.js").ThinkLevel;
+  /** Human-readable label for UI or status output. */
   label: string;
 };
 export type PluginRuntimeThinkingPolicy = {
+  /** Thinking levels supported by the selected provider/model pair. */
   levels: PluginRuntimeThinkingPolicyLevel[];
+  /** Runtime default level, when the provider/model exposes one. */
   defaultLevel?: import("../../auto-reply/thinking.js").ThinkLevel | null;
 };
 
@@ -81,21 +88,29 @@ export type RuntimeLogger = {
 };
 
 export type RunHeartbeatOnceOptions = {
+  /** Operator-facing reason logged with the immediate heartbeat run. */
   reason?: string;
+  /** Agent id whose session/activity state should be considered. */
   agentId?: string;
+  /** Session key to route heartbeat delivery around. */
   sessionKey?: string;
   /** Override heartbeat config (e.g. `{ target: "last" }` to deliver to the last active channel). */
   heartbeat?: { target?: string };
 };
 
 export type LlmCompleteMessage = {
+  /** Chat role passed to the completion provider. */
   role: "system" | "user" | "assistant";
+  /** Message text sent to the model. */
   content: string;
 };
 
 export type LlmCompleteCaller = {
+  /** Runtime caller family used for audit output and guardrails. */
   kind: "plugin" | "context-engine" | "host" | "unknown";
+  /** Optional caller id, usually a plugin id. */
   id?: string;
+  /** Optional display name for audit/debug output. */
   name?: string;
 };
 
