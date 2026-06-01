@@ -17,7 +17,11 @@ export type SharedGatewaySessionGenerationState = {
   required: string | undefined | null;
 };
 
-/** Disconnect shared-auth clients whose auth generation no longer matches runtime state. */
+/**
+ * Disconnect shared-auth clients whose auth generation no longer matches
+ * runtime state. Device-token and other non-shared auth clients are left alone
+ * because their validity is tracked by different credential material.
+ */
 export function disconnectStaleSharedGatewayAuthClients(params: {
   /** Live Gateway clients to inspect. */
   clients: Iterable<SharedGatewayAuthClient>;
@@ -55,14 +59,21 @@ export function disconnectAllSharedGatewayAuthClients(
   }
 }
 
-/** Resolve the generation that new shared-auth clients must present. */
+/**
+ * Resolve the generation that new shared-auth clients must present. A null
+ * staged requirement means the current runtime snapshot is authoritative.
+ */
 export function getRequiredSharedGatewaySessionGeneration(
   state: SharedGatewaySessionGenerationState,
 ): string | undefined {
   return state.required === null ? state.current : state.required;
 }
 
-/** Update current generation and clear obsolete staged requirements. */
+/**
+ * Update current generation and clear obsolete staged requirements. This keeps
+ * hot-reload snapshots from rejecting clients with a generation that just became
+ * current.
+ */
 export function setCurrentSharedGatewaySessionGeneration(
   state: SharedGatewaySessionGenerationState,
   nextGeneration: string | undefined,
@@ -80,7 +91,11 @@ export function setCurrentSharedGatewaySessionGeneration(
   }
 }
 
-/** Apply generation policy after config writes that may rotate Gateway shared auth. */
+/**
+ * Apply generation policy after config writes that may rotate Gateway shared
+ * auth. Reload-disabled configs stage the new generation as required immediately;
+ * hot-reload configs advance current generation and disconnect stale clients.
+ */
 export function enforceSharedGatewaySessionGenerationForConfigWrite(params: {
   /** Mutable runtime generation state shared by config writes and WS auth. */
   state: SharedGatewaySessionGenerationState;
