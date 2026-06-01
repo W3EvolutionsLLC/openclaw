@@ -76,6 +76,8 @@ export function resolveChannelEntryMatch<T>(params: {
     break;
   }
   if (params.wildcardKey && Object.hasOwn(entries, params.wildcardKey)) {
+    // Keep wildcard metadata even when a direct entry exists so diagnostics can
+    // explain the fallback that would have applied.
     match.wildcardEntry = entries[params.wildcardKey];
     match.wildcardKey = params.wildcardKey;
   }
@@ -109,6 +111,8 @@ export function resolveChannelEntryMatchWithFallback<T>(params: {
       for (const [entryKey, entry] of Object.entries(params.entries ?? {})) {
         const normalizedEntry = normalizeKey(entryKey);
         if (normalizedEntry && normalizedKeys.includes(normalizedEntry)) {
+          // Preserve the original configured key as matchKey; callers surface it
+          // in status/debug output instead of the normalized comparison key.
           return {
             ...direct,
             entry,
@@ -178,6 +182,8 @@ export function resolveNestedAllowlistDecision(params: {
   innerMatched: boolean;
 }): boolean {
   if (!params.outerConfigured) {
+    // Unconfigured outer lists mean the whole nested policy is inactive; do not
+    // require an inner match until the outer scope has opted into restriction.
     return true;
   }
   if (!params.outerMatched) {
