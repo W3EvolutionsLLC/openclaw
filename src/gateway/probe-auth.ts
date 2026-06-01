@@ -69,6 +69,7 @@ function buildUnresolvedProbeAuthWarning(path: string): string {
   return `${path} SecretRef is unresolved in this command path; probing without configured auth credentials.`;
 }
 
+/** Converts unresolved SecretRef probe failures into operator-facing warnings. */
 function resolveGatewayProbeWarning(error: unknown): string | undefined {
   if (!isGatewaySecretRefUnavailableError(error)) {
     throw error;
@@ -76,6 +77,7 @@ function resolveGatewayProbeWarning(error: unknown): string | undefined {
   return buildUnresolvedProbeAuthWarning(error.path);
 }
 
+/** Resolves probe credentials synchronously for command paths that cannot read secret inputs. */
 export function resolveGatewayProbeAuth(params: {
   cfg: OpenClawConfig;
   mode: "local" | "remote";
@@ -85,6 +87,7 @@ export function resolveGatewayProbeAuth(params: {
   return resolveGatewayProbeCredentialsFromConfig(policy);
 }
 
+/** Resolves probe credentials with SecretRef support for async status/probe paths. */
 export async function resolveGatewayProbeAuthWithSecretInputs(params: {
   cfg: OpenClawConfig;
   mode: "local" | "remote";
@@ -101,6 +104,7 @@ export async function resolveGatewayProbeAuthWithSecretInputs(params: {
   });
 }
 
+/** Resolves probe auth but degrades unavailable SecretRefs into a warning instead of throwing. */
 export async function resolveGatewayProbeAuthSafeWithSecretInputs(params: {
   cfg: OpenClawConfig;
   mode: "local" | "remote";
@@ -128,6 +132,7 @@ export async function resolveGatewayProbeAuthSafeWithSecretInputs(params: {
   }
 }
 
+/** Synchronous safe probe auth resolver for legacy probe paths without SecretRef reads. */
 export function resolveGatewayProbeAuthSafe(params: {
   cfg: OpenClawConfig;
   mode: "local" | "remote";
