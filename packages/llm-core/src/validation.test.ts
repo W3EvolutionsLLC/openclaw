@@ -31,6 +31,20 @@ const nullableTypeBoxTool = {
   }),
 } satisfies Tool;
 
+const plainJsonUnionTool = {
+  name: "plain-json-union-tool",
+  description: "test plain JSON schema unions",
+  parameters: {
+    type: "object",
+    properties: {
+      amount: { anyOf: [{ type: "number" }, { type: "string" }] },
+      clearedAt: { anyOf: [{ type: "number" }, { type: "null" }] },
+    },
+    required: ["amount", "clearedAt"],
+    additionalProperties: false,
+  },
+} as Tool;
+
 describe("validateToolArguments", () => {
   it("coerces strict decimal numeric strings for plain JSON schemas", () => {
     expect(
@@ -71,5 +85,16 @@ describe("validateToolArguments", () => {
       toolsAllow: null,
       nested: { sessionKey: null },
     });
+  });
+
+  it("keeps ordered coercion for non-null plain JSON union values", () => {
+    expect(
+      validateToolArguments(plainJsonUnionTool, {
+        type: "toolCall",
+        id: "call-1",
+        name: "plain-json-union-tool",
+        arguments: { amount: "3.5", clearedAt: null },
+      }),
+    ).toEqual({ amount: 3.5, clearedAt: null });
   });
 });
