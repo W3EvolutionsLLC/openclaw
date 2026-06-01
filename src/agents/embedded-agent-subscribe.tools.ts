@@ -306,6 +306,11 @@ const TRUSTED_TOOL_RESULT_MEDIA = new Set([
 ]);
 const HTTP_URL_RE = /^https?:\/\//i;
 
+function isOpenClawOwnedTtsToolName(toolName: string): boolean {
+  const normalized = normalizeToolName(toolName);
+  return normalized === "tts" || normalized === "openclaw.tts";
+}
+
 export function isCoreToolResultMediaTrustedName(toolName?: string): boolean {
   if (!toolName) {
     return false;
@@ -351,16 +356,8 @@ export function isToolResultMediaTrusted(
   return isCoreToolResultMediaTrustedName(toolName);
 }
 
-function isTrustedOwnedTtsLocalMedia(
-  toolName: string | undefined,
-  result: unknown,
-  trustedLocalMediaToolNames?: ReadonlySet<string>,
-): boolean {
-  if (
-    !toolName ||
-    !isToolResultMediaTrusted(toolName, result, trustedLocalMediaToolNames) ||
-    normalizeToolName(toolName) !== "tts"
-  ) {
+function isTrustedOwnedTtsLocalMedia(toolName: string | undefined, result: unknown): boolean {
+  if (!toolName || !isOpenClawOwnedTtsToolName(toolName) || isExternalToolResult(result)) {
     return false;
   }
   const media = readToolResultDetails(result)?.media;
@@ -379,12 +376,11 @@ export function filterToolResultMediaUrls(
   if (mediaUrls.length === 0) {
     return mediaUrls;
   }
-  const trustedOwnedTtsLocalMedia = isTrustedOwnedTtsLocalMedia(
-    toolName,
-    result,
-    trustedLocalMediaToolNames,
-  );
-  if (isToolResultMediaTrusted(toolName, result, trustedLocalMediaToolNames)) {
+  const trustedOwnedTtsLocalMedia = isTrustedOwnedTtsLocalMedia(toolName, result);
+  if (
+    trustedOwnedTtsLocalMedia ||
+    isToolResultMediaTrusted(toolName, result, trustedLocalMediaToolNames)
+  ) {
     // When the current run provides its exact trusted local-media tool names,
     // require the raw emitted tool name to match one of them before allowing
     // local media paths.

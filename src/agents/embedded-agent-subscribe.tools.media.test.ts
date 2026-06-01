@@ -316,6 +316,37 @@ describe("extractToolResultMediaPaths", () => {
     ).toEqual(["/tmp/reply.opus"]);
   });
 
+  it("keeps trusted TTS local media for the qualified OpenClaw tool name", () => {
+    expect(
+      filterToolResultMediaUrls(
+        "openclaw.tts",
+        ["/tmp/reply.opus"],
+        {
+          details: {
+            media: {
+              mediaUrl: "/tmp/reply.opus",
+              trustedLocalMedia: true,
+            },
+          },
+        },
+        new Set(["web_search"]),
+      ),
+    ).toEqual(["/tmp/reply.opus"]);
+  });
+
+  it("does not trust external qualified TTS results with trustedLocalMedia", () => {
+    expect(
+      filterToolResultMediaUrls("external.tts", ["/tmp/reply.opus"], {
+        details: {
+          media: {
+            mediaUrl: "/tmp/reply.opus",
+            trustedLocalMedia: true,
+          },
+        },
+      }),
+    ).toStrictEqual([]);
+  });
+
   it("keeps local media for bundled plugin tool names trusted in this run", () => {
     expect(
       filterToolResultMediaUrls(

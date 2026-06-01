@@ -2,6 +2,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as ttsRuntime from "../../tts/tts.js";
 import { createTtsTool } from "./tts-tool.js";
 
+const routeReplyMock = vi.hoisted(() => vi.fn());
+
+vi.mock("../../auto-reply/reply/route-reply.runtime.js", () => ({
+  routeReply: routeReplyMock,
+}));
+
 let textToSpeechSpy: ReturnType<typeof vi.spyOn>;
 
 function requireRecord(value: unknown, label: string): Record<string, unknown> {
@@ -18,6 +24,7 @@ function latestTextToSpeechArgs(): Record<string, unknown> {
 describe("createTtsTool", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    routeReplyMock.mockReset().mockResolvedValue({ ok: true, messageId: "voice-1" });
     textToSpeechSpy = vi.spyOn(ttsRuntime, "textToSpeech");
   });
 
@@ -53,6 +60,7 @@ describe("createTtsTool", () => {
     expect(requireRecord(details.media, "TTS media details")).toEqual({
       mediaUrl: "/tmp/reply.opus",
       trustedLocalMedia: true,
+      spokenText: "hello",
       audioAsVoice: true,
     });
     expect(JSON.stringify(result.content)).not.toContain("MEDIA:");
@@ -73,6 +81,68 @@ describe("createTtsTool", () => {
     const media = requireRecord(requireRecord(result.details, "TTS result details").media, "media");
     expect(media.mediaUrl).toBe("/tmp/reply.mp3");
     expect(media.audioAsVoice).toBe(true);
+  });
+
+  it("auto-delivers synthesized media when agent delivery context is present", async () => {
+    const cfg = { channels: { whatsapp: {} } } as never;
+    textToSpeechSpy.mockResolvedValue({
+      success: true,
+      audioPath: "/tmp/reply.opus",
+      provider: "test",
+      voiceCompatible: true,
+    });
+
+    const tool = createTtsTool({
+      config: cfg,
+      agentChannel: "whatsapp",
+      agentTo: "+15551234567",
+      agentThreadId: "thread-1",
+      agentSessionKey: "agent:main:whatsapp:dm:+15551234567",
+      runId: "run-1",
+      agentAccountId: "personal",
+    });
+    const result = await tool.execute("call-1", { text: "hello" });
+
+    expect(routeReplyMock).toHaveBeenCalledWith({
+      payload: {
+        mediaUrl: "/tmp/reply.opus",
+        trustedLocalMedia: true,
+        spokenText: "hello",
+        audioAsVoice: true,
+      },
+      channel: "whatsapp",
+      to: "+15551234567",
+      sessionKey: "agent:main:whatsapp:dm:+15551234567",
+      accountId: "personal",
+      threadId: "thread-1",
+      cfg,
+      mirror: false,
+      replyKind: "tool",
+      runId: "run-1",
+    });
+    expect(
+      requireRecord(requireRecord(result.details, "TTS result details").media, "media"),
+    ).toEqual({
+      mediaUrl: "/tmp/reply.opus",
+      trustedLocalMedia: true,
+      spokenText: "hello",
+      audioAsVoice: true,
+      outbound: false,
+    });
+  });
+
+  it("does not auto-deliver synthesized media without a delivery target", async () => {
+    textToSpeechSpy.mockResolvedValue({
+      success: true,
+      audioPath: "/tmp/reply.opus",
+      provider: "test",
+      voiceCompatible: true,
+    });
+
+    const tool = createTtsTool({ agentChannel: "whatsapp" });
+    await tool.execute("call-1", { text: "hello" });
+
+    expect(routeReplyMock).not.toHaveBeenCalled();
   });
 
   it("passes an optional timeout to speech generation", async () => {
