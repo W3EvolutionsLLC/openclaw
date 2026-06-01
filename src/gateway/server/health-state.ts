@@ -18,6 +18,7 @@ let healthRefresh: Promise<HealthSummary> | null = null;
 let sensitiveHealthRefresh: Promise<HealthSummary> | null = null;
 let broadcastHealthUpdate: ((snap: HealthSummary) => void) | null = null;
 
+/** Builds the synchronous Gateway snapshot sent on connect before async health refresh fills in. */
 export function buildGatewaySnapshot(opts?: { includeSensitive?: boolean }): Snapshot {
   const cfg = getRuntimeConfig();
   const defaultAgentId = resolveDefaultAgentId(cfg);
@@ -52,27 +53,33 @@ export function buildGatewaySnapshot(opts?: { includeSensitive?: boolean }): Sna
   return snapshot;
 }
 
+/** Returns the last non-sensitive health summary cached for post-connect snapshots. */
 export function getHealthCache(): HealthSummary | null {
   return healthCache;
 }
 
+/** Returns the monotonic health version used by clients to ignore stale snapshots. */
 export function getHealthVersion(): number {
   return healthVersion;
 }
 
+/** Increments the system-presence version after presence-affecting changes. */
 export function incrementPresenceVersion(): number {
   presenceVersion += 1;
   return presenceVersion;
 }
 
+/** Returns the monotonic system-presence version included in Gateway snapshots. */
 export function getPresenceVersion(): number {
   return presenceVersion;
 }
 
+/** Installs the broadcast callback invoked after non-sensitive health refreshes. */
 export function setBroadcastHealthUpdate(fn: ((snap: HealthSummary) => void) | null) {
   broadcastHealthUpdate = fn;
 }
 
+/** Refreshes Gateway health with in-flight dedupe split by sensitive/non-sensitive views. */
 export async function refreshGatewayHealthSnapshot(opts?: {
   probe?: boolean;
   includeSensitive?: boolean;
