@@ -14,7 +14,7 @@ import type {
   ChannelConfiguredBindingMatch,
 } from "./types.adapters.js";
 
-/** Returns account match strength for exact/default, wildcard, or no match. */
+/** Returns account match strength: 0 no match, 1 wildcard, 2 exact/default. */
 export function resolveAccountMatchPriority(match: string | undefined, actual: string): 0 | 1 | 2 {
   const trimmed = (match ?? "").trim();
   if (!trimmed) {
@@ -45,7 +45,7 @@ export function resolveCompiledBindingChannel(raw: string): ConfiguredBindingCha
   return normalized ? (normalized as ConfiguredBindingChannel) : null;
 }
 
-/** Converts a runtime conversation ref into the canonical configured-binding ref shape. */
+/** Converts a runtime conversation ref into normalized channel/account/conversation fields. */
 export function toConfiguredBindingConversationRef(conversation: ConversationRef): {
   channel: ConfiguredBindingChannel;
   accountId: string;
@@ -77,7 +77,7 @@ export function materializeConfiguredBindingRecord(params: {
   });
 }
 
-/** Selects the best compiled binding rule for a canonical conversation ref. */
+/** Selects the highest-priority compiled binding for a canonical conversation ref. */
 export function resolveMatchingConfiguredBinding(params: {
   rules: CompiledConfiguredBinding[];
   conversation: ReturnType<typeof toConfiguredBindingConversationRef>;
