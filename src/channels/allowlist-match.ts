@@ -110,6 +110,7 @@ export function resolveAllowlistMatchSimple(params: {
   senderName?: string | null;
   allowNameMatching?: boolean;
 }): AllowlistMatch<"wildcard" | "id" | "name"> {
+  // Compile from the current array contents so in-place config edits are visible immediately.
   const allowFrom = compileSimpleAllowlist(params.allowFrom);
 
   if (allowFrom.set.size === 0) {
@@ -125,6 +126,7 @@ export function resolveAllowlistMatchSimple(params: {
     compiledAllowlist: allowFrom,
     candidates: [
       { value: senderId, source: "id" },
+      // Name matching is opt-in because display names can be mutable or ambiguous.
       ...(params.allowNameMatching === true && senderName
         ? ([{ value: senderName, source: "name" as const }] satisfies Array<{
             value?: string;
