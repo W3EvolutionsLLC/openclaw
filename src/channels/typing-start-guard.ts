@@ -30,6 +30,8 @@ export function createTypingStartGuard(params: {
   let tripped = false;
 
   const isBlocked = () => {
+    // Sealed turns and tripped breakers both fail closed before adapter state
+    // is touched; shouldBlock handles transient channel-specific suppression.
     if (params.isSealed()) {
       return true;
     }
@@ -45,6 +47,8 @@ export function createTypingStartGuard(params: {
     }
     try {
       await start();
+      // A successful refresh proves the adapter recovered, so only consecutive
+      // failures count toward the breaker threshold.
       consecutiveFailures = 0;
       return "started";
     } catch (err) {
