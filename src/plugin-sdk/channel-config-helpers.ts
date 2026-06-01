@@ -87,6 +87,8 @@ export function canBypassConfigWritePolicy(params: {
 }): boolean {
   return canBypassConfigWritePolicyShared({
     ...params,
+    // Webchat is the in-process control surface; normalize before comparison so
+    // channel case does not accidentally block internal config writes.
     isInternalMessageChannel: (channel) =>
       normalizeOptionalLowercaseString(channel) === INTERNAL_MESSAGE_CHANNEL,
   });
@@ -232,6 +234,8 @@ function createNamedAccountConfigBase<
       return params.defaultAccountId(cfg as Config);
     },
     setAccountEnabled({ cfg, accountId, enabled }) {
+      // Mutating helpers canonicalize account ids so case-only differences
+      // update the same config entry that read/authorization paths resolve.
       return params.setAccountEnabled({
         cfg,
         accountId: normalizeAccountId(accountId),
@@ -239,6 +243,8 @@ function createNamedAccountConfigBase<
       }) as Config;
     },
     deleteAccount({ cfg, accountId }) {
+      // Delete follows the same account-id normalization as enable/disable to
+      // avoid leaving duplicate account keys behind.
       return params.deleteAccount({
         cfg,
         accountId: normalizeAccountId(accountId),
@@ -473,6 +479,8 @@ export function createTopLevelChannelConfigBase<
       });
     },
     deleteAccount({ cfg }) {
+      // Top-level channels can either remove the whole section or clear only
+      // credential/account fields when non-account channel settings must remain.
       return params.deleteMode === "clear-fields"
         ? clearTopLevelChannelConfigFields({
             cfg: cfg as Config,
@@ -646,6 +654,8 @@ export function createScopedDmSecurityResolver<
     account: ResolvedAccount;
   }) => {
     const access = params.resolveAccess?.({ cfg, accountId, account });
+    // Explicit access resolvers win over resolved account fields; channels use
+    // this to project inherited/default DM policy without mutating the account.
     return buildAccountScopedDmSecurityPolicy({
       cfg,
       channelKey: params.channelKey,
