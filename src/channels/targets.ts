@@ -22,6 +22,8 @@ export type MessagingTargetParseOptions = {
 
 /** Build the canonical comparison key shared by channel target parsers and matchers. */
 export function normalizeTargetId(kind: MessagingTargetKind, id: string): string {
+  // Include the kind in the normalized key so a user id and channel id with the
+  // same provider-native string never compare as the same destination.
   return normalizeLowercaseStringOrEmpty(`${kind}:${id}`);
 }
 
@@ -61,6 +63,9 @@ export function parseTargetMention(params: {
   if (!match?.[1]) {
     return undefined;
   }
+  // Channel adapters own the mention regex and must put the provider-native id
+  // in capture group 1; keeping that contract here avoids channel-specific
+  // parsing branches in shared helpers.
   return buildMessagingTarget(params.kind, match[1], params.raw);
 }
 
@@ -82,6 +87,8 @@ export function parseTargetPrefixes(params: {
   raw: string;
   prefixes: Array<{ prefix: string; kind: MessagingTargetKind }>;
 }): MessagingTarget | undefined {
+  // Prefix order is caller-owned so platform-specific spellings can win before
+  // broader aliases that would parse the same raw token differently.
   for (const entry of params.prefixes) {
     const parsed = parseTargetPrefix({
       raw: params.raw,
@@ -155,6 +162,8 @@ export function requireTargetKind(params: {
     throw new Error(`${params.platform} ${kindLabel} id is required.`);
   }
   if (params.target.kind !== params.kind) {
+    // Mention the explicit prefix so ambiguous user/channel inputs can be
+    // corrected without exposing the normalized internal key format.
     throw new Error(`${params.platform} ${kindLabel} id is required (use ${kindLabel}:<id>).`);
   }
   return params.target.id;
