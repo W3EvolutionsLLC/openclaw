@@ -1766,6 +1766,7 @@ export type ProviderPlugin = {
    * preferred modern model candidate.
    */
   isModernModelRef?: (ctx: ProviderModernModelPolicyContext) => boolean | undefined;
+  /** UI metadata for onboarding/configure/model-picker surfaces. */
   wizard?: ProviderPluginWizard;
   /**
    * Provider-owned auth-profile API-key formatter.
@@ -1878,6 +1879,7 @@ export type ProviderPlugin = {
   shouldDeferSyntheticProfileAuth?: (
     ctx: ProviderDeferSyntheticProfileAuthContext,
   ) => boolean | undefined;
+  /** Optional setup callback after onboarding/configure chooses a model for this provider. */
   onModelSelected?: (ctx: ProviderModelSelectedContext) => Promise<void>;
 };
 
