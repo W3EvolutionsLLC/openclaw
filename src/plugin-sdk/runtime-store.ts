@@ -3,18 +3,24 @@ export type { PluginRuntime } from "../plugins/runtime/types.js";
 const pluginRuntimeStoreRegistryKey = Symbol.for("openclaw.plugin-sdk.runtime-store-registry");
 
 type PluginRuntimeStoreRegistry = Map<string, { runtime: unknown }>;
+
+/** Store options for a process-shared runtime slot with a caller-defined key. */
 type PluginRuntimeStoreKeyOptions = {
   /** Explicit shared slot key for advanced runtimes that are not keyed by plugin id. */
   key: string;
   /** Error thrown by `getRuntime` before the host binds the runtime. */
   errorMessage: string;
 };
+
+/** Store options for the common plugin-scoped runtime slot. */
 type PluginRuntimeStorePluginOptions = {
   /** Plugin id used to share the runtime slot across duplicate module instances. */
   pluginId: string;
   /** Error thrown by `getRuntime` before the host binds the runtime. */
   errorMessage: string;
 };
+
+/** Runtime store configuration accepted by the public SDK helper. */
 type PluginRuntimeStoreOptions = PluginRuntimeStoreKeyOptions | PluginRuntimeStorePluginOptions;
 
 function getPluginRuntimeStoreRegistry(): PluginRuntimeStoreRegistry {
@@ -32,6 +38,8 @@ function pluginRuntimeStoreKeyForPluginId(pluginId: string): string {
   if (!normalizedPluginId) {
     throw new Error("createPluginRuntimeStore: pluginId must not be empty");
   }
+  // Prefix plugin-derived keys so a plugin id cannot collide with a custom
+  // process-wide slot used by an advanced runtime facade.
   return `plugin-runtime:${normalizedPluginId}`;
 }
 
@@ -82,6 +90,8 @@ export function createPluginRuntimeStore<T>(options: string | PluginRuntimeStore
     typeof options === "string"
       ? { runtime: null }
       : (() => {
+          // Object slots live in the global registry so source imports and
+          // generated facade imports bind the same plugin runtime instance.
           const registry = getPluginRuntimeStoreRegistry();
           let existingSlot = registry.get(resolved.key);
           if (!existingSlot) {
