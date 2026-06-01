@@ -840,6 +840,13 @@ function shouldDropAssistantHistoryMessage(message: unknown): boolean {
   return !hasAssistantNonTextContent(message);
 }
 
+/**
+ * Redact and compact raw chat history before it is shown or sent through RPC.
+ *
+ * This keeps tool payloads, binary blobs, directive tags, and internal
+ * commentary/control replies out of user-visible history while preserving the
+ * original array reference when nothing changes.
+ */
 export function sanitizeChatHistoryMessages(
   messages: unknown[],
   maxChars: number = DEFAULT_CHAT_HISTORY_TEXT_MAX_CHARS,
@@ -1191,6 +1198,12 @@ function filterVisibleProjectedHistoryMessages(
   return changed ? visible : messages;
 }
 
+/**
+ * Convert stored chat/session messages into the display-safe transcript shape.
+ *
+ * Projection folds tool-visible replies, hides heartbeat/control plumbing, and
+ * applies final truncation so server-method consumers share one transcript view.
+ */
 export function projectChatDisplayMessages(
   messages: unknown[],
   options?: { maxChars?: number; stripEnvelope?: boolean },
@@ -1220,6 +1233,7 @@ function limitChatDisplayMessages<T>(messages: T[], maxMessages?: number): T[] {
   return messages.slice(-Math.floor(maxMessages));
 }
 
+/** Project display messages and keep only the most recent bounded window. */
 export function projectRecentChatDisplayMessages(
   messages: unknown[],
   options?: { maxChars?: number; maxMessages?: number; stripEnvelope?: boolean },
@@ -1230,6 +1244,7 @@ export function projectRecentChatDisplayMessages(
   );
 }
 
+/** Project one message through the same display pipeline used for transcripts. */
 export function projectChatDisplayMessage(
   message: unknown,
   options?: { maxChars?: number; stripEnvelope?: boolean },
