@@ -52,11 +52,17 @@ function toLegacyDmReasonCode(reasonCode: string): DmGroupAccessReasonCode {
     case DM_GROUP_ACCESS_REASON.DM_POLICY_NOT_ALLOWLISTED:
       return reasonCode;
     default:
+      // Legacy direct-DM consumers only understand the compact DM reason enum.
+      // Unknown ingress reasons fail closed as not-allowlisted.
       return DM_GROUP_ACCESS_REASON.DM_POLICY_NOT_ALLOWLISTED;
   }
 }
 
-/** @deprecated Use `resolveChannelMessageIngress` from `openclaw/plugin-sdk/channel-ingress-runtime`. */
+/**
+ * Resolves legacy direct-DM access and command authorization for channel adapters.
+ *
+ * @deprecated Use `resolveChannelMessageIngress` from `openclaw/plugin-sdk/channel-ingress-runtime`.
+ */
 export async function resolveInboundDirectDmAccessWithRuntime(params: {
   cfg: OpenClawConfig;
   channel: ChannelId;
@@ -120,6 +126,9 @@ export async function resolveInboundDirectDmAccessWithRuntime(params: {
     params.senderId,
     access.effectiveAllowFrom,
   );
+  // Older channel runtimes may not inject the shared command authorizer. Keep
+  // the local allowlist decision as the fallback so legacy adapters retain their
+  // pre-access-groups behavior.
   const commandAuthorized = shouldComputeAuth
     ? (params.runtime.resolveCommandAuthorizedFromAuthorizers?.({
         useAccessGroups: params.cfg.commands?.useAccessGroups !== false,
@@ -146,7 +155,12 @@ export async function resolveInboundDirectDmAccessWithRuntime(params: {
   };
 }
 
-/** @deprecated Use `resolveChannelMessageIngress` from `openclaw/plugin-sdk/channel-ingress-runtime`. */
+/**
+ * Builds the pre-crypto direct-DM authorizer used before encrypted payload
+ * parsing can hand off to normal channel ingress.
+ *
+ * @deprecated Use `resolveChannelMessageIngress` from `openclaw/plugin-sdk/channel-ingress-runtime`.
+ */
 export function createPreCryptoDirectDmAuthorizer(params: {
   resolveAccess: (
     senderId: string,
@@ -181,6 +195,8 @@ export function createPreCryptoDirectDmAuthorizer(params: {
       }
       return "pairing";
     }
+    // Block notifications stay callback-only so pre-crypto adapters can log or
+    // metric the drop without forcing a reply on hostile or unauthenticated DMs.
     params.onBlocked?.({
       senderId: input.senderId,
       reason: access.reason,
