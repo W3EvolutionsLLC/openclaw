@@ -417,10 +417,14 @@ export type ProviderAuthMethodNonInteractiveContext = {
   ) => ApiKeyCredential | null;
 };
 
+/** Provider-owned login/setup method exposed by auth-choice and model-auth flows. */
 export type ProviderAuthMethod = {
+  /** Stable method id used by CLI flags, manifests, and persisted auth choices. */
   id: string;
+  /** Human-readable method label for prompts and provider setup UIs. */
   label: string;
   hint?: string;
+  /** Auth family used for grouping, defaults, and non-interactive policy. */
   kind: ProviderAuthKind;
   /**
    * Optional wizard/onboarding metadata for this specific auth method.
@@ -430,7 +434,9 @@ export type ProviderAuthMethod = {
    * method-specific auth choices while keeping the provider id stable.
    */
   wizard?: ProviderPluginWizardSetup;
+  /** Runs the interactive/provider-owned auth flow and returns credentials plus optional config. */
   run: (ctx: ProviderAuthContext) => Promise<ProviderAuthResult>;
+  /** Applies this method without prompts; returns updated config or null when no credential was found. */
   runNonInteractive?: (
     ctx: ProviderAuthMethodNonInteractiveContext,
   ) => Promise<OpenClawConfig | null>;
