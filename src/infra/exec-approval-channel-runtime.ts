@@ -21,7 +21,12 @@ export type {
 type ApprovalRequestEvent = ExecApprovalRequest | PluginApprovalRequest;
 type ApprovalResolvedEvent = ExecApprovalResolved | PluginApprovalResolved;
 
-/** Startup failure that should stop retry loops instead of silently reconnecting forever. */
+/**
+ * Startup failure that should stop retry loops instead of silently reconnecting forever.
+ *
+ * The gateway client only raises this after reconnect pauses with a structured detail code, so
+ * callers can distinguish operator-action-required auth failures from retryable startup errors.
+ */
 export class ExecApprovalChannelRuntimeTerminalStartError extends Error {
   readonly detailCode: string | null;
 
@@ -75,7 +80,12 @@ function readGatewayConnectErrorDetailCode(error: unknown): string | null {
   return readConnectErrorDetailCode((error as { details?: unknown }).details);
 }
 
-/** Create a gateway-backed runtime that delivers, tracks, resolves, and replays approvals. */
+/**
+ * Create a gateway-backed runtime that delivers, tracks, resolves, and replays approvals.
+ *
+ * Live gateway events and replayed pending approvals share the same pending-entry map so duplicate
+ * request events are ignored and resolutions that arrive during delivery wait for concrete entries.
+ */
 export function createExecApprovalChannelRuntime<
   TPending,
   TRequest extends ApprovalRequestEvent = ExecApprovalRequest,
@@ -274,6 +284,8 @@ export function createExecApprovalChannelRuntime<
   };
 
   const startPendingApprovalReplay = (client: GatewayClient): void => {
+    // Replay should not block startup readiness; failures are logged and the live event stream
+    // keeps running, while stop still waits for any in-flight replay delivery to settle.
     const promise = replayPendingApprovals(client)
       .catch((err: unknown) => {
         const message = formatErrorMessage(err);
