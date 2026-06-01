@@ -442,8 +442,10 @@ export type ProviderAuthMethod = {
   ) => Promise<OpenClawConfig | null>;
 };
 
+/** Ordering bucket for provider catalog hooks when multiple plugins can emit config. */
 export type ProviderCatalogOrder = "simple" | "profile" | "paired" | "late";
 
+/** Context for provider catalog hooks that synthesize model provider config. */
 export type ProviderCatalogContext = {
   config: OpenClawConfig;
   agentDir?: string;
@@ -453,6 +455,7 @@ export type ProviderCatalogContext = {
     apiKey: string | undefined;
     discoveryApiKey?: string;
   };
+  /** Resolves the effective auth mode/source used for discovery-safe provider config. */
   resolveProviderAuth: (
     providerId?: string,
     options?: {
@@ -467,26 +470,33 @@ export type ProviderCatalogContext = {
   };
 };
 
+/** Catalog hook result: one provider config, many provider configs, or no contribution. */
 export type ProviderCatalogResult =
   | { provider: ModelProviderConfig }
   | { providers: Record<string, ModelProviderConfig> }
   | null
   | undefined;
 
+/** Plugin hook that contributes provider config during setup/discovery. */
 export type ProviderPluginCatalog = {
   order?: ProviderCatalogOrder;
   run: (ctx: ProviderCatalogContext) => Promise<ProviderCatalogResult>;
 };
 
+/** Context for model-catalog hooks that may combine static and live provider data. */
 export type UnifiedModelCatalogProviderContext = ProviderCatalogContext & {
+  /** Cancellation signal for live catalog fetches. */
   signal?: AbortSignal;
+  /** Whether live/network-backed catalog data should be included. */
   includeLive?: boolean;
   timeoutMs?: number;
 };
 
+/** Provider-owned model catalog hook for one provider and one or more model kinds. */
 export type UnifiedModelCatalogProviderPlugin = {
   provider: string;
   kinds: readonly UnifiedModelCatalogKind[];
+  /** Cheap local catalog entries available without network access. */
   staticCatalog?: (
     ctx: UnifiedModelCatalogProviderContext,
   ) =>
@@ -494,6 +504,7 @@ export type UnifiedModelCatalogProviderPlugin = {
     | Promise<readonly UnifiedModelCatalogEntry[] | null | undefined>
     | null
     | undefined;
+  /** Optional network-backed catalog entries, usually guarded by includeLive/timeout. */
   liveCatalog?: (
     ctx: UnifiedModelCatalogProviderContext,
   ) =>
@@ -503,6 +514,7 @@ export type UnifiedModelCatalogProviderPlugin = {
     | undefined;
 };
 
+/** Normalized provider config subset passed to runtime provider hooks. */
 export type ProviderRuntimeProviderConfig = {
   baseUrl?: string;
   api?: ModelProviderConfig["api"];
