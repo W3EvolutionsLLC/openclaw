@@ -34,6 +34,7 @@ export type RestartSentinelStats = {
   durationMs?: number | null;
 };
 
+/** Deferred post-restart action consumed by the next Gateway process. */
 export type RestartSentinelContinuation =
   | {
       kind: "systemEvent";
@@ -67,6 +68,7 @@ export type RestartSentinelPayload = {
   stats?: RestartSentinelStats | null;
 };
 
+/** Versioned restart sentinel envelope stored on disk for forward-compatible parsing. */
 export type RestartSentinel = {
   version: 1;
   payload: RestartSentinelPayload;
