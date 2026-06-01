@@ -20,6 +20,7 @@ function capLiveAssistantBuffer(text: string): string {
   return text.slice(-MAX_LIVE_CHAT_BUFFER_CHARS);
 }
 
+/** Merges cumulative snapshots and incremental deltas into one bounded live-chat buffer. */
 export function resolveMergedAssistantText(params: {
   previousText: string;
   nextText: string;
@@ -43,6 +44,7 @@ export function resolveMergedAssistantText(params: {
   return capLiveAssistantBuffer(previousText);
 }
 
+/** Strips internal runtime/directive markers from assistant event text before UI projection. */
 export function normalizeLiveAssistantEventText(params: { text: string; delta?: unknown }): {
   text: string;
   delta: string;
@@ -56,6 +58,7 @@ export function normalizeLiveAssistantEventText(params: { text: string; delta?: 
   };
 }
 
+/** Projects buffered assistant text into displayable live-chat text plus suppression state. */
 export function projectLiveAssistantBufferedText(
   rawText: string,
   options?: { suppressLeadFragments?: boolean },
@@ -85,6 +88,7 @@ export function projectLiveAssistantBufferedText(
   return { text, suppress: false, pendingLeadFragment: false };
 }
 
+/** Keeps commentary-phase assistant events out of the end-user live chat transcript. */
 export function shouldSuppressAssistantEventForLiveChat(data: unknown): boolean {
   return resolveAssistantEventPhase(data) === "commentary";
 }
