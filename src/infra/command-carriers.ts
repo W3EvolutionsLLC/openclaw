@@ -2,8 +2,10 @@ import { splitShellArgs } from "../utils/shell-argv.js";
 import { normalizeExecutableToken } from "./exec-wrapper-tokens.js";
 import { parseInlineOptionToken } from "./inline-option-token.js";
 
+/** Executables that can hide the real command behind option/env preludes. */
 export const COMMAND_CARRIER_EXECUTABLES = new Set(["sudo", "doas", "env", "command", "builtin"]);
 
+/** Shell builtins that load another script into the current shell context. */
 export const SOURCE_EXECUTABLES = new Set([".", "source"]);
 
 // Bounds recursive env -S expansion so malformed self-wrapping payloads cannot
@@ -211,6 +213,7 @@ function resolveEnvSplitPayload(
   return resolveEnvCarriedArgv(["env", ...carriedArgv], depth + 1) ?? carriedArgv;
 }
 
+/** Parsed `env` prelude before the command that will actually be executed. */
 export type ParsedEnvInvocationPrelude = {
   /** Assignment keys consumed before the carried command begins. */
   assignmentKeys: string[];
