@@ -29,7 +29,8 @@ function parseListenerAddress(address: string): { host: string; port: number } |
   if (!trimmed) {
     return null;
   }
-  // lsof/netstat output may include protocol prefixes and "(LISTEN)" suffixes.
+  // lsof/netstat output differs by platform; normalize only wrapper text and
+  // preserve the host token so IPv6 brackets and wildcard binds stay distinct.
   const normalized = trimmed.replace(/^tcp6?\s+/i, "").replace(/\s*\(listen\)\s*$/i, "");
   const bracketMatch = normalized.match(/^\[([^\]]+)\]:(\d+)$/);
   if (bracketMatch) {
@@ -60,6 +61,8 @@ function classifyLoopbackAddressFamily(host: string): "ipv4" | "ipv6" | null {
   }
   if (host.startsWith("::ffff:")) {
     const mapped = host.slice("::ffff:".length);
+    // IPv4-mapped loopback is reported on IPv6 sockets by some OS tools; keep
+    // it in the IPv6 bucket so dual-stack detection still sees both binds.
     return mapped === "127.0.0.1" ? "ipv6" : null;
   }
   return null;
@@ -73,7 +76,10 @@ function isExpectedGatewayBindAddress(host: string): boolean {
   return classifyLoopbackAddressFamily(host) !== null || isWildcardAddress(host);
 }
 
-/** True for one Gateway process bound to a single expected loopback/wildcard address. */
+/**
+ * True for one Gateway process bound to a single expected loopback or wildcard
+ * address. This suppresses conflict hints for the normal managed Gateway bind.
+ */
 export function isSingleExpectedGatewayListener(listeners: PortListener[], port: number): boolean {
   if (listeners.length !== 1) {
     return false;
@@ -97,7 +103,10 @@ export function isSingleExpectedGatewayListener(listeners: PortListener[], port:
   );
 }
 
-/** True for one Gateway process reported as separate IPv4 and IPv6 loopback listeners. */
+/**
+ * True for one Gateway process reported as separate IPv4 and IPv6 loopback
+ * listeners. OS tools often show dual-stack binds as two rows for one pid.
+ */
 export function isDualStackLoopbackGatewayListeners(
   listeners: PortListener[],
   port: number,
