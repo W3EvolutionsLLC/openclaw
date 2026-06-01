@@ -65,7 +65,8 @@ export function createChannelReplyPipeline(
   let plugin: ReturnType<typeof getLoadedChannelPluginForRead> | undefined;
   let pluginTransformResolved = false;
   const resolvePluginTransform = () => {
-    // Load the channel plugin lazily so reply-pipeline construction stays cheap for hot turn paths.
+    // Load the channel plugin lazily and at most once so reply-pipeline
+    // construction stays cheap for hot turn paths that never send a reply.
     if (pluginTransformResolved) {
       return plugin?.messaging?.transformReplyPayload;
     }
@@ -76,13 +77,25 @@ export function createChannelReplyPipeline(
   const transformReplyPayload = params.transformReplyPayload
     ? params.transformReplyPayload
     : channelId
-      ? (payload: ReplyPayload) =>
-          resolvePluginTransform()?.({
-            payload,
-            cfg: params.cfg,
-            accountId: params.accountId,
-          }) ?? payload
+      ? (payload: ReplyPayload) => {
+          // Channel-owned transforms run after prefix/typing setup, but an
+          // explicit caller transform above bypasses registry lookup entirely.
+          return (
+            resolvePluginTransform()?.({
+              payload,
+              cfg: params.cfg,
+              accountId: params.accountId,
+            }) ?? payload
+          );
+        }
       : undefined;
+  const typingCallbacks = params.typingCallbacks
+    ? params.typingCallbacks
+    : params.typing
+      ? createTypingCallbacks(params.typing)
+      : undefined;
+  // Preserve prebuilt callbacks for channels with custom lifecycle hooks;
+  // otherwise synthesize callbacks only when typing config is provided.
   return {
     ...createReplyPrefixOptions({
       cfg: params.cfg,
@@ -91,10 +104,6 @@ export function createChannelReplyPipeline(
       accountId: params.accountId,
     }),
     ...(transformReplyPayload ? { transformReplyPayload } : {}),
-    ...(params.typingCallbacks
-      ? { typingCallbacks: params.typingCallbacks }
-      : params.typing
-        ? { typingCallbacks: createTypingCallbacks(params.typing) }
-        : {}),
+    ...(typingCallbacks ? { typingCallbacks } : {}),
   };
 }
