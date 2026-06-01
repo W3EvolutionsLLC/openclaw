@@ -1109,6 +1109,7 @@ export type ProviderBuiltInModelSuppressionContext = {
   baseUrl?: string;
 };
 
+/** Legacy built-in model suppression response. */
 export type ProviderBuiltInModelSuppressionResult = {
   suppress: boolean;
   errorMessage?: string;
@@ -1168,6 +1169,7 @@ export type ProviderDiscoveryResult = ProviderCatalogResult;
  */
 export type ProviderPluginDiscovery = ProviderPluginCatalog;
 
+/** UI metadata for one provider auth/setup choice in onboarding/configure flows. */
 export type ProviderPluginWizardSetup = {
   choiceId?: string;
   choiceLabel?: string;
@@ -1223,6 +1225,7 @@ export type ProviderPluginWizard = {
   modelPicker?: ProviderPluginWizardModelPicker;
 };
 
+/** Provider-owned OAuth profile id repair metadata for doctor/auth flows. */
 export type ProviderOAuthProfileIdRepair = {
   /**
    * Legacy OAuth profile id to migrate away from.
@@ -1238,6 +1241,7 @@ export type ProviderOAuthProfileIdRepair = {
   promptLabel?: string;
 };
 
+/** Context passed after a provider-backed model is selected in setup flows. */
 export type ProviderModelSelectedContext = {
   config: OpenClawConfig;
   model: string;
@@ -1246,6 +1250,7 @@ export type ProviderModelSelectedContext = {
   workspaceDir?: string;
 };
 
+/** Provider hook input for deferring synthetic profile auth until runtime. */
 export type ProviderDeferSyntheticProfileAuthContext = {
   config?: OpenClawConfig;
   provider: string;
@@ -1253,6 +1258,7 @@ export type ProviderDeferSyntheticProfileAuthContext = {
   resolvedApiKey?: string;
 };
 
+/** Provider hook input for system prompt prefix/suffix contributions. */
 export type ProviderSystemPromptContributionContext = {
   config?: OpenClawConfig;
   agentDir?: string;
@@ -1266,6 +1272,7 @@ export type ProviderSystemPromptContributionContext = {
   trigger?: "cron" | "heartbeat" | "manual" | "memory" | "overflow" | "user";
 };
 
+/** Provider hook input for rewriting the fully assembled system prompt. */
 export type ProviderTransformSystemPromptContext = ProviderSystemPromptContributionContext & {
   systemPrompt: string;
 };
