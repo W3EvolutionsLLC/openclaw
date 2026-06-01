@@ -20,6 +20,7 @@ export type ChatRunRegistry = {
   clear: () => void;
 };
 
+/** Creates the FIFO run registry that maps session ids to active chat runs. */
 export function createChatRunRegistry(): ChatRunRegistry {
   const chatRunSessions = new Map<string, ChatRunEntry[]>();
 
@@ -89,6 +90,7 @@ export type ChatRunState = {
   clear: () => void;
 };
 
+/** Creates all per-run chat buffers and cleanup hooks owned by one Gateway server. */
 export function createChatRunState(): ChatRunState {
   const registry = createChatRunRegistry();
   const rawBuffers = new Map<string, string>();
@@ -173,6 +175,7 @@ type ToolRecipientEntry = {
 const TOOL_EVENT_RECIPIENT_TTL_MS = 10 * 60 * 1000;
 const TOOL_EVENT_RECIPIENT_FINAL_GRACE_MS = 30 * 1000;
 
+/** Tracks connections subscribed to session lifecycle events. */
 export function createSessionEventSubscriberRegistry(): SessionEventSubscriberRegistry {
   const connIds = new Set<string>();
   const empty = new Set<string>();
@@ -199,6 +202,7 @@ export function createSessionEventSubscriberRegistry(): SessionEventSubscriberRe
   };
 }
 
+/** Tracks per-session message subscribers while keeping connection reverse indexes in sync. */
 export function createSessionMessageSubscriberRegistry(): SessionMessageSubscriberRegistry {
   const sessionToConnIds = new Map<string, Set<string>>();
   const connToSessionKeys = new Map<string, Set<string>>();
@@ -277,6 +281,7 @@ export function createSessionMessageSubscriberRegistry(): SessionMessageSubscrib
   };
 }
 
+/** Tracks tool-event recipients per run with TTL cleanup after final events. */
 export function createToolEventRecipientRegistry(): ToolEventRecipientRegistry {
   const recipients = new Map<string, ToolRecipientEntry>();
 
@@ -328,6 +333,7 @@ export function createToolEventRecipientRegistry(): ToolEventRecipientRegistry {
     if (!entry) {
       return;
     }
+    // Keep final recipients briefly so late tool-final chunks still reach the same connection set.
     entry.finalizedAt = Date.now();
     prune();
   };
