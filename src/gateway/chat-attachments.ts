@@ -58,6 +58,7 @@ const TEXT_ONLY_OFFLOAD_LIMIT = 10;
 
 export const DEFAULT_CHAT_ATTACHMENT_MAX_MB = 20;
 
+/** Resolve the Gateway attachment byte ceiling from agent defaults. */
 export function resolveChatAttachmentMaxBytes(cfg: OpenClawConfig): number {
   const configured = cfg.agents?.defaults?.mediaMaxMb;
   const mb =
@@ -235,6 +236,13 @@ function validateAttachmentBase64OrThrow(
   return sizeBytes;
 }
 
+/**
+ * Normalize inbound chat attachments into inline model images or media refs.
+ *
+ * Images stay inline when the target supports them and they are small enough;
+ * non-images and large/text-only images are offloaded so the agent can read
+ * them through media paths instead of lossy prompt text.
+ */
 export async function parseMessageWithAttachments(
   message: string,
   attachments: ChatAttachment[] | undefined,
@@ -428,6 +436,7 @@ export async function parseMessageWithAttachments(
   };
 }
 
+/** Sniff one attachment with the same MIME precedence used by the parser. */
 export async function resolveChatAttachmentLooksLikeImage(
   attachment: ChatAttachment,
   index = 0,
