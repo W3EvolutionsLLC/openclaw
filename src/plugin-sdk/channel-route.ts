@@ -156,6 +156,7 @@ export function resolveChannelRouteTargetWithParser(params: {
     return null;
   }
   const parsed = params.parseExplicitTarget(channel, rawTo);
+  // Parser-owned thread ids win; fallback preserves legacy callers that pass thread separately.
   const fallbackThreadId = normalizeOptionalThreadValue(params.fallbackThreadId);
   return {
     channel,
@@ -198,6 +199,7 @@ function accountsEqual(left?: string, right?: string): boolean {
   return (left ?? "") === (right ?? "");
 }
 
+/** Checks exact route identity, including account equality and thread equality. */
 export function channelRoutesMatchExact(params: {
   left?: ChannelRouteRef | null;
   right?: ChannelRouteRef | null;
