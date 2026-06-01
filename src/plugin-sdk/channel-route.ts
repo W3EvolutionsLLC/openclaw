@@ -91,6 +91,8 @@ export function normalizeChannelRouteRef(
   if (!channel && !to && !accountId && threadId == null) {
     return undefined;
   }
+  // Keep rawTo only when it carries provider grammar that differs from the
+  // normalized destination; route equality and queue keys use target.to.
   return {
     ...(channel ? { channel } : {}),
     ...(accountId ? { accountId } : {}),
@@ -187,6 +189,8 @@ function threadIdsEqual(left?: string | number, right?: string | number): boolea
 }
 
 function accountsCompatible(left?: string, right?: string): boolean {
+  // Conversation-level comparisons treat a missing account as a wildcard for
+  // older callers that did not bind account identity into route metadata.
   return !left || !right || left === right;
 }
 
@@ -266,6 +270,8 @@ function normalizeChannelRouteKeyInput(
   if (!route) {
     return undefined;
   }
+  // Normalized refs may carry rawTo/thread source metadata, but compact keys
+  // intentionally use only the stable routing identity fields.
   return isChannelRouteRef(route)
     ? normalizeChannelRouteRef({
         channel: route.channel,
