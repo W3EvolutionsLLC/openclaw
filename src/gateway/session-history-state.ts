@@ -47,6 +47,7 @@ type SessionHistoryRawSnapshot = {
   totalRawMessages?: number;
 };
 
+/** Expands a visible history limit into the raw tail window needed before projection filters. */
 export function resolveSessionHistoryTailReadOptions(limit: number): {
   maxMessages: number;
   maxLines: number;
@@ -128,6 +129,7 @@ function paginateSessionMessages(
   });
 }
 
+/** Builds one paginated, display-safe history page while preserving raw transcript progress. */
 export function buildSessionHistorySnapshot(params: {
   rawMessages: unknown[];
   maxChars?: number;
@@ -164,6 +166,7 @@ export function buildSessionHistorySnapshot(params: {
   };
 }
 
+/** Maintains chat.history SSE pagination state between full refreshes and inline appends. */
 export class SessionHistorySseState {
   private readonly target: SessionHistoryTranscriptTarget;
   private readonly maxChars: number;
@@ -172,6 +175,7 @@ export class SessionHistorySseState {
   private sentHistory: PaginatedSessionHistory;
   private rawTranscriptSeq: number;
 
+  /** Seeds SSE state from the same raw messages used for the initial history response. */
   static fromRawSnapshot(params: {
     target: SessionHistoryTranscriptTarget;
     rawMessages: unknown[];
@@ -218,10 +222,12 @@ export class SessionHistorySseState {
     this.rawTranscriptSeq = snapshot.rawTranscriptSeq;
   }
 
+  /** Returns the last display page sent to the SSE client. */
   snapshot(): PaginatedSessionHistory {
     return this.sentHistory;
   }
 
+  /** Attempts to project one live transcript append, or asks the caller to refresh. */
   appendInlineMessage(update: {
     message: unknown;
     messageId?: string;
@@ -309,6 +315,7 @@ export class SessionHistorySseState {
     };
   }
 
+  /** Reloads transcript history from disk and replaces the tracked display page. */
   async refreshAsync(): Promise<PaginatedSessionHistory> {
     const rawSnapshot = await this.readRawSnapshotAsync();
     const snapshot = this.buildSnapshot(rawSnapshot);
