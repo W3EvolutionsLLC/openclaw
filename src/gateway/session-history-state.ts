@@ -268,14 +268,15 @@ export class SessionHistorySseState {
       }
       const projectedMessage = addedMessages[0];
       if (projectedMessage !== undefined) {
-        const emittedMessage: SessionHistoryMessage =
+        // Mirrors and synthetic projections may drop seq metadata; restore the append seq.
+        const needsAppendSeq =
           isMessageToolMirrorMessage(projectedMessage) ||
-          resolveMessageSeq(projectedMessage) === undefined
-            ? // Mirrors and synthetic projections may drop seq metadata; restore the append seq.
-              (attachOpenClawTranscriptMeta(projectedMessage, {
-                seq: this.rawTranscriptSeq,
-              }) as SessionHistoryMessage)
-            : projectedMessage;
+          resolveMessageSeq(projectedMessage) === undefined;
+        const emittedMessage: SessionHistoryMessage = needsAppendSeq
+          ? (attachOpenClawTranscriptMeta(projectedMessage, {
+              seq: this.rawTranscriptSeq,
+            }) as SessionHistoryMessage)
+          : projectedMessage;
         const nextMessages = [...this.sentHistory.messages, emittedMessage];
         this.sentHistory = buildPaginatedSessionHistory({
           messages: nextMessages,
