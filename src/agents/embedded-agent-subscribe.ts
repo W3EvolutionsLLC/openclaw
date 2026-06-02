@@ -222,6 +222,7 @@ export function subscribeEmbeddedAgentSession(params: SubscribeEmbeddedAgentSess
     pendingMessagingMediaUrls: new Map(),
     pendingToolMediaUrls: initialPendingToolMediaUrls,
     pendingToolAudioAsVoice: false,
+    pendingToolSpokenText: undefined,
     pendingToolTrustedLocalMedia: false,
     visibleBlockReplyCount: 0,
     pendingAssistantReplyDirectives: undefined,
@@ -1130,6 +1131,7 @@ export function subscribeEmbeddedAgentSession(params: SubscribeEmbeddedAgentSess
     state.pendingMessagingMediaUrls.clear();
     state.pendingToolMediaUrls = [];
     state.pendingToolAudioAsVoice = false;
+    state.pendingToolSpokenText = undefined;
     state.pendingToolTrustedLocalMedia = false;
     state.visibleBlockReplyCount = 0;
     state.pendingAssistantReplyDirectives = undefined;

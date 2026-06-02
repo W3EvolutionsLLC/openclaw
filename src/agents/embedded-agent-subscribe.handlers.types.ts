@@ -139,6 +139,7 @@ export type EmbeddedAgentSubscribeState = {
   pendingMessagingMediaUrls: Map<string, string[]>;
   pendingToolMediaUrls: string[];
   pendingToolAudioAsVoice: boolean;
+  pendingToolSpokenText?: string;
   pendingToolTrustedLocalMedia: boolean;
   visibleBlockReplyCount: number;
   pendingAssistantReplyDirectives?: Pick<
@@ -257,6 +258,7 @@ type ToolHandlerState = Pick<
   | "pendingMessagingMediaUrls"
   | "pendingToolMediaUrls"
   | "pendingToolAudioAsVoice"
+  | "pendingToolSpokenText"
   | "pendingToolTrustedLocalMedia"
   | "deterministicApprovalPromptPending"
   | "hadDeterministicSideEffect"

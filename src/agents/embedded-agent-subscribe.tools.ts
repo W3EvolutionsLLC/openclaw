@@ -416,6 +416,7 @@ export function filterToolResultMediaUrls(
 type ToolResultMediaArtifact = {
   mediaUrls: string[];
   audioAsVoice?: boolean;
+  spokenText?: string;
   trustedLocalMedia?: boolean;
 };
 
@@ -506,6 +507,9 @@ export function extractToolResultMediaArtifact(
       return {
         mediaUrls,
         ...(detailsMedia.audioAsVoice === true ? { audioAsVoice: true } : {}),
+        ...(typeof detailsMedia.spokenText === "string" && detailsMedia.spokenText.trim()
+          ? { spokenText: detailsMedia.spokenText }
+          : {}),
         ...(detailsMedia.trustedLocalMedia === true ? { trustedLocalMedia: true } : {}),
       };
     }

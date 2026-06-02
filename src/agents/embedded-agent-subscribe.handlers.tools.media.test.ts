@@ -662,6 +662,7 @@ describe("handleToolExecutionEnd media emission", () => {
             mediaUrl: "/tmp/reply.opus",
             audioAsVoice: true,
             trustedLocalMedia: true,
+            spokenText: "hello",
           },
         },
       },
@@ -669,6 +670,7 @@ describe("handleToolExecutionEnd media emission", () => {
 
     expect(ctx.state.pendingToolMediaUrls).toEqual(["/tmp/reply.opus"]);
     expect(ctx.state.pendingToolAudioAsVoice).toBe(true);
+    expect(ctx.state.pendingToolSpokenText).toBe("hello");
     expect(ctx.state.pendingToolTrustedLocalMedia).toBe(true);
   });
 

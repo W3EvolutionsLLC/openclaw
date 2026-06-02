@@ -1,9 +1,6 @@
 import { Type } from "typebox";
-import type { ReplyPayload } from "../../auto-reply/reply-payload.js";
-import type { OriginatingChannelType } from "../../auto-reply/templating.js";
 import { getRuntimeConfig } from "../../config/config.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
-import { createLazyImportLoader } from "../../shared/lazy-promise.js";
 import { textToSpeech } from "../../tts/tts.js";
 import type { GatewayMessageChannel } from "../../utils/message-channel.js";
 import type { AnyAgentTool } from "./common.js";
@@ -19,14 +16,6 @@ const TtsToolSchema = Type.Object({
     }),
   ),
 });
-
-const routeReplyRuntimeLoader = createLazyImportLoader(
-  () => import("../../auto-reply/reply/route-reply.runtime.js"),
-);
-
-function loadRouteReplyRuntime() {
-  return routeReplyRuntimeLoader.load();
-}
 
 function readTtsTimeoutMs(args: Record<string, unknown>): number | undefined {
   return readPositiveIntegerParam(args, "timeoutMs", {
@@ -52,10 +41,6 @@ function sanitizeTranscriptForToolContent(text: string): string {
 export function createTtsTool(opts?: {
   config?: OpenClawConfig;
   agentChannel?: GatewayMessageChannel;
-  agentTo?: string;
-  agentThreadId?: string | number;
-  agentSessionKey?: string;
-  runId?: string;
   agentId?: string;
   agentAccountId?: string;
 }): AnyAgentTool {
@@ -83,32 +68,6 @@ export function createTtsTool(opts?: {
 
       if (result.success && result.audioPath) {
         const audioAsVoice = result.audioAsVoice || result.voiceCompatible ? true : undefined;
-        const mediaPayload: ReplyPayload = {
-          mediaUrl: result.audioPath,
-          trustedLocalMedia: true,
-          spokenText: text,
-          ...(audioAsVoice ? { audioAsVoice: true } : {}),
-        };
-        let deliveredInline = false;
-        if (opts?.agentChannel && opts.agentTo) {
-          const { routeReply } = await loadRouteReplyRuntime();
-          const routed = await routeReply({
-            payload: mediaPayload,
-            channel: opts.agentChannel as OriginatingChannelType,
-            to: opts.agentTo,
-            sessionKey: opts.agentSessionKey,
-            accountId: opts.agentAccountId,
-            threadId: opts.agentThreadId,
-            cfg,
-            mirror: false,
-            replyKind: "tool",
-            runId: opts.runId,
-          });
-          if (!routed.ok) {
-            throw new Error(routed.error ?? "TTS delivery failed");
-          }
-          deliveredInline = true;
-        }
         // Preserve the spoken text in the tool result content so the session
         // transcript retains what was said across turns. The audio itself is
         // still delivered via details.media. Sanitize first so a crafted
@@ -121,8 +80,10 @@ export function createTtsTool(opts?: {
             provider: result.provider,
             ...(timeoutMs !== undefined ? { timeoutMs } : {}),
             media: {
-              ...mediaPayload,
-              ...(deliveredInline ? { outbound: false } : {}),
+              mediaUrl: result.audioPath,
+              trustedLocalMedia: true,
+              spokenText: text,
+              ...(audioAsVoice ? { audioAsVoice: true } : {}),
             },
           },
         };

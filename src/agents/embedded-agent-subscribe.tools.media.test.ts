@@ -298,10 +298,14 @@ describe("extractToolResultMediaPaths", () => {
     ).toEqual(["/tmp/screenshot.png"]);
   });
 
-  it("keeps trusted TTS local media when the raw built-in name is absent", () => {
+  it.each([
+    ["tts", ["/tmp/reply.opus"]],
+    ["openclaw.tts", ["/tmp/reply.opus"]],
+    ["external.tts", []],
+  ])("filters trusted TTS local media for %s", (toolName, expected) => {
     expect(
       filterToolResultMediaUrls(
-        "tts",
+        toolName,
         ["/tmp/reply.opus"],
         {
           details: {
@@ -313,38 +317,7 @@ describe("extractToolResultMediaPaths", () => {
         },
         new Set(["web_search"]),
       ),
-    ).toEqual(["/tmp/reply.opus"]);
-  });
-
-  it("keeps trusted TTS local media for the qualified OpenClaw tool name", () => {
-    expect(
-      filterToolResultMediaUrls(
-        "openclaw.tts",
-        ["/tmp/reply.opus"],
-        {
-          details: {
-            media: {
-              mediaUrl: "/tmp/reply.opus",
-              trustedLocalMedia: true,
-            },
-          },
-        },
-        new Set(["web_search"]),
-      ),
-    ).toEqual(["/tmp/reply.opus"]);
-  });
-
-  it("does not trust external qualified TTS results with trustedLocalMedia", () => {
-    expect(
-      filterToolResultMediaUrls("external.tts", ["/tmp/reply.opus"], {
-        details: {
-          media: {
-            mediaUrl: "/tmp/reply.opus",
-            trustedLocalMedia: true,
-          },
-        },
-      }),
-    ).toStrictEqual([]);
+    ).toEqual(expected);
   });
 
   it("keeps local media for bundled plugin tool names trusted in this run", () => {

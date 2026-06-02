@@ -622,7 +622,12 @@ function extractMessagingToolSourceReplyPayload(
 
 function queuePendingToolMedia(
   ctx: ToolHandlerContext,
-  mediaReply: { mediaUrls: string[]; audioAsVoice?: boolean; trustedLocalMedia?: boolean },
+  mediaReply: {
+    mediaUrls: string[];
+    audioAsVoice?: boolean;
+    spokenText?: string;
+    trustedLocalMedia?: boolean;
+  },
 ) {
   const seen = new Set(ctx.state.pendingToolMediaUrls);
   for (const mediaUrl of mediaReply.mediaUrls) {
@@ -634,6 +639,11 @@ function queuePendingToolMedia(
   }
   if (mediaReply.audioAsVoice) {
     ctx.state.pendingToolAudioAsVoice = true;
+  }
+  if (mediaReply.spokenText?.trim() && ctx.state.pendingToolMediaUrls.length === 1) {
+    ctx.state.pendingToolSpokenText = mediaReply.spokenText;
+  } else if (ctx.state.pendingToolMediaUrls.length !== 1) {
+    ctx.state.pendingToolSpokenText = undefined;
   }
   if (mediaReply.trustedLocalMedia) {
     ctx.state.pendingToolTrustedLocalMedia = true;
@@ -842,6 +852,7 @@ async function emitToolResultOutput(params: {
   queuePendingToolMedia(ctx, {
     mediaUrls,
     ...(mediaReply.audioAsVoice ? { audioAsVoice: true } : {}),
+    ...(mediaReply.spokenText ? { spokenText: mediaReply.spokenText } : {}),
     ...(mediaReply.trustedLocalMedia ? { trustedLocalMedia: true } : {}),
   });
 }

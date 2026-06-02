@@ -419,10 +419,6 @@ export function createOpenClawTools(
     ...collectPresentOpenClawTools([heartbeatTool]),
     createTtsTool({
       agentChannel: options?.agentChannel,
-      agentTo: options?.agentTo,
-      agentThreadId: options?.currentThreadTs ?? options?.agentThreadId,
-      agentSessionKey: options?.agentSessionKey,
-      runId: options?.runId,
       config: resolvedConfig,
       agentId: sessionAgentId,
       agentAccountId: options?.agentAccountId,

@@ -771,6 +771,49 @@ describe("subscribeEmbeddedAgentSession", () => {
     expect(subscription.getVisibleBlockReplyCount()).toBe(1);
   });
 
+  it("emits qualified OpenClaw TTS tool media once through normal block replies", async () => {
+    const onBlockReply = vi.fn();
+    const { emit, subscription } = createSubscribedSessionHarness({
+      runId: "run",
+      builtinToolNames: new Set(["web_search"]),
+      onBlockReply,
+    });
+
+    emit({
+      type: "tool_execution_end",
+      toolName: "openclaw.tts",
+      toolCallId: "tc-1",
+      isError: false,
+      result: {
+        content: [{ type: "text", text: "(spoken) hello" }],
+        details: {
+          media: {
+            mediaUrl: "/tmp/reply.opus",
+            audioAsVoice: true,
+            trustedLocalMedia: true,
+            spokenText: "hello",
+          },
+        },
+      },
+    });
+    emit({ type: "agent_end" });
+    await flushBlockReplyCallbacks();
+
+    const mediaPayloads = onBlockReply.mock.calls
+      .map(([payload]) => payload)
+      .filter((payload) => payload.mediaUrls?.includes("/tmp/reply.opus"));
+    expect(mediaPayloads).toEqual([
+      {
+        mediaUrls: ["/tmp/reply.opus"],
+        audioAsVoice: true,
+        spokenText: "hello",
+        trustedLocalMedia: true,
+      },
+    ]);
+    expect(subscription.getPendingToolMediaReply()).toBeNull();
+    expect(subscription.getVisibleBlockReplyCount()).toBe(1);
+  });
+
   it.each(THINKING_TAG_CASES)(
     "suppresses <%s> blocks across chunk boundaries",
     async ({ open, close }) => {
