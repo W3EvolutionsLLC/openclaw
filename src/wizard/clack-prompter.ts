@@ -14,7 +14,10 @@ import {
   spinner,
   text,
 } from "@clack/prompts";
-import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
+import {
+  normalizeLowercaseStringOrEmpty,
+  normalizeOptionalString,
+} from "@openclaw/normalization-core/string-coerce";
 import { stripAnsi } from "../../packages/terminal-core/src/ansi.js";
 import { note as emitNote } from "../../packages/terminal-core/src/note.js";
 import {
@@ -49,6 +52,10 @@ function buildOptionSearchText<T>(option: Option<T>): string {
   const hint = stripAnsi(option.hint ?? "");
   const value = String(option.value ?? "");
   return normalizeLowercaseStringOrEmpty(`${label} ${hint} ${value}`);
+}
+
+function normalizeTextPromptResult(value: unknown): string {
+  return normalizeOptionalString(value) ?? "";
 }
 
 export function tokenizedOptionFilter<T>(search: string, option: Option<T>): boolean {
@@ -129,20 +136,24 @@ export function createClackPrompter(): WizardPrompter {
     text: async (params) => {
       const validate = params.validate;
       if (params.sensitive) {
-        return guardCancel(
-          await password({
-            message: stylePromptMessage(params.message),
-            validate: validate ? (value) => validate(value ?? "") : undefined,
-          }),
+        return normalizeTextPromptResult(
+          guardCancel(
+            await password({
+              message: stylePromptMessage(params.message),
+              validate: validate ? (value) => validate(value ?? "") : undefined,
+            }),
+          ),
         );
       }
-      return guardCancel(
-        await text({
-          message: stylePromptMessage(params.message),
-          initialValue: params.initialValue,
-          placeholder: params.placeholder,
-          validate: validate ? (value) => validate(value ?? "") : undefined,
-        }),
+      return normalizeTextPromptResult(
+        guardCancel(
+          await text({
+            message: stylePromptMessage(params.message),
+            initialValue: params.initialValue,
+            placeholder: params.placeholder,
+            validate: validate ? (value) => validate(value ?? "") : undefined,
+          }),
+        ),
       );
     },
     confirm: async (params) =>
