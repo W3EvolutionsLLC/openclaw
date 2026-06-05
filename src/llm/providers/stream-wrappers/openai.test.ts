@@ -101,11 +101,27 @@ describe("createOpenAICompletionsToolsCompatWrapper", () => {
 describe("createCodexNativeWebSearchWrapper", () => {
   it("does not inject native web_search when code mode owns the tool surface", () => {
     const payloads: Array<Record<string, unknown>> = [];
+    const unreadableToolName = {
+      type: "function",
+      get name(): string {
+        throw new Error("revoked name");
+      },
+    };
+    const unreadableFunctionName = {
+      type: "function",
+      function: {
+        get name(): string {
+          throw new Error("revoked function name");
+        },
+      },
+    };
     const baseStreamFn: StreamFn = (model, context, options) => {
       const payload: Record<string, unknown> = {
         model: model.id,
         tools: [
+          unreadableToolName,
           { type: "function", name: "exec" },
+          unreadableFunctionName,
           { type: "function", name: "wait" },
           { type: "function", name: "web_search" },
           { type: "web_search" },
@@ -462,13 +478,30 @@ describe("createOpenAIThinkingLevelWrapper", () => {
 
   it("raises minimal reasoning for web_search on loopback Responses routes", () => {
     const payloads: Array<Record<string, unknown>> = [];
+    const unreadableToolType = {
+      get type(): string {
+        throw new Error("revoked type");
+      },
+    };
+    const unreadableFunctionName = {
+      type: "function",
+      function: {
+        get name(): string {
+          throw new Error("revoked function name");
+        },
+      },
+    };
     const baseStreamFn: StreamFn = (model, context, options) => {
       const payload: Record<string, unknown> = {
         reasoning: { effort: "minimal", summary: "auto" },
-        tools: [{ type: "function", name: "web_search" }],
+        tools: [
+          unreadableToolType,
+          unreadableFunctionName,
+          { type: "function", name: "web_search" },
+        ],
       };
       options?.onPayload?.(payload, model);
-      payloads.push(structuredClone(payload));
+      payloads.push({ reasoning: structuredClone(payload.reasoning) });
       return createAssistantMessageEventStream();
     };
     const wrapped = createOpenAIThinkingLevelWrapper(baseStreamFn, "minimal");

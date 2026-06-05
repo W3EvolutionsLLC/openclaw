@@ -126,11 +126,25 @@ function readPayloadToolName(tool: unknown): string | undefined {
   if (!tool || typeof tool !== "object") {
     return undefined;
   }
-  const record = tool as { name?: unknown; function?: { name?: unknown } };
-  if (typeof record.name === "string") {
-    return record.name;
+  const record = tool as Record<string, unknown>;
+  const name = readPayloadToolField(record, "name");
+  if (typeof name === "string") {
+    return name;
   }
-  return typeof record.function?.name === "string" ? record.function.name : undefined;
+  const fn = readPayloadToolField(record, "function");
+  if (!isRecord(fn)) {
+    return undefined;
+  }
+  const functionName = readPayloadToolField(fn, "name");
+  return typeof functionName === "string" ? functionName : undefined;
+}
+
+function readPayloadToolField(tool: Record<string, unknown>, field: string): unknown {
+  try {
+    return tool[field];
+  } catch {
+    return undefined;
+  }
 }
 
 function isCodeModePayloadToolName(name: string | undefined): boolean {
@@ -245,14 +259,15 @@ function hasResponsesWebSearchTool(tools: unknown): boolean {
     if (!isRecord(tool)) {
       return false;
     }
-    if (tool.type === "web_search") {
+    const type = readPayloadToolField(tool, "type");
+    if (type === "web_search") {
       return true;
     }
-    if (tool.type === "function" && tool.name === "web_search") {
+    if (type === "function" && readPayloadToolField(tool, "name") === "web_search") {
       return true;
     }
-    const fn = tool.function;
-    return isRecord(fn) && fn.name === "web_search";
+    const fn = readPayloadToolField(tool, "function");
+    return isRecord(fn) && readPayloadToolField(fn, "name") === "web_search";
   });
 }
 
