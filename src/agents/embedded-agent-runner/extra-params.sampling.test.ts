@@ -238,6 +238,159 @@ describe("createStreamFnWithExtraParams sampling overrides", () => {
     expect(callOptions?.temperature).toBe(0.4);
   });
 
+  it("skips dynamic configured response_format fields while preserving healthy params", () => {
+    const params: Record<string, unknown> = { temperature: 0.4 };
+    Object.defineProperty(params, "response_format", {
+      enumerable: true,
+      get() {
+        throw new Error("raw configured response_format getter failed");
+      },
+    });
+
+    const resolved = resolveExtraParams({
+      cfg: {
+        agents: {
+          defaults: {
+            params,
+          },
+        },
+      } as never,
+      provider: "anthropic",
+      modelId: "claude-sonnet-4.6",
+    });
+
+    expect(resolved).toEqual({ temperature: 0.4 });
+  });
+
+  it("skips dynamic request response_format overrides while preserving healthy params", () => {
+    const underlying = vi.fn(() => ({
+      push: vi.fn(),
+      result: vi.fn(async () => undefined),
+      [Symbol.asyncIterator]: vi.fn(async function* () {
+        // empty stream
+      }),
+    })) as unknown as StreamFn;
+    const agent: { streamFn?: StreamFn } = { streamFn: underlying };
+    const override: Record<string, unknown> = { temperature: 0.4 };
+    Object.defineProperty(override, "response_format", {
+      enumerable: true,
+      get() {
+        throw new Error("raw override response_format getter failed");
+      },
+    });
+
+    applyExtraParamsToAgent(
+      agent,
+      undefined,
+      "openai",
+      "gpt-5.4",
+      override,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { preparedExtraParams: override },
+    );
+
+    if (!agent.streamFn) {
+      throw new Error("expected extra params to wrap streamFn");
+    }
+
+    void agent.streamFn(
+      { id: "gpt-5.4", api: "openai-completions", provider: "openai" } as never,
+      { messages: [], tools: [] } as never,
+      undefined,
+    );
+
+    const callOptions = (underlying as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls[0]?.[2] as { responseFormat?: Record<string, unknown>; temperature?: number };
+    expect(callOptions.responseFormat).toBeUndefined();
+    expect(callOptions.temperature).toBe(0.4);
+  });
+
+  it("skips dynamic provider-runtime response_format fields while preserving healthy params", () => {
+    const prepared: Record<string, unknown> = { seed: 1234 };
+    Object.defineProperty(prepared, "responseFormat", {
+      enumerable: true,
+      get() {
+        throw new Error("raw prepared responseFormat getter failed");
+      },
+    });
+    extraParamsTesting.setProviderRuntimeDepsForTest({
+      prepareProviderExtraParams: () => prepared,
+      resolveProviderExtraParamsForTransport: () => undefined,
+      wrapProviderStreamFn: () => undefined,
+    });
+
+    expect(() =>
+      resolvePreparedExtraParams({
+        cfg: undefined,
+        provider: "openai",
+        modelId: "gpt-5.4",
+      }),
+    ).not.toThrow();
+
+    expect(
+      resolvePreparedExtraParams({
+        cfg: undefined,
+        provider: "openai",
+        modelId: "gpt-5.4",
+      }),
+    ).toEqual({ seed: 1234 });
+  });
+
+  it("preserves explicit empty prepared params instead of recomputing defaults", () => {
+    const underlying = vi.fn(() => ({
+      push: vi.fn(),
+      result: vi.fn(async () => undefined),
+      [Symbol.asyncIterator]: vi.fn(async function* () {
+        // empty stream
+      }),
+    })) as unknown as StreamFn;
+    const agent: { streamFn?: StreamFn } = { streamFn: underlying };
+
+    applyExtraParamsToAgent(
+      agent,
+      {
+        agents: {
+          defaults: {
+            params: {
+              temperature: 0.4,
+            },
+          },
+        },
+      } as never,
+      "openai",
+      "gpt-5.4",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { preparedExtraParams: {} },
+    );
+
+    if (!agent.streamFn) {
+      throw new Error("expected streamFn to stay available");
+    }
+
+    void agent.streamFn(
+      { id: "gpt-5.4", api: "openai-completions", provider: "openai" } as never,
+      { messages: [], tools: [] } as never,
+      undefined,
+    );
+
+    expect(underlying).toHaveBeenCalledTimes(1);
+    const callOptions = (underlying as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls[0]?.[2] as { temperature?: number; responseFormat?: Record<string, unknown> };
+    expect(callOptions.temperature).toBeUndefined();
+    expect(callOptions.responseFormat).toBeUndefined();
+  });
+
   it("lets request responseFormat override configured response_format", () => {
     const underlying = vi.fn(() => ({
       push: vi.fn(),

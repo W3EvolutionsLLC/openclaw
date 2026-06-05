@@ -52,6 +52,7 @@ const providerRuntimeDeps = {
 
 let preparedExtraParamsCache = new WeakMap<OpenClawConfig, Map<string, Record<string, unknown>>>();
 const REQUEST_SCOPED_EXTRA_PARAM_KEYS = new Set(["response_format", "responseFormat", "stop"]);
+const UNSAFE_EXTRA_PARAM_KEYS = new Set(["__proto__", "prototype", "constructor"]);
 
 export const testing = {
   setProviderRuntimeDepsForTest(
@@ -87,19 +88,20 @@ export function resolveExtraParams(params: {
   modelId: string;
   agentId?: string;
 }): Record<string, unknown> | undefined {
-  const defaultParams = params.cfg?.agents?.defaults?.params ?? undefined;
+  const defaultParams = sanitizeExtraParamsRecord(params.cfg?.agents?.defaults?.params);
   const canonicalKey = modelKey(params.provider, params.modelId);
   const legacyKey = legacyModelKey(params.provider, params.modelId);
   const configuredModels = params.cfg?.agents?.defaults?.models;
   const modelConfig =
     configuredModels?.[canonicalKey] ?? (legacyKey ? configuredModels?.[legacyKey] : undefined);
-  const globalParams = modelConfig?.params ? { ...modelConfig.params } : undefined;
-  const agentParams =
+  const globalParams = sanitizeExtraParamsRecord(modelConfig?.params);
+  const agentParams = sanitizeExtraParamsRecord(
     params.agentId && params.cfg?.agents?.list
       ? params.cfg.agents.list.find((agent) => agent.id === params.agentId)?.params
-      : undefined;
+      : undefined,
+  );
 
-  const merged = Object.assign({}, defaultParams, globalParams, agentParams);
+  const merged = mergeExtraParamRecords(defaultParams, globalParams, agentParams);
   const resolvedParallelToolCalls = resolveAliasedParamValue(
     [defaultParams, globalParams, agentParams],
     "parallel_tool_calls",
@@ -242,27 +244,18 @@ export function resolvePreparedExtraParams(params: {
   providerRuntimeHandle?: ProviderRuntimePluginHandle;
 }): Record<string, unknown> {
   const resolvedExtraParams =
-    params.resolvedExtraParams ??
-    resolveExtraParams({
-      cfg: params.cfg,
-      provider: params.provider,
-      modelId: params.modelId,
-      agentId: params.agentId,
-    });
-  const override =
-    params.extraParamsOverride && Object.keys(params.extraParamsOverride).length > 0
-      ? stripRequestScopedExtraParams(
-          sanitizeExtraParamsRecord(
-            Object.fromEntries(
-              Object.entries(params.extraParamsOverride).filter(([, value]) => value !== undefined),
-            ),
-          ),
-        )
-      : undefined;
-  const merged = {
-    ...sanitizeExtraParamsRecord(resolvedExtraParams),
-    ...override,
-  };
+    params.resolvedExtraParams !== undefined
+      ? (sanitizeExtraParamsRecord(params.resolvedExtraParams, { preserveEmpty: true }) ?? {})
+      : resolveExtraParams({
+          cfg: params.cfg,
+          provider: params.provider,
+          modelId: params.modelId,
+          agentId: params.agentId,
+        });
+  const override = stripRequestScopedExtraParams(
+    sanitizeExtraParamsRecord(params.extraParamsOverride, { includeUndefined: false }),
+  );
+  const merged = mergeExtraParamRecords(resolvedExtraParams, override);
   canonicalizeMaxTokensParam({
     merged,
     sources: [resolvedExtraParams, override],
@@ -288,7 +281,26 @@ export function resolvePreparedExtraParams(params: {
     }
   }
   const prepared =
-    providerRuntimeDeps.prepareProviderExtraParams({
+    sanitizeExtraParamsRecord(
+      providerRuntimeDeps.prepareProviderExtraParams({
+        provider: params.provider,
+        config: params.cfg,
+        workspaceDir: params.workspaceDir,
+        runtimeHandle: params.providerRuntimeHandle,
+        context: {
+          config: params.cfg,
+          agentDir: params.agentDir,
+          workspaceDir: params.workspaceDir,
+          provider: params.provider,
+          modelId: params.modelId,
+          model: params.model,
+          extraParams: merged,
+          thinkingLevel: params.thinkingLevel,
+        },
+      }) ?? merged,
+    ) ?? {};
+  const transportPatch = sanitizeExtraParamsRecord(
+    providerRuntimeDeps.resolveProviderExtraParamsForTransport({
       provider: params.provider,
       config: params.cfg,
       workspaceDir: params.workspaceDir,
@@ -299,32 +311,17 @@ export function resolvePreparedExtraParams(params: {
         workspaceDir: params.workspaceDir,
         provider: params.provider,
         modelId: params.modelId,
-        model: params.model,
-        extraParams: merged,
+        extraParams: prepared,
         thinkingLevel: params.thinkingLevel,
+        model: params.model,
+        transport: params.resolvedTransport ?? resolveSupportedTransport(prepared.transport),
       },
-    }) ?? merged;
-  const transportPatch = providerRuntimeDeps.resolveProviderExtraParamsForTransport({
-    provider: params.provider,
-    config: params.cfg,
-    workspaceDir: params.workspaceDir,
-    runtimeHandle: params.providerRuntimeHandle,
-    context: {
-      config: params.cfg,
-      agentDir: params.agentDir,
-      workspaceDir: params.workspaceDir,
-      provider: params.provider,
-      modelId: params.modelId,
-      extraParams: prepared,
-      thinkingLevel: params.thinkingLevel,
-      model: params.model,
-      transport: params.resolvedTransport ?? resolveSupportedTransport(prepared.transport),
-    },
-  })?.patch;
-  const result = transportPatch ? { ...prepared, ...transportPatch } : prepared;
+    })?.patch ?? undefined,
+  );
+  const result = mergeExtraParamRecords(prepared, transportPatch);
   canonicalizeMaxTokensParam({
     merged: result,
-    sources: [prepared, transportPatch ?? undefined],
+    sources: [prepared, transportPatch],
   });
   if (cacheKey) {
     let bucket = preparedExtraParamsCache.get(cfg!);
@@ -339,26 +336,80 @@ export function resolvePreparedExtraParams(params: {
 
 function sanitizeExtraParamsRecord(
   value: Record<string, unknown> | undefined,
+  options?: { includeUndefined?: boolean; preserveEmpty?: boolean },
 ): Record<string, unknown> | undefined {
   if (!value) {
     return undefined;
   }
-  return Object.fromEntries(
-    Object.entries(value).filter(
-      ([key]) => key !== "__proto__" && key !== "prototype" && key !== "constructor",
-    ),
-  );
+  let descriptors: Record<string, PropertyDescriptor>;
+  try {
+    descriptors = Object.getOwnPropertyDescriptors(value);
+  } catch {
+    log.warn("ignoring unreadable extra params object");
+    return undefined;
+  }
+  const sanitized: Record<string, unknown> = {};
+  for (const [key, descriptor] of Object.entries(descriptors)) {
+    if (UNSAFE_EXTRA_PARAM_KEYS.has(key) || !descriptor.enumerable) {
+      continue;
+    }
+    if (!("value" in descriptor)) {
+      log.warn(`ignoring dynamic extra param: ${key}`);
+      continue;
+    }
+    if (descriptor.value === undefined && options?.includeUndefined === false) {
+      continue;
+    }
+    Object.defineProperty(sanitized, key, {
+      configurable: true,
+      enumerable: true,
+      value: descriptor.value,
+      writable: true,
+    });
+  }
+  return Object.keys(sanitized).length > 0 || options?.preserveEmpty ? sanitized : undefined;
+}
+
+function mergeExtraParamRecords(
+  ...sources: Array<Record<string, unknown> | undefined>
+): Record<string, unknown> {
+  const merged: Record<string, unknown> = {};
+  for (const source of sources) {
+    const sanitized = sanitizeExtraParamsRecord(source);
+    if (!sanitized) {
+      continue;
+    }
+    for (const [key, value] of Object.entries(sanitized)) {
+      Object.defineProperty(merged, key, {
+        configurable: true,
+        enumerable: true,
+        value,
+        writable: true,
+      });
+    }
+  }
+  return merged;
 }
 
 function stripRequestScopedExtraParams(
   value: Record<string, unknown> | undefined,
 ): Record<string, unknown> | undefined {
-  if (!value) {
+  const sanitized = sanitizeExtraParamsRecord(value);
+  if (!sanitized) {
     return undefined;
   }
-  const filtered = Object.fromEntries(
-    Object.entries(value).filter(([key]) => !REQUEST_SCOPED_EXTRA_PARAM_KEYS.has(key)),
-  );
+  const filtered: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(sanitized)) {
+    if (REQUEST_SCOPED_EXTRA_PARAM_KEYS.has(key)) {
+      continue;
+    }
+    Object.defineProperty(filtered, key, {
+      configurable: true,
+      enumerable: true,
+      value: entry,
+      writable: true,
+    });
+  }
   return Object.keys(filtered).length > 0 ? filtered : undefined;
 }
 
@@ -440,23 +491,24 @@ function createStreamFnWithExtraParams(
   provider: string,
   model?: ProviderRuntimeModel,
 ): StreamFn | undefined {
-  if (!extraParams || Object.keys(extraParams).length === 0) {
+  const safeExtraParams = sanitizeExtraParamsRecord(extraParams);
+  if (!safeExtraParams) {
     return undefined;
   }
 
   const streamParams: CacheRetentionStreamOptions = {};
-  if (typeof extraParams.temperature === "number") {
-    streamParams.temperature = extraParams.temperature;
+  if (typeof safeExtraParams.temperature === "number") {
+    streamParams.temperature = safeExtraParams.temperature;
   }
-  if (typeof extraParams.topP === "number") {
-    streamParams.topP = extraParams.topP;
+  if (typeof safeExtraParams.topP === "number") {
+    streamParams.topP = safeExtraParams.topP;
   }
-  const maxTokens = resolveMaxTokensParam(extraParams);
+  const maxTokens = resolveMaxTokensParam(safeExtraParams);
   if (maxTokens !== undefined) {
     streamParams.maxTokens = maxTokens;
   }
   const resolvedResponseFormat = resolveAliasedParamValue(
-    [extraParams],
+    [safeExtraParams],
     "response_format",
     "responseFormat",
   );
@@ -467,21 +519,21 @@ function createStreamFnWithExtraParams(
   ) {
     streamParams.responseFormat = resolvedResponseFormat as Record<string, unknown>;
   }
-  const transport = resolveSupportedTransport(extraParams.transport);
+  const transport = resolveSupportedTransport(safeExtraParams.transport);
   if (transport) {
     streamParams.transport = transport;
-  } else if (extraParams.transport != null) {
+  } else if (safeExtraParams.transport != null) {
     const transportSummary =
-      typeof extraParams.transport === "string"
-        ? extraParams.transport
-        : typeof extraParams.transport;
+      typeof safeExtraParams.transport === "string"
+        ? safeExtraParams.transport
+        : typeof safeExtraParams.transport;
     log.warn(`ignoring invalid transport param: ${transportSummary}`);
   }
   const cachedContent =
-    typeof extraParams.cachedContent === "string"
-      ? extraParams.cachedContent
-      : typeof extraParams.cached_content === "string"
-        ? extraParams.cached_content
+    typeof safeExtraParams.cachedContent === "string"
+      ? safeExtraParams.cachedContent
+      : typeof safeExtraParams.cached_content === "string"
+        ? safeExtraParams.cached_content
         : undefined;
   if (typeof cachedContent === "string" && cachedContent.trim()) {
     streamParams.cachedContent = cachedContent.trim();
@@ -492,14 +544,14 @@ function createStreamFnWithExtraParams(
   // Resolve aliased params: camelCase (runtime/request) checked first so
   // per-request gateway overrides take priority over configured snake_case values.
   const resolvedFrequencyPenalty = resolveAliasedParamValueFromKeys(
-    [extraParams],
+    [safeExtraParams],
     ["frequencyPenalty", "frequency_penalty"],
   );
   const resolvedPresencePenalty = resolveAliasedParamValueFromKeys(
-    [extraParams],
+    [safeExtraParams],
     ["presencePenalty", "presence_penalty"],
   );
-  const resolvedSeed = extraParams.seed;
+  const resolvedSeed = safeExtraParams.seed;
   if (typeof resolvedFrequencyPenalty === "number") {
     streamParams.frequencyPenalty = resolvedFrequencyPenalty;
   }
@@ -509,7 +561,7 @@ function createStreamFnWithExtraParams(
   if (typeof resolvedSeed === "number") {
     streamParams.seed = resolvedSeed;
   }
-  const resolvedStop = normalizeStopSequences(extraParams.stop);
+  const resolvedStop = normalizeStopSequences(safeExtraParams.stop);
   if (resolvedStop) {
     streamParams.stop = resolvedStop;
   }
@@ -523,7 +575,7 @@ function createStreamFnWithExtraParams(
   };
 
   const initialCacheRetention = resolveCacheRetention(
-    extraParams,
+    safeExtraParams,
     provider,
     typeof model?.api === "string" ? model.api : undefined,
     typeof model?.id === "string" ? model.id : undefined,
@@ -539,7 +591,7 @@ function createStreamFnWithExtraParams(
   const underlying = baseStreamFn ?? streamSimple;
   const wrappedStreamFn: StreamFn = (callModel, context, options) => {
     const cacheRetention = resolveCacheRetention(
-      extraParams,
+      safeExtraParams,
       provider,
       typeof callModel.api === "string" ? callModel.api : undefined,
       typeof callModel.id === "string" ? callModel.id : undefined,
@@ -579,10 +631,15 @@ function resolveAliasedParamValueFromKeys(
       continue;
     }
     for (const key of keys) {
-      if (!Object.hasOwn(source, key)) {
+      const descriptor = Object.getOwnPropertyDescriptor(source, key);
+      if (!descriptor) {
         continue;
       }
-      resolved = source[key];
+      if (!("value" in descriptor)) {
+        log.warn(`ignoring dynamic extra param: ${key}`);
+        continue;
+      }
+      resolved = descriptor.value;
       seen = true;
       break;
     }
@@ -685,11 +742,7 @@ function createOpenAICompletionsStoreCompatWrapper(baseStreamFn: StreamFn | unde
 }
 
 function sanitizeExtraBodyRecord(value: Record<string, unknown>): Record<string, unknown> {
-  return Object.fromEntries(
-    Object.entries(sanitizeExtraParamsRecord(value) ?? {}).filter(
-      ([, entry]) => entry !== undefined,
-    ),
-  );
+  return sanitizeExtraParamsRecord(value, { includeUndefined: false }) ?? {};
 }
 
 function resolveExtraBodyParam(rawExtraBody: unknown): Record<string, unknown> | undefined {
@@ -786,7 +839,7 @@ function applyPrePluginStreamWrappers(ctx: ApplyExtraParamsContext): void {
     ctx.override && hasRequestScopedExtraParams(ctx.override)
       ? stripRequestScopedExtraParams(ctx.effectiveExtraParams)
       : ctx.effectiveExtraParams;
-  const streamParams = ctx.override ? { ...baseExtraParams, ...ctx.override } : baseExtraParams;
+  const streamParams = mergeExtraParamRecords(baseExtraParams, ctx.override);
   const wrappedStreamFn = createStreamFnWithExtraParams(
     ctx.agent.streamFn,
     streamParams,
@@ -983,29 +1036,23 @@ export function applyExtraParamsToAgent(
     modelId,
     agentId,
   });
-  const override =
-    extraParamsOverride && Object.keys(extraParamsOverride).length > 0
-      ? sanitizeExtraParamsRecord(
-          Object.fromEntries(
-            Object.entries(extraParamsOverride).filter(([, value]) => value !== undefined),
-          ),
-        )
-      : undefined;
+  const override = sanitizeExtraParamsRecord(extraParamsOverride, { includeUndefined: false });
   const effectiveExtraParams =
-    options?.preparedExtraParams ??
-    resolvePreparedExtraParams({
-      cfg,
-      provider,
-      modelId,
-      extraParamsOverride,
-      thinkingLevel,
-      agentId,
-      agentDir,
-      workspaceDir,
-      resolvedExtraParams,
-      model,
-      resolvedTransport,
-    });
+    options?.preparedExtraParams !== undefined
+      ? (sanitizeExtraParamsRecord(options.preparedExtraParams, { preserveEmpty: true }) ?? {})
+      : resolvePreparedExtraParams({
+          cfg,
+          provider,
+          modelId,
+          extraParamsOverride,
+          thinkingLevel,
+          agentId,
+          agentDir,
+          workspaceDir,
+          resolvedExtraParams,
+          model,
+          resolvedTransport,
+        });
   const wrapperContext: ApplyExtraParamsContext = {
     agent,
     cfg,
