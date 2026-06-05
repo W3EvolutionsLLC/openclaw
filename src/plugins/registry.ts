@@ -1598,11 +1598,49 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
     });
   };
 
+  const readNodeHostCommandFields = (
+    record: PluginRecord,
+    nodeCommand: OpenClawPluginNodeHostCommand,
+  ):
+    | {
+        command: unknown;
+        cap: unknown;
+        dangerous: unknown;
+        handle: unknown;
+      }
+    | undefined => {
+    let command: unknown;
+    try {
+      command = nodeCommand.command;
+      return {
+        command,
+        cap: nodeCommand.cap,
+        dangerous: nodeCommand.dangerous,
+        handle: nodeCommand.handle,
+      };
+    } catch (error) {
+      const normalizedCommand = normalizeOptionalString(command);
+      pushDiagnostic({
+        level: "error",
+        pluginId: record.id,
+        source: record.source,
+        message:
+          `node host command registration has unreadable fields` +
+          `${normalizedCommand ? `: ${normalizedCommand}` : ""}: ${formatErrorMessage(error)}`,
+      });
+      return undefined;
+    }
+  };
+
   const registerNodeHostCommand = (
     record: PluginRecord,
     nodeCommand: OpenClawPluginNodeHostCommand,
   ) => {
-    const command = nodeCommand.command.trim();
+    const fields = readNodeHostCommandFields(record, nodeCommand);
+    if (!fields) {
+      return;
+    }
+    const command = normalizeOptionalString(fields.command) ?? "";
     if (!command) {
       pushDiagnostic({
         level: "error",
@@ -1621,6 +1659,16 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
       });
       return;
     }
+    const handle = fields.handle;
+    if (typeof handle !== "function") {
+      pushDiagnostic({
+        level: "error",
+        pluginId: record.id,
+        source: record.source,
+        message: `node host command registration missing handler: ${command}`,
+      });
+      return;
+    }
     registry.nodeHostCommands ??= [];
     const existing = registry.nodeHostCommands.find((entry) => entry.command.command === command);
     if (existing) {
@@ -1636,9 +1684,10 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
       pluginId: record.id,
       pluginName: record.name,
       command: {
-        ...nodeCommand,
         command,
-        cap: normalizeOptionalString(nodeCommand.cap),
+        cap: normalizeOptionalString(fields.cap),
+        ...(fields.dangerous === true ? { dangerous: true } : {}),
+        handle: handle as OpenClawPluginNodeHostCommand["handle"],
       },
       source: record.source,
       rootDir: record.rootDir,
