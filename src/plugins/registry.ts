@@ -2469,12 +2469,51 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
     });
   };
 
+  const readAgentEventSubscriptionFields = (
+    record: PluginRecord,
+    subscription: PluginAgentEventSubscriptionRegistration,
+  ):
+    | {
+        id: unknown;
+        description: unknown;
+        streams: unknown;
+        handle: unknown;
+      }
+    | undefined => {
+    let id: unknown;
+    try {
+      id = subscription.id;
+      return {
+        id,
+        description: subscription.description,
+        streams: subscription.streams,
+        handle: subscription.handle,
+      };
+    } catch (error) {
+      const normalizedId = normalizeOptionalHostHookString(id);
+      pushDiagnostic({
+        level: "error",
+        pluginId: record.id,
+        source: record.source,
+        message:
+          `agent event subscription registration has unreadable fields` +
+          `${normalizedId ? `: ${normalizedId}` : ""}: ${formatErrorMessage(error)}`,
+      });
+      return undefined;
+    }
+  };
+
   const registerAgentEventSubscription = (
     record: PluginRecord,
     subscription: PluginAgentEventSubscriptionRegistration,
   ) => {
-    const id = normalizePluginHostHookId(subscription.id);
-    if (!id || typeof subscription.handle !== "function") {
+    const fields = readAgentEventSubscriptionFields(record, subscription);
+    if (!fields) {
+      return;
+    }
+    const id = normalizePluginHostHookId(typeof fields.id === "string" ? fields.id : undefined);
+    const handle = fields.handle;
+    if (!id || typeof handle !== "function") {
       pushDiagnostic({
         level: "error",
         pluginId: record.id,
@@ -2483,7 +2522,7 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
       });
       return;
     }
-    const streams = normalizeHostHookStringList(subscription.streams);
+    const streams = normalizeHostHookStringList(fields.streams);
     if (streams === null) {
       pushDiagnostic({
         level: "error",
@@ -2508,7 +2547,16 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
     (registry.agentEventSubscriptions ??= []).push({
       pluginId: record.id,
       pluginName: record.name,
-      subscription: { ...subscription, id, ...(streams !== undefined ? { streams } : {}) },
+      subscription: {
+        id,
+        ...(fields.description !== undefined ? { description: fields.description as string } : {}),
+        ...(streams !== undefined
+          ? {
+              streams: streams as NonNullable<PluginAgentEventSubscriptionRegistration["streams"]>,
+            }
+          : {}),
+        handle: handle as PluginAgentEventSubscriptionRegistration["handle"],
+      },
       source: record.source,
       rootDir: record.rootDir,
     });
