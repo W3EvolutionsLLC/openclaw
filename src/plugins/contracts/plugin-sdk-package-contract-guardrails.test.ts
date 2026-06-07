@@ -788,7 +788,18 @@ describe("plugin-sdk package contract guardrails", () => {
   it("keeps configured local-origin fetch helpers out of the public SSRF runtime", async () => {
     const ssrfRuntime = await import("../../plugin-sdk/ssrf-runtime.js");
 
+    expect(ssrfRuntime).toHaveProperty("fetchWithSsrFGuard");
     expect(ssrfRuntime).not.toHaveProperty("fetchConfiguredLocalOriginWithSsrFGuard");
+  });
+
+  it("marks fetchWithSsrFGuard as deprecated while keeping the public SDK export", async () => {
+    const ssrfRuntime = await import("../../plugin-sdk/ssrf-runtime.js");
+    const source = fs.readFileSync(resolve(REPO_ROOT, "src/infra/net/fetch-guard.ts"), "utf8");
+
+    expect(ssrfRuntime).toHaveProperty("fetchWithSsrFGuard");
+    expect(source).toMatch(
+      /\/\*\*[\s\S]*?@deprecated[\s\S]*?\*\/\nexport async function fetchWithSsrFGuard\(params: GuardedFetchOptions\)/,
+    );
   });
 
   it("keeps bundled plugin SDK compatibility subpaths explicitly classified", () => {

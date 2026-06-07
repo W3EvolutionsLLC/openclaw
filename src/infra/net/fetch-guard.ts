@@ -411,6 +411,10 @@ function rewriteRedirectInitForCrossOrigin(params: {
 
 export { fetchWithRuntimeDispatcher } from "./runtime-fetch.js";
 
+/**
+ * @deprecated Kept for plugin SDK compatibility. New OpenClaw core fetch paths
+ * should use native fetch/transport helpers and managed proxy policy instead.
+ */
 export async function fetchWithSsrFGuard(params: GuardedFetchOptions): Promise<GuardedFetchResult> {
   const { managedProxyBypass: _ignoredManagedProxyBypass, ...publicParams } =
     params as GuardedFetchOptions & {
