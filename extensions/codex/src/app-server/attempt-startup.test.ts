@@ -30,6 +30,14 @@ type AttemptPaths = {
 
 const tempRoots = new Set<string>();
 
+function isolateCodexCliAuthHome(): void {
+  const root = path.join(os.tmpdir(), `openclaw-codex-attempt-auth-${randomUUID()}`);
+  tempRoots.add(root);
+  // Keep fallback auth lookup from reading the operator's real Codex CLI auth file.
+  vi.stubEnv("CODEX_HOME", path.join(root, "codex-home"));
+  vi.stubEnv("HOME", path.join(root, "home"));
+}
+
 function createAttemptPaths(): AttemptPaths {
   const root = path.join(os.tmpdir(), `openclaw-codex-attempt-startup-${randomUUID()}`);
   tempRoots.add(root);
@@ -168,6 +176,7 @@ describe("startCodexAttemptThread", () => {
     vi.useRealTimers();
     vi.stubEnv("CODEX_API_KEY", "");
     vi.stubEnv("OPENAI_API_KEY", "");
+    isolateCodexCliAuthHome();
     clearSharedCodexAppServerClient();
   });
 
