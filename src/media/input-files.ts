@@ -8,10 +8,10 @@ import {
   normalizeOptionalString,
 } from "@openclaw/normalization-core/string-coerce";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { fetchUntrustedUrl } from "../infra/net/egress-fetch.js";
 import { normalizeHostname } from "../infra/net/hostname.js";
 import { matchesHostnameAllowlist, normalizeHostnameAllowlist } from "../infra/net/ssrf.js";
 import { logWarn } from "../logger.js";
-import { buildTimeoutAbortSignal } from "../utils/fetch-timeout.js";
 import { convertHeicToJpeg } from "./media-services.js";
 import { extractPdfContent, type PdfExtractedImage } from "./pdf-extract.js";
 
@@ -208,7 +208,7 @@ export function resolveInputFileLimits(config?: InputFileLimitsConfig): InputFil
 
 /**
  * Fetches an input source URL with allowlist, redirect, timeout, and byte limits.
- * Destination/IP filtering is owned by proxy.enabled plus the external proxy policy.
+ * Direct-mode destination/IP stock safety is centralized in the egress helper.
  */
 export async function fetchInputSourceUrl(params: {
   url: string;
@@ -218,43 +218,20 @@ export async function fetchInputSourceUrl(params: {
   policy?: InputUrlFetchPolicy;
 }): Promise<InputFetchResult> {
   const urlPolicy = buildInputUrlPolicy(params.policy);
-  const timeout = buildTimeoutAbortSignal({
-    timeoutMs: params.timeoutMs,
-    operation: "input-file-fetch",
+  const result = await fetchUntrustedUrl({
     url: params.url,
+    timeoutMs: params.timeoutMs,
+    maxRedirects: params.maxRedirects,
+    operation: "input-file-fetch",
+    init: {
+      headers: { "User-Agent": "OpenClaw-Gateway/1.0" },
+    },
+    validateUrl: (url) => {
+      assertInputUrlAllowedByPolicy(url.toString(), urlPolicy);
+    },
   });
-  const release = async () => {
-    timeout.cleanup();
-  };
-  let response!: Response;
-  let currentUrl = params.url;
-  let redirectCount = 0;
-
+  const { response, release } = result;
   try {
-    while (true) {
-      assertInputUrlAllowedByPolicy(currentUrl, urlPolicy);
-      response = await fetch(currentUrl, {
-        headers: { "User-Agent": "OpenClaw-Gateway/1.0" },
-        redirect: "manual",
-        ...(timeout.signal ? { signal: timeout.signal } : {}),
-      });
-      if (![301, 302, 303, 307, 308].includes(response.status)) {
-        break;
-      }
-      const location = response.headers.get("location");
-      await discardIgnoredResponseBody(response);
-      if (!location) {
-        throw new Error(`Redirect missing location header (${response.status})`);
-      }
-      redirectCount += 1;
-      if (redirectCount > params.maxRedirects) {
-        throw new Error(`Too many redirects (limit: ${params.maxRedirects})`);
-      }
-      currentUrl = new URL(location, currentUrl).toString();
-      assertInputUrlAllowedByPolicy(currentUrl, urlPolicy);
-      timeout.refresh();
-    }
-
     if (!response.ok) {
       await discardIgnoredResponseBody(response);
       throw new Error(`Failed to fetch: ${response.status} ${response.statusText}`);

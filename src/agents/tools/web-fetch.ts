@@ -11,12 +11,13 @@ import {
 } from "@openclaw/normalization-core/string-coerce";
 import { Type } from "typebox";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { fetchUntrustedUrl } from "../../infra/net/egress-fetch.js";
+import { SsrFBlockedError } from "../../infra/net/ssrf.js";
 import { logDebug } from "../../logger.js";
 import type { RuntimeWebFetchMetadata } from "../../secrets/runtime-web-tools.types.js";
 import { wrapExternalContent, wrapWebContent } from "../../security/external-content.js";
 import { createLazyImportLoader } from "../../shared/lazy-promise.js";
 import { isRecord } from "../../utils.js";
-import { buildTimeoutAbortSignal } from "../../utils/fetch-timeout.js";
 import { extractReadableContent } from "../../web-fetch/content-extractors.runtime.js";
 import { resolveWebProviderConfig } from "../../web/provider-runtime-shared.js";
 import { stringEnum } from "../schema/string-enum.js";
@@ -405,61 +406,25 @@ async function fetchWebUrl(params: {
   const timeoutMs = finiteSecondsToTimerSafeMilliseconds(params.timeoutSeconds, {
     floorSeconds: true,
   });
-  const timeout = buildTimeoutAbortSignal({
+  const { response, finalUrl, release } = await fetchUntrustedUrl({
+    url: params.url,
+    maxRedirects: params.maxRedirects,
     timeoutMs,
     signal: params.signal,
-    operation: "web-fetch",
-    url: params.url,
+    operation: "web_fetch",
+    init: {
+      headers: {
+        Accept: "text/markdown, text/html;q=0.9, */*;q=0.1",
+        "User-Agent": params.userAgent,
+        "Accept-Language": "en-US,en;q=0.9",
+      },
+    },
   });
-  let activeResponse: Response | null = null;
-  const release = async () => {
-    timeout.cleanup();
-    await activeResponse?.body?.cancel().catch(() => undefined);
-  };
-  let currentUrl = params.url;
-  let redirectCount = 0;
-  try {
-    while (true) {
-      assertWebFetchHttpUrl(currentUrl);
-      const response = await fetch(currentUrl, {
-        headers: {
-          Accept: "text/markdown, text/html;q=0.9, */*;q=0.1",
-          "User-Agent": params.userAgent,
-          "Accept-Language": "en-US,en;q=0.9",
-        },
-        redirect: "manual",
-        ...(timeout.signal ? { signal: timeout.signal } : {}),
-      });
-      activeResponse = response;
-      if (![301, 302, 303, 307, 308].includes(response.status)) {
-        return { response, finalUrl: currentUrl, release };
-      }
-      const location = response.headers.get("location");
-      await response.body?.cancel().catch(() => undefined);
-      activeResponse = null;
-      if (!location) {
-        throw new Error(`Redirect missing location header (${response.status})`);
-      }
-      redirectCount += 1;
-      if (redirectCount > params.maxRedirects) {
-        throw new Error(`Too many redirects (limit: ${params.maxRedirects})`);
-      }
-      const nextUrl = new URL(location, currentUrl).toString();
-      assertWebFetchHttpUrl(nextUrl);
-      currentUrl = nextUrl;
-      timeout.refresh();
-    }
-  } catch (error) {
-    await release();
-    throw error;
-  }
+  return { response, finalUrl, release };
 }
 
-function assertWebFetchHttpUrl(url: string): void {
-  const protocol = new URL(url).protocol;
-  if (protocol !== "http:" && protocol !== "https:") {
-    throw new Error("web_fetch only supports http and https URLs");
-  }
+function isTerminalWebFetchPolicyError(error: unknown): boolean {
+  return error instanceof SsrFBlockedError;
 }
 
 async function runWebFetch(params: WebFetchRuntimeParams): Promise<Record<string, unknown>> {
@@ -505,7 +470,7 @@ async function runWebFetch(params: WebFetchRuntimeParams): Promise<Record<string
       );
     }
   } catch (error) {
-    if (params.signal?.aborted) {
+    if (params.signal?.aborted || isTerminalWebFetchPolicyError(error)) {
       throw error;
     }
     const payload = await maybeFetchProviderWebFetchPayload({

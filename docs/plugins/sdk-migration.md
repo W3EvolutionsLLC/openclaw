@@ -56,8 +56,9 @@ imports, manifest fields, setup APIs, hooks, and runtime registration behavior.
   SDK. Plugins that imported `fetchWithSsrFGuard` or SSRF policy helpers from
   that subpath should use ordinary `fetch` for HTTP requests and rely on
   `proxy.enabled` plus an operator-managed external proxy for destination
-  policy. Move non-fetch helpers to their supported narrow SDK homes, such as
-  `error-runtime`, `ssrf-policy`, or `ssrf-dispatcher`, when those helpers are
+  policy. OpenClaw's remaining stock direct-mode guard is internal to
+  OpenClaw-owned untrusted URL surfaces and is not a plugin SDK contract. Move
+  non-fetch helpers to their supported narrow SDK homes when those helpers are
   still needed.
 </Warning>
 

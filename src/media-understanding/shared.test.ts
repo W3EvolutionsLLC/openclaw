@@ -1,4 +1,4 @@
-// Shared provider helper tests cover deadlines, guarded fetch policy, HTTP
+// Shared provider helper tests cover deadlines, egress fetch policy, HTTP
 // config, multipart transcription, and error response parsing.
 import {
   MAX_DATE_TIMESTAMP_MS,
@@ -10,12 +10,10 @@ import { VERSION } from "../version.js";
 
 const {
   captureHttpExchangeMock,
-  fetchWithSsrFGuardMock,
   isDebugProxyGlobalFetchPatchInstalledMock,
   shouldUseEnvHttpProxyForUrlMock,
 } = vi.hoisted(() => ({
   captureHttpExchangeMock: vi.fn(),
-  fetchWithSsrFGuardMock: vi.fn(),
   isDebugProxyGlobalFetchPatchInstalledMock: vi.fn(() => false),
   shouldUseEnvHttpProxyForUrlMock: vi.fn(() => false),
 }));
@@ -28,16 +26,6 @@ vi.mock("../proxy-capture/runtime.js", async () => {
     ...actual,
     captureHttpExchange: captureHttpExchangeMock,
     isDebugProxyGlobalFetchPatchInstalled: isDebugProxyGlobalFetchPatchInstalledMock,
-  };
-});
-
-vi.mock("../infra/net/fetch-guard.js", async () => {
-  const actual = await vi.importActual<typeof import("../infra/net/fetch-guard.js")>(
-    "../infra/net/fetch-guard.js",
-  );
-  return {
-    ...actual,
-    fetchWithSsrFGuard: fetchWithSsrFGuardMock,
   };
 });
 
@@ -70,17 +58,6 @@ beforeEach(() => {
   isDebugProxyGlobalFetchPatchInstalledMock.mockReturnValue(false);
   shouldUseEnvHttpProxyForUrlMock.mockReturnValue(false);
   delete process.env.OPENCLAW_DEBUG_PROXY_ENABLED;
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const result = await fetchWithSsrFGuardMock({
-        url:
-          input instanceof URL ? input.toString() : typeof input === "string" ? input : input.url,
-        init,
-      });
-      return result.response;
-    }),
-  );
 });
 
 afterEach(() => {
@@ -88,20 +65,6 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.useRealTimers();
 });
-
-function getFirstGuardedFetchCall() {
-  // Guarded fetch options carry SSRF and proxy policy, so assertions inspect the
-  // structured request passed to the network guard.
-  const [mockCall] = fetchWithSsrFGuardMock.mock.calls;
-  if (!mockCall) {
-    throw new Error("Expected fetchWithSsrFGuard to be called");
-  }
-  const [request] = mockCall;
-  if (!request || typeof request !== "object" || Array.isArray(request)) {
-    throw new Error("Expected fetchWithSsrFGuard request");
-  }
-  return request as Record<string, unknown>;
-}
 
 describe("provider operation deadlines", () => {
   it("keeps default per-call timeouts when no operation timeout is configured", () => {
@@ -246,12 +209,9 @@ describe("provider operation deadlines", () => {
   });
 
   it("passes guarded request policy through provider status polling", async () => {
-    const release = vi.fn(async () => {});
-    fetchWithSsrFGuardMock.mockResolvedValueOnce({
-      response: new Response(JSON.stringify({ status: "completed" })),
-      finalUrl: "https://api.example.com/v1/videos/task-1",
-      release,
-    });
+    const fetchFn = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ status: "completed" })));
 
     const result = await pollProviderOperationJson<{ status?: string }>({
       url: "https://api.example.com/v1/videos/task-1",
@@ -260,7 +220,7 @@ describe("provider operation deadlines", () => {
         label: "video generation task task-1",
       }),
       defaultTimeoutMs: 5_000,
-      fetchFn: fetch,
+      fetchFn,
       maxAttempts: 3,
       pollIntervalMs: 1_000,
       requestFailedMessage: "status failed",
@@ -271,32 +231,24 @@ describe("provider operation deadlines", () => {
     });
 
     expect(result).toEqual({ status: "completed" });
-    expect(getFirstGuardedFetchCall().url).toBe("https://api.example.com/v1/videos/task-1");
-    expect(getFirstGuardedFetchCall().init).toEqual(
+    expect(fetchFn.mock.calls[0]?.[0]).toBe("https://api.example.com/v1/videos/task-1");
+    expect(fetchFn.mock.calls[0]?.[1]).toEqual(
       expect.objectContaining({
         redirect: "manual",
         signal: expect.any(AbortSignal),
       }),
     );
-    expect(release).not.toHaveBeenCalled();
   });
 
   it("retries guarded transient provider status failures while polling", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(1_000);
-    const firstRelease = vi.fn(async () => {});
-    const secondRelease = vi.fn(async () => {});
-    fetchWithSsrFGuardMock
-      .mockResolvedValueOnce({
-        response: new Response("busy", { status: 503, statusText: "Service Unavailable" }),
-        finalUrl: "https://api.example.com/v1/videos/task-1",
-        release: firstRelease,
-      })
-      .mockResolvedValueOnce({
-        response: new Response(JSON.stringify({ status: "completed" })),
-        finalUrl: "https://api.example.com/v1/videos/task-1",
-        release: secondRelease,
-      });
+    const fetchFn = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response("busy", { status: 503, statusText: "Service Unavailable" }),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ status: "completed" })));
 
     const result = pollProviderOperationJson<{ status?: string }>({
       url: "https://api.example.com/v1/videos/task-1",
@@ -306,7 +258,7 @@ describe("provider operation deadlines", () => {
         timeoutMs: 10_000,
       }),
       defaultTimeoutMs: 5_000,
-      fetchFn: fetch,
+      fetchFn,
       maxAttempts: 3,
       pollIntervalMs: 1_000,
       requestFailedMessage: "status failed",
@@ -317,9 +269,7 @@ describe("provider operation deadlines", () => {
     await vi.advanceTimersByTimeAsync(250);
 
     await expect(result).resolves.toEqual({ status: "completed" });
-    expect(fetchWithSsrFGuardMock).toHaveBeenCalledTimes(2);
-    expect(firstRelease).not.toHaveBeenCalled();
-    expect(secondRelease).not.toHaveBeenCalled();
+    expect(fetchFn).toHaveBeenCalledTimes(2);
   });
 
   it("throws provider failure messages while polling status JSON", async () => {
@@ -647,7 +597,7 @@ describe("fetchWithTimeoutGuarded", () => {
     await fetchWithTimeoutGuarded("https://example.com", {}, undefined, fetchFn);
 
     expect(fetchFn).toHaveBeenCalledWith(
-      "https://example.com",
+      "https://example.com/",
       expect.objectContaining({
         redirect: "manual",
         signal: expect.any(AbortSignal),

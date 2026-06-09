@@ -16,7 +16,6 @@ import {
   resolveExpiresAtMsFromDurationMs,
   resolveTimerTimeoutMs,
 } from "@openclaw/normalization-core/number-coercion";
-import type { Dispatcher } from "undici";
 import type {
   ProviderRequestCapability,
   ProviderRequestTransport,
@@ -27,33 +26,21 @@ import {
   type ModelProviderRequestTransportOverrides,
   type ResolvedProviderRequestConfig,
 } from "../agents/provider-request-config.js";
+import { fetchOperatorConfiguredEndpoint } from "../infra/net/egress-fetch.js";
 import { normalizeHostname } from "../infra/net/hostname.js";
-import { shouldUseEnvHttpProxyForUrl } from "../infra/net/proxy-env.js";
-import { retainSafeHeadersForCrossOriginRedirect } from "../infra/net/redirect-headers.js";
-import {
-  fetchWithRuntimeDispatcher,
-  isMockedFetch,
-  type DispatcherAwareRequestInit,
-} from "../infra/net/runtime-fetch.js";
 import type { PinnedDispatcherPolicy, SsrFPolicy } from "../infra/net/ssrf.js";
 import {
-  closeDispatcher,
   matchesHostnameAllowlist,
   normalizeHostnameAllowlist,
   SsrFBlockedError,
 } from "../infra/net/ssrf.js";
-import {
-  createHttp1Agent,
-  createHttp1EnvHttpProxyAgent,
-  createHttp1ProxyAgent,
-} from "../infra/net/undici-runtime.js";
 import {
   executeProviderOperationWithRetry,
   type ProviderOperationRetryStage,
   type TransientProviderRetryConfig,
 } from "../provider-runtime/operation-retry.js";
 import { resolveDebugProxySettings } from "../proxy-capture/env.js";
-import { buildTimeoutAbortSignal, fetchWithTimeout } from "../utils/fetch-timeout.js";
+import { fetchWithTimeout } from "../utils/fetch-timeout.js";
 export { fetchWithTimeout };
 export { normalizeBaseUrl } from "../agents/provider-request-config.js";
 export { sanitizeConfiguredModelProviderRequest } from "../agents/provider-request-config.js";
@@ -375,124 +362,6 @@ export function resolveProviderHttpRequestConfig(params: {
   };
 }
 
-function createProviderHttpDispatcher(
-  dispatcherPolicy: PinnedDispatcherPolicy | undefined,
-  timeoutMs: number | undefined,
-): Dispatcher | undefined {
-  if (!dispatcherPolicy) {
-    return undefined;
-  }
-  if (dispatcherPolicy.mode === "direct") {
-    return createHttp1Agent(
-      dispatcherPolicy.connect ? { connect: { ...dispatcherPolicy.connect } } : undefined,
-      timeoutMs,
-    );
-  }
-  if (dispatcherPolicy.mode === "env-proxy") {
-    return createHttp1EnvHttpProxyAgent(
-      {
-        ...(dispatcherPolicy.connect
-          ? {
-              connect: { ...dispatcherPolicy.connect },
-              requestTls: { ...dispatcherPolicy.connect },
-            }
-          : {}),
-        ...(dispatcherPolicy.proxyTls ? { proxyTls: { ...dispatcherPolicy.proxyTls } } : {}),
-      },
-      timeoutMs,
-    );
-  }
-  const proxyUrl = dispatcherPolicy.proxyUrl.trim();
-  if (dispatcherPolicy.proxyTls) {
-    return createHttp1ProxyAgent(
-      { uri: proxyUrl, requestTls: { ...dispatcherPolicy.proxyTls } },
-      timeoutMs,
-    );
-  }
-  return createHttp1ProxyAgent({ uri: proxyUrl }, timeoutMs);
-}
-
-function resolveProviderHttpDispatcherPolicy(params: {
-  dispatcherPolicy?: PinnedDispatcherPolicy;
-  url: string;
-}): PinnedDispatcherPolicy | undefined {
-  if (!shouldUseEnvHttpProxyForUrl(params.url)) {
-    return params.dispatcherPolicy;
-  }
-  if (!params.dispatcherPolicy) {
-    return { mode: "env-proxy" };
-  }
-  if (params.dispatcherPolicy.mode === "direct") {
-    return {
-      mode: "env-proxy",
-      ...(params.dispatcherPolicy.connect
-        ? { connect: { ...params.dispatcherPolicy.connect } }
-        : {}),
-    };
-  }
-  return params.dispatcherPolicy;
-}
-
-function isProviderHttpRedirectStatus(status: number): boolean {
-  return status === 301 || status === 302 || status === 303 || status === 307 || status === 308;
-}
-
-function dropProviderHttpBodyHeaders(headers?: HeadersInit): HeadersInit | undefined {
-  if (!headers) {
-    return headers;
-  }
-  const nextHeaders = new Headers(headers);
-  nextHeaders.delete("content-encoding");
-  nextHeaders.delete("content-language");
-  nextHeaders.delete("content-length");
-  nextHeaders.delete("content-location");
-  nextHeaders.delete("content-type");
-  nextHeaders.delete("transfer-encoding");
-  return nextHeaders;
-}
-
-function rewriteProviderHttpRedirectInitForMethod(params: {
-  init?: RequestInit;
-  status: number;
-}): RequestInit | undefined {
-  const { init, status } = params;
-  if (!init) {
-    return init;
-  }
-  const currentMethod = init.method?.toUpperCase() ?? "GET";
-  const shouldForceGet =
-    status === 303
-      ? currentMethod !== "GET" && currentMethod !== "HEAD"
-      : (status === 301 || status === 302) && currentMethod === "POST";
-  if (!shouldForceGet) {
-    return init;
-  }
-  return {
-    ...init,
-    method: "GET",
-    body: undefined,
-    headers: dropProviderHttpBodyHeaders(init.headers),
-  };
-}
-
-function rewriteProviderHttpRedirectInitForCrossOrigin(
-  init?: RequestInit,
-): RequestInit | undefined {
-  if (!init) {
-    return init;
-  }
-  const safeHeaders = retainSafeHeadersForCrossOriginRedirect(init.headers);
-  const currentMethod = init.method?.toUpperCase() ?? "GET";
-  if (currentMethod === "GET" || currentMethod === "HEAD") {
-    return { ...init, headers: safeHeaders };
-  }
-  return {
-    ...init,
-    body: undefined,
-    headers: dropProviderHttpBodyHeaders(safeHeaders),
-  };
-}
-
 function normalizeProviderHttpPolicyOrigin(value: string): string | undefined {
   try {
     return new URL(value).origin.toLowerCase();
@@ -571,88 +440,32 @@ export async function fetchWithTimeoutGuarded(
   },
 ): Promise<ProviderHttpFetchResult> {
   const resolvedTimeoutMs = resolveGuardedHttpTimeoutMs(timeoutMs);
-  const timeout = buildTimeoutAbortSignal({
-    timeoutMs: resolvedTimeoutMs,
-    signal: init.signal ?? undefined,
-    operation: "provider-http-fetch",
+  return await fetchOperatorConfiguredEndpoint({
     url,
-  });
-  let dispatcher: Dispatcher | undefined;
-  let finalResponse: Response | undefined;
-  let released = false;
-  const release = async () => {
-    if (released) {
-      return;
-    }
-    released = true;
-    timeout.cleanup();
-    await finalResponse?.body?.cancel().catch(() => undefined);
-    await closeDispatcher(dispatcher);
-  };
-  try {
-    let currentUrl = url;
-    let currentInit: RequestInit | undefined = { ...init };
-    for (let redirectCount = 0; ; redirectCount += 1) {
-      assertProviderHttpUrlAllowedByPolicy(currentUrl, options?.ssrfPolicy);
-      dispatcher = createProviderHttpDispatcher(
-        resolveProviderHttpDispatcherPolicy({
-          dispatcherPolicy: options?.dispatcherPolicy,
-          url: currentUrl,
-        }),
-        resolvedTimeoutMs,
-      );
-      const requestInit: DispatcherAwareRequestInit = {
-        ...(currentInit ? { ...currentInit } : {}),
-        redirect: "manual",
-        ...(timeout.signal ? { signal: timeout.signal } : {}),
-        ...(dispatcher ? { dispatcher } : {}),
-      };
-      const useRuntimeFetch = dispatcher && fetchFn === globalThis.fetch && !isMockedFetch(fetchFn);
-      const response = useRuntimeFetch
-        ? await fetchWithRuntimeDispatcher(currentUrl, requestInit)
-        : await fetchFn(currentUrl, requestInit);
+    init,
+    timeoutMs: resolvedTimeoutMs,
+    fetchImpl: fetchFn,
+    dispatcherPolicy: options?.dispatcherPolicy,
+    maxRedirects: PROVIDER_HTTP_MAX_REDIRECTS,
+    operation: "provider-http-fetch",
+    validateUrl: (parsedUrl) => {
+      assertProviderHttpUrlAllowedByPolicy(parsedUrl.toString(), options?.ssrfPolicy);
+    },
+    onResponse: async ({
+      url: responseUrl,
+      init: requestInit,
+      response,
+      capturedByGlobalFetchPatch,
+    }) => {
       await captureProviderHttpExchange({
-        url: currentUrl,
+        url: responseUrl,
         init: requestInit,
         response,
         auditContext: options?.auditContext,
-        capturedByGlobalFetchPatch: !useRuntimeFetch && fetchFn === globalThis.fetch,
+        capturedByGlobalFetchPatch,
       });
-      if (!isProviderHttpRedirectStatus(response.status)) {
-        finalResponse = response;
-        return {
-          response,
-          finalUrl: response.url || currentUrl,
-          release,
-          refreshTimeout: timeout.refresh,
-        };
-      }
-      const location = response.headers.get("location");
-      await response.body?.cancel().catch(() => undefined);
-      await closeDispatcher(dispatcher);
-      dispatcher = undefined;
-      if (!location) {
-        throw new Error(`Provider HTTP redirect missing location header (${response.status})`);
-      }
-      if (redirectCount + 1 > PROVIDER_HTTP_MAX_REDIRECTS) {
-        throw new Error(`Provider HTTP exceeded redirect limit (${PROVIDER_HTTP_MAX_REDIRECTS})`);
-      }
-      const currentParsedUrl = new URL(currentUrl);
-      const nextParsedUrl = new URL(location, currentParsedUrl);
-      currentInit = rewriteProviderHttpRedirectInitForMethod({
-        init: currentInit,
-        status: response.status,
-      });
-      if (nextParsedUrl.origin !== currentParsedUrl.origin) {
-        currentInit = rewriteProviderHttpRedirectInitForCrossOrigin(currentInit);
-      }
-      currentUrl = nextParsedUrl.toString();
-      timeout.refresh();
-    }
-  } catch (error) {
-    await release();
-    throw error;
-  }
+    },
+  });
 }
 
 type GuardedProviderRequestOptions = NonNullable<Parameters<typeof fetchWithTimeoutGuarded>[4]>;

@@ -2,12 +2,12 @@
 import { Buffer } from "node:buffer";
 import { lookup } from "node:dns/promises";
 import { fetchWithResponseRelease } from "openclaw/plugin-sdk/fetch-runtime";
+import type { MediaFetchUrlPolicy } from "openclaw/plugin-sdk/media-runtime";
 import {
   buildHostnameAllowlistPolicyFromSuffixAllowlist,
   isHttpsUrlAllowedByHostnameSuffixAllowlist,
   isPrivateIpAddress,
   normalizeHostnameSuffixAllowlist,
-  type SsrFPolicy,
 } from "openclaw/plugin-sdk/ssrf-policy";
 import {
   isRecord,
@@ -525,8 +525,16 @@ export function applyAuthorizationHeaderForUrl(params: {
   params.headers.delete("Authorization");
 }
 
-export function resolveMediaSsrfPolicy(allowHosts: string[]): SsrFPolicy | undefined {
-  return buildHostnameAllowlistPolicyFromSuffixAllowlist(allowHosts);
+export function resolveMediaSsrfPolicy(allowHosts: string[]): MediaFetchUrlPolicy | undefined {
+  const policy = buildHostnameAllowlistPolicyFromSuffixAllowlist(allowHosts);
+  if (!policy) {
+    return undefined;
+  }
+  return {
+    ...(policy.allowedHostnames ? { allowedHostnames: policy.allowedHostnames } : {}),
+    ...(policy.allowedOrigins ? { allowedOrigins: policy.allowedOrigins } : {}),
+    ...(policy.hostnameAllowlist ? { hostnameAllowlist: policy.hostnameAllowlist } : {}),
+  };
 }
 
 /**

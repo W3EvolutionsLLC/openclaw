@@ -41,10 +41,8 @@ export * from "../infra/json-files.js";
 export * from "../infra/local-file-access.js";
 export * from "../infra/map-size.js";
 export * from "../infra/net/hostname.ts";
-export {
-  fetchWithRuntimeDispatcher,
-  retainSafeHeadersForCrossOriginRedirectHeaders,
-} from "../infra/net/fetch-guard.js";
+export { fetchWithRuntimeDispatcher } from "../infra/net/runtime-fetch.js";
+export { retainSafeHeadersForCrossOriginRedirect as retainSafeHeadersForCrossOriginRedirectHeaders } from "../infra/net/redirect-headers.js";
 export * from "../infra/net/proxy-env.js";
 export * from "../infra/net/proxy-fetch.js";
 export * from "../infra/net/undici-global-dispatcher.js";

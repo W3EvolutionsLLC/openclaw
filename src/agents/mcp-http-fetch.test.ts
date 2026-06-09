@@ -272,6 +272,29 @@ describe("MCP HTTP fetch helpers", () => {
     expect(fetchCalls).toHaveLength(1);
   });
 
+  it("blocks resource-origin redirects outside the configured origin during OAuth mode", async () => {
+    testGlobal[TEST_UNDICI_RUNTIME_DEPS_KEY] = {
+      Agent: TestAgent,
+      EnvHttpProxyAgent: TestEnvHttpProxyAgent,
+      ProxyAgent: TestProxyAgent,
+      fetch: async (url: string | URL | Request, init?: unknown) => {
+        fetchCalls.push({ url, init });
+        return fetchCalls.length === 1
+          ? redirectResponse("https://auth.example.com/token")
+          : new Response("ok");
+      },
+    };
+    const fetch = buildMcpHttpFetch({
+      resourceUrl: "https://mcp.example.com/mcp",
+      allowNonResourceOriginRequests: true,
+    });
+
+    await expect(fetch("https://mcp.example.com/token")).rejects.toThrow(
+      "MCP HTTP fetch blocked outside configured resource origin: https://auth.example.com",
+    );
+    expect(fetchCalls).toHaveLength(1);
+  });
+
   it("strips origin headers and request bodies on unrestricted cross-origin redirects", async () => {
     testGlobal[TEST_UNDICI_RUNTIME_DEPS_KEY] = {
       Agent: TestAgent,

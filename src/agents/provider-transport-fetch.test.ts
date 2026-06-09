@@ -14,7 +14,7 @@ type ProviderRequestPolicyConfigMockResult = {
 const {
   buildProviderRequestDispatcherPolicyMock,
   captureHttpExchangeMock,
-  fetchWithSsrFGuardMock,
+  fetchOperatorConfiguredEndpointMock,
   ensureModelProviderLocalServiceMock,
   mergeModelProviderRequestOverridesMock,
   resolveProviderRequestPolicyConfigMock,
@@ -56,7 +56,7 @@ const {
       (_request?: unknown) => { mode: "direct"; connect?: Record<string, unknown> } | undefined
     >(() => undefined),
     captureHttpExchangeMock: vi.fn(),
-    fetchWithSsrFGuardMock: vi.fn(),
+    fetchOperatorConfiguredEndpointMock: vi.fn(),
     ensureModelProviderLocalServiceMock: vi.fn(),
     mergeModelProviderRequestOverridesMock: vi.fn((current, overrides) => ({
       ...current,
@@ -70,8 +70,9 @@ const {
   };
 });
 
-vi.mock("../infra/net/fetch-guard.js", () => ({
-  fetchWithSsrFGuard: fetchWithSsrFGuardMock,
+vi.mock("../infra/net/egress-fetch.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../infra/net/egress-fetch.js")>()),
+  fetchOperatorConfiguredEndpoint: fetchOperatorConfiguredEndpointMock,
 }));
 
 vi.mock("../infra/net/proxy-env.js", async (importOriginal) => ({
@@ -95,8 +96,8 @@ vi.mock("./provider-request-config.js", () => ({
   resolveProviderRequestPolicyConfig: resolveProviderRequestPolicyConfigMock,
 }));
 
-function latestGuardedFetchParams(): Record<string, unknown> {
-  const calls = fetchWithSsrFGuardMock.mock.calls;
+function latestEgressFetchParams(): Record<string, unknown> {
+  const calls = fetchOperatorConfiguredEndpointMock.mock.calls;
   const params = calls[calls.length - 1]?.[0];
   if (!params || typeof params !== "object") {
     throw new Error("Expected runtime fetch call");
@@ -106,13 +107,6 @@ function latestGuardedFetchParams(): Record<string, unknown> {
 
 function responseStreamText(text: string): ReadableStream<Uint8Array> {
   return responseStreamChunks([text]);
-}
-
-function redirectResponse(location: string, status = 307): Response {
-  return new Response(null, {
-    status,
-    headers: { location },
-  });
 }
 
 function responseStreamChunks(chunks: string[]): ReadableStream<Uint8Array> {
@@ -150,7 +144,7 @@ function openResponseStreamText(text: string): {
 describe("buildGuardedModelFetch", () => {
   beforeEach(() => {
     managedStreamCleanupRegistrations.length = 0;
-    fetchWithSsrFGuardMock.mockReset().mockResolvedValue({
+    fetchOperatorConfiguredEndpointMock.mockReset().mockResolvedValue({
       response: new Response("ok", { status: 200 }),
       finalUrl: "https://api.openai.com/v1/responses",
       release: vi.fn(async () => undefined),
@@ -159,7 +153,7 @@ describe("buildGuardedModelFetch", () => {
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = input instanceof Request ? input.url : input.toString();
-        const result = await fetchWithSsrFGuardMock({
+        const result = await fetchOperatorConfiguredEndpointMock({
           url,
           init: input instanceof Request ? new Request(input, init) : init,
         });
@@ -197,7 +191,7 @@ describe("buildGuardedModelFetch", () => {
       body: '{"input":"hello"}',
     });
 
-    const params = latestGuardedFetchParams();
+    const params = latestEgressFetchParams();
     expect(params.url).toBe("https://api.openai.com/v1/responses");
     expect(params.init).toMatchObject({ method: "POST" });
   });
@@ -210,7 +204,7 @@ describe("buildGuardedModelFetch", () => {
       api: "openai-completions",
       baseUrl: "https://proxy.example.com",
     } as unknown as Model<"openai-completions">;
-    fetchWithSsrFGuardMock.mockResolvedValue({
+    fetchOperatorConfiguredEndpointMock.mockResolvedValue({
       response: new Response("<html>not the API</html>", {
         status: 200,
         headers: { "content-type": "text/html; charset=utf-8" },
@@ -241,7 +235,7 @@ describe("buildGuardedModelFetch", () => {
   });
 
   it("allows missing content-type when streamed OpenAI-compatible responses contain SSE", async () => {
-    fetchWithSsrFGuardMock.mockResolvedValue({
+    fetchOperatorConfiguredEndpointMock.mockResolvedValue({
       response: new Response(responseStreamText('data: {"ok": true}\n\ndata: [DONE]\n\n')),
       finalUrl: "https://chatgpt.com/backend-api/codex/responses",
       release: vi.fn(async () => undefined),
@@ -271,7 +265,7 @@ describe("buildGuardedModelFetch", () => {
 
   it("returns promptly for missing content-type SSE streams that remain open", async () => {
     const source = openResponseStreamText('data: {"ok": true}\n\n');
-    fetchWithSsrFGuardMock.mockResolvedValue({
+    fetchOperatorConfiguredEndpointMock.mockResolvedValue({
       response: new Response(source.stream),
       finalUrl: "https://chatgpt.com/backend-api/codex/responses",
       release: vi.fn(async () => undefined),
@@ -311,7 +305,7 @@ describe("buildGuardedModelFetch", () => {
   });
 
   it("allows missing content-type when the SSE prefix is split across chunks", async () => {
-    fetchWithSsrFGuardMock.mockResolvedValue({
+    fetchOperatorConfiguredEndpointMock.mockResolvedValue({
       response: new Response(responseStreamChunks(["d", "ata", ': {"ok": true}\n\n'])),
       finalUrl: "https://chatgpt.com/backend-api/codex/responses",
       release: vi.fn(async () => undefined),
@@ -340,7 +334,7 @@ describe("buildGuardedModelFetch", () => {
   });
 
   it("synthesizes SSE for missing content-type JSON returned to streaming SDK requests", async () => {
-    fetchWithSsrFGuardMock.mockResolvedValue({
+    fetchOperatorConfiguredEndpointMock.mockResolvedValue({
       response: new Response(responseStreamText('{"ok": true}')),
       finalUrl: "https://chatgpt.com/backend-api/codex/responses",
       release: vi.fn(async () => undefined),
@@ -377,7 +371,7 @@ describe("buildGuardedModelFetch", () => {
       api: "openai-completions",
       baseUrl: "https://proxy.example.com",
     } as unknown as Model<"openai-completions">;
-    fetchWithSsrFGuardMock.mockResolvedValue({
+    fetchOperatorConfiguredEndpointMock.mockResolvedValue({
       response: new Response(responseStreamText("<html>not the API</html>")),
       finalUrl: "https://proxy.example.com/chat/completions",
       release,
@@ -414,17 +408,11 @@ describe("buildGuardedModelFetch", () => {
     await response.text();
 
     expect(ensureModelProviderLocalServiceMock).toHaveBeenCalledWith(model, undefined, undefined);
-    expect(fetchWithSsrFGuardMock).toHaveBeenCalledTimes(1);
+    expect(fetchOperatorConfiguredEndpointMock).toHaveBeenCalledTimes(1);
     await vi.waitFor(() => expect(release).toHaveBeenCalledTimes(1));
   });
 
   it("starts the provider fetch timeout after local service startup", async () => {
-    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
-    let startupSetTimeoutCalls = -1;
-    ensureModelProviderLocalServiceMock.mockImplementationOnce(async () => {
-      startupSetTimeoutCalls = setTimeoutSpy.mock.calls.length;
-      return undefined;
-    });
     const model = {
       id: "qwen3:32b",
       provider: "ollama",
@@ -433,22 +421,20 @@ describe("buildGuardedModelFetch", () => {
       requestTimeoutMs: 300_000,
     } as unknown as Model<"ollama">;
 
-    try {
-      const fetcher = buildGuardedModelFetch(model);
-      const response = await fetcher("http://127.0.0.1:11434/api/chat", { method: "POST" });
-      await response.text();
+    const fetcher = buildGuardedModelFetch(model);
+    const response = await fetcher("http://127.0.0.1:11434/api/chat", { method: "POST" });
+    await response.text();
 
-      expect(startupSetTimeoutCalls).toBe(0);
-      expect(setTimeoutSpy).toHaveBeenCalled();
-    } finally {
-      setTimeoutSpy.mockRestore();
-    }
+    expect(ensureModelProviderLocalServiceMock).toHaveBeenCalledBefore(
+      fetchOperatorConfiguredEndpointMock,
+    );
+    expect(latestEgressFetchParams().timeoutMs).toBe(300_000);
   });
 
-  it("releases guarded fetch slots when streamed bodies are abandoned", async () => {
+  it("releases egress fetch slots when streamed bodies are abandoned", async () => {
     const release = vi.fn(async () => undefined);
     const encoder = new TextEncoder();
-    fetchWithSsrFGuardMock.mockResolvedValue({
+    fetchOperatorConfiguredEndpointMock.mockResolvedValue({
       response: new Response(
         new ReadableStream<Uint8Array>({
           start(controller) {
@@ -553,8 +539,9 @@ describe("buildGuardedModelFetch", () => {
         undefined,
         timeoutController.signal,
       );
-      const params = latestGuardedFetchParams();
-      expect((params.init as RequestInit | undefined)?.signal).toBeInstanceOf(AbortSignal);
+      const params = latestEgressFetchParams();
+      expect(params.timeoutMs).toBe(750);
+      expect(params.signal).toBeUndefined();
     } finally {
       timeoutSpy.mockRestore();
     }
@@ -583,9 +570,8 @@ describe("buildGuardedModelFetch", () => {
         undefined,
         timeoutController.signal,
       );
-      expect((latestGuardedFetchParams().init as RequestInit | undefined)?.signal).toBeInstanceOf(
-        AbortSignal,
-      );
+      expect(latestEgressFetchParams().timeoutMs).toBe(MAX_TIMER_TIMEOUT_MS);
+      expect(latestEgressFetchParams().signal).toBeUndefined();
     } finally {
       timeoutSpy.mockRestore();
     }
@@ -610,7 +596,7 @@ describe("buildGuardedModelFetch", () => {
 
       expect(timeoutSpy).not.toHaveBeenCalled();
       expect(ensureModelProviderLocalServiceMock).toHaveBeenCalledWith(model, undefined, undefined);
-      expect((latestGuardedFetchParams().init as RequestInit | undefined)?.signal).toBeUndefined();
+      expect(latestEgressFetchParams().signal).toBeUndefined();
     } finally {
       timeoutSpy.mockRestore();
     }
@@ -644,18 +630,18 @@ describe("buildGuardedModelFetch", () => {
         undefined,
         combinedController.signal,
       );
-      const params = latestGuardedFetchParams();
-      expect((params.init as RequestInit | undefined)?.signal).toBeInstanceOf(AbortSignal);
+      const params = latestEgressFetchParams();
+      expect(params.signal).toBeInstanceOf(AbortSignal);
     } finally {
       timeoutSpy.mockRestore();
       anySpy.mockRestore();
     }
   });
 
-  it("releases local service leases when guarded fetch fails", async () => {
+  it("releases local service leases when egress fetch fails", async () => {
     const release = vi.fn();
     ensureModelProviderLocalServiceMock.mockResolvedValue({ release });
-    fetchWithSsrFGuardMock.mockRejectedValue(new Error("network down"));
+    fetchOperatorConfiguredEndpointMock.mockRejectedValue(new Error("network down"));
     const model = {
       id: "deepseek-v4-flash",
       provider: "ds4",
@@ -685,7 +671,7 @@ describe("buildGuardedModelFetch", () => {
     const fetcher = buildGuardedModelFetch(model);
     await fetcher("http://10.0.0.5:11434/api/chat", { method: "POST" });
 
-    const params = latestGuardedFetchParams();
+    const params = latestEgressFetchParams();
     expect(params.url).toBe("http://10.0.0.5:11434/api/chat");
     expect(params.policy).toBeUndefined();
   });
@@ -702,12 +688,9 @@ describe("buildGuardedModelFetch", () => {
     const fetcher = buildGuardedModelFetch(model);
     await fetcher("https://api.openai.com/v1/responses", { method: "POST" });
 
-    expect(shouldUseEnvHttpProxyForUrlMock).toHaveBeenCalledWith(
-      "https://api.openai.com/v1/responses",
-    );
-    const params = latestGuardedFetchParams();
+    const params = latestEgressFetchParams();
     expect(params.url).toBe("https://api.openai.com/v1/responses");
-    expect((params.init as { dispatcher?: unknown } | undefined)?.dispatcher).toBeDefined();
+    expect(params.dispatcherPolicy).toBeUndefined();
     expect(params.policy).toBeUndefined();
   });
 
@@ -727,26 +710,13 @@ describe("buildGuardedModelFetch", () => {
     const fetcher = buildGuardedModelFetch(model);
     await fetcher("https://api.openai.com/v1/responses", { method: "POST" });
 
-    expect(shouldUseEnvHttpProxyForUrlMock).toHaveBeenCalledWith(
-      "https://api.openai.com/v1/responses",
-    );
-    expect(
-      (latestGuardedFetchParams().init as { dispatcher?: unknown } | undefined)?.dispatcher,
-    ).toBeDefined();
+    expect(latestEgressFetchParams().dispatcherPolicy).toEqual({
+      mode: "direct",
+      connect: { ca: "test-ca" },
+    });
   });
 
-  it("strips custom auth headers and bodies on cross-origin provider redirects", async () => {
-    fetchWithSsrFGuardMock
-      .mockResolvedValueOnce({
-        response: redirectResponse("https://redirect.example/collect", 307),
-        finalUrl: "https://api.openai.com/v1/responses",
-        release: vi.fn(async () => undefined),
-      })
-      .mockResolvedValueOnce({
-        response: new Response("ok", { status: 200 }),
-        finalUrl: "https://redirect.example/collect",
-        release: vi.fn(async () => undefined),
-      });
+  it("delegates provider redirect handling to the egress helper", async () => {
     const model = {
       id: "gpt-5.4",
       provider: "openai",
@@ -765,15 +735,13 @@ describe("buildGuardedModelFetch", () => {
       body: JSON.stringify({ input: "hello" }),
     });
 
-    const secondCall = fetchWithSsrFGuardMock.mock.calls[1]?.[0] as
-      | { url?: string; init?: RequestInit }
-      | undefined;
-    expect(secondCall?.url).toBe("https://redirect.example/collect");
-    expect(secondCall?.init?.body).toBeUndefined();
-    const headers = new Headers(secondCall?.init?.headers);
+    const params = latestEgressFetchParams();
+    expect(params.maxRedirects).toBe(3);
+    expect((params.init as RequestInit | undefined)?.body).toBe(JSON.stringify({ input: "hello" }));
+    const headers = new Headers((params.init as RequestInit | undefined)?.headers);
     expect(headers.get("accept")).toBe("application/json");
-    expect(headers.has("content-type")).toBe(false);
-    expect(headers.has("x-api-key")).toBe(false);
+    expect(headers.get("content-type")).toBe("application/json");
+    expect(headers.get("x-api-key")).toBe("secret");
   });
 
   it("threads explicit transport timeouts into request abort signals", async () => {
@@ -791,9 +759,8 @@ describe("buildGuardedModelFetch", () => {
       await fetcher("https://api.openai.com/v1/responses", { method: "POST" });
 
       expect(timeoutSpy).toHaveBeenCalledWith(123_456);
-      expect((latestGuardedFetchParams().init as RequestInit | undefined)?.signal).toBeInstanceOf(
-        AbortSignal,
-      );
+      expect(latestEgressFetchParams().timeoutMs).toBe(123_456);
+      expect(latestEgressFetchParams().signal).toBeUndefined();
     } finally {
       timeoutSpy.mockRestore();
     }
@@ -815,9 +782,8 @@ describe("buildGuardedModelFetch", () => {
       await fetcher("http://127.0.0.1:11434/api/chat", { method: "POST" });
 
       expect(timeoutSpy).toHaveBeenCalledWith(300_000);
-      expect((latestGuardedFetchParams().init as RequestInit | undefined)?.signal).toBeInstanceOf(
-        AbortSignal,
-      );
+      expect(latestEgressFetchParams().timeoutMs).toBe(300_000);
+      expect(latestEgressFetchParams().signal).toBeUndefined();
     } finally {
       timeoutSpy.mockRestore();
     }
@@ -860,6 +826,18 @@ describe("buildGuardedModelFetch", () => {
       headers: { "content-type": "application/json" },
       body: '{"input":"hello"}',
     });
+    const params = latestEgressFetchParams();
+    await (
+      params.onResponse as (args: {
+        url: string;
+        init: RequestInit;
+        response: Response;
+      }) => Promise<void>
+    )({
+      url: "https://api.openai.com/v1/responses",
+      init: params.init as RequestInit,
+      response: new Response("ok"),
+    });
 
     expect(captureHttpExchangeMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -881,7 +859,7 @@ describe("buildGuardedModelFetch", () => {
 
   it("drops event-only SSE frames before the OpenAI SDK stream parser sees them", async () => {
     const encoder = new TextEncoder();
-    fetchWithSsrFGuardMock.mockResolvedValue({
+    fetchOperatorConfiguredEndpointMock.mockResolvedValue({
       response: new Response(
         new ReadableStream({
           start(controller) {
@@ -914,7 +892,7 @@ describe("buildGuardedModelFetch", () => {
   });
 
   it("leaves official OpenAI SSE streams unmodified", async () => {
-    fetchWithSsrFGuardMock.mockResolvedValue({
+    fetchOperatorConfiguredEndpointMock.mockResolvedValue({
       response: new Response('event: response.created\n\ndata: {"ok": true}\n\n', {
         headers: { "content-type": "text/event-stream" },
       }),
@@ -938,7 +916,7 @@ describe("buildGuardedModelFetch", () => {
   });
 
   it("drops whitespace-only SSE data frames with CRLF delimiters", async () => {
-    fetchWithSsrFGuardMock.mockResolvedValue({
+    fetchOperatorConfiguredEndpointMock.mockResolvedValue({
       response: new Response('event: message\r\ndata:   \r\n\r\ndata: {"ok": true}\r\n\r\n', {
         headers: { "content-type": "text/event-stream" },
       }),
@@ -967,7 +945,7 @@ describe("buildGuardedModelFetch", () => {
   it("continues reading until split SSE frames produce a parser-visible event", async () => {
     const encoder = new TextEncoder();
     let pulls = 0;
-    fetchWithSsrFGuardMock.mockResolvedValue({
+    fetchOperatorConfiguredEndpointMock.mockResolvedValue({
       response: new Response(
         new ReadableStream({
           pull(controller) {
@@ -1012,7 +990,7 @@ describe("buildGuardedModelFetch", () => {
   });
 
   it("synthesizes SSE frames for JSON bodies returned to streaming OpenAI SDK requests", async () => {
-    fetchWithSsrFGuardMock.mockResolvedValue({
+    fetchOperatorConfiguredEndpointMock.mockResolvedValue({
       response: new Response('  {"ok": true}  ', {
         headers: { "content-type": "application/json; charset=utf-8" },
       }),
@@ -1045,7 +1023,7 @@ describe("buildGuardedModelFetch", () => {
 
   it("does not clone Request bodies while checking for streaming JSON fallbacks", async () => {
     const cloneSpy = vi.spyOn(Request.prototype, "clone");
-    fetchWithSsrFGuardMock.mockResolvedValue({
+    fetchOperatorConfiguredEndpointMock.mockResolvedValue({
       response: new Response('{"ok": true}', {
         headers: { "content-type": "application/json" },
       }),
@@ -1073,7 +1051,7 @@ describe("buildGuardedModelFetch", () => {
   it("continues reading split JSON bodies before synthesizing streaming SSE frames", async () => {
     const encoder = new TextEncoder();
     let pulls = 0;
-    fetchWithSsrFGuardMock.mockResolvedValue({
+    fetchOperatorConfiguredEndpointMock.mockResolvedValue({
       response: new Response(
         new ReadableStream({
           pull(controller) {
@@ -1119,7 +1097,7 @@ describe("buildGuardedModelFetch", () => {
   });
 
   it("preserves JSON bodies when the request is not streaming", async () => {
-    fetchWithSsrFGuardMock.mockResolvedValue({
+    fetchOperatorConfiguredEndpointMock.mockResolvedValue({
       response: new Response('{"ok": true}', {
         headers: { "content-type": "application/json" },
       }),
@@ -1147,7 +1125,7 @@ describe("buildGuardedModelFetch", () => {
   });
 
   it("preserves non-OK SSE bodies for provider HTTP error parsing", async () => {
-    fetchWithSsrFGuardMock.mockResolvedValue({
+    fetchOperatorConfiguredEndpointMock.mockResolvedValue({
       response: new Response(
         JSON.stringify({
           error: {
@@ -1183,7 +1161,7 @@ describe("buildGuardedModelFetch", () => {
 
   it("continues consuming streaming response chunks after SSE sanitation", async () => {
     const encoder = new TextEncoder();
-    fetchWithSsrFGuardMock.mockResolvedValue({
+    fetchOperatorConfiguredEndpointMock.mockResolvedValue({
       response: new Response(
         new ReadableStream({
           start(controller) {
@@ -1232,7 +1210,7 @@ describe("buildGuardedModelFetch", () => {
     } as unknown as Model<"openai-responses">;
 
     it("injects x-should-retry:false when a retryable response exceeds the default wait cap", async () => {
-      fetchWithSsrFGuardMock.mockResolvedValue({
+      fetchOperatorConfiguredEndpointMock.mockResolvedValue({
         response: new Response(null, {
           status: 429,
           headers: { "retry-after": "239" },
@@ -1251,7 +1229,7 @@ describe("buildGuardedModelFetch", () => {
     });
 
     it("parses retry-after-ms from OpenAI-compatible responses", async () => {
-      fetchWithSsrFGuardMock.mockResolvedValue({
+      fetchOperatorConfiguredEndpointMock.mockResolvedValue({
         response: new Response(null, {
           status: 429,
           headers: { "retry-after-ms": "90000" },
@@ -1268,7 +1246,7 @@ describe("buildGuardedModelFetch", () => {
     });
 
     it("ignores partial retry-after numeric headers", async () => {
-      fetchWithSsrFGuardMock.mockResolvedValue({
+      fetchOperatorConfiguredEndpointMock.mockResolvedValue({
         response: new Response(null, {
           status: 503,
           headers: { "retry-after-ms": "90000ms", "retry-after": "120 seconds" },
@@ -1285,7 +1263,7 @@ describe("buildGuardedModelFetch", () => {
     });
 
     it("bypasses unsafe retry-after-ms numeric headers", async () => {
-      fetchWithSsrFGuardMock.mockResolvedValue({
+      fetchOperatorConfiguredEndpointMock.mockResolvedValue({
         response: new Response(null, {
           status: 503,
           headers: { "retry-after-ms": "9007199254740993" },
@@ -1302,7 +1280,7 @@ describe("buildGuardedModelFetch", () => {
     });
 
     it("falls back to retry-after when retry-after-ms is blank", async () => {
-      fetchWithSsrFGuardMock.mockResolvedValue({
+      fetchOperatorConfiguredEndpointMock.mockResolvedValue({
         response: new Response(null, {
           status: 503,
           headers: { "retry-after-ms": "   ", "retry-after": "120" },
@@ -1320,7 +1298,7 @@ describe("buildGuardedModelFetch", () => {
 
     it("parses HTTP-date retry-after values", async () => {
       const future = new Date(Date.now() + 120_000).toUTCString();
-      fetchWithSsrFGuardMock.mockResolvedValue({
+      fetchOperatorConfiguredEndpointMock.mockResolvedValue({
         response: new Response(null, {
           status: 503,
           headers: { "retry-after": future },
@@ -1380,7 +1358,7 @@ describe("buildGuardedModelFetch", () => {
     it.each([...formatObsoleteHttpDates(new Date(Date.now() + 120_000))])(
       "parses obsolete HTTP-date retry-after values: %s",
       async (_label, retryAfter) => {
-        fetchWithSsrFGuardMock.mockResolvedValue({
+        fetchOperatorConfiguredEndpointMock.mockResolvedValue({
           response: new Response(null, {
             status: 503,
             headers: { "retry-after": retryAfter },
@@ -1398,7 +1376,7 @@ describe("buildGuardedModelFetch", () => {
     );
 
     it("ignores invalid obsolete asctime retry-after values", async () => {
-      fetchWithSsrFGuardMock.mockResolvedValue({
+      fetchOperatorConfiguredEndpointMock.mockResolvedValue({
         response: new Response(null, {
           status: 503,
           headers: { "retry-after": "Sun Nov 99 99:99:99 9999" },
@@ -1416,7 +1394,7 @@ describe("buildGuardedModelFetch", () => {
 
     it("respects OPENCLAW_SDK_RETRY_MAX_WAIT_SECONDS", async () => {
       process.env.OPENCLAW_SDK_RETRY_MAX_WAIT_SECONDS = "10";
-      fetchWithSsrFGuardMock.mockResolvedValue({
+      fetchOperatorConfiguredEndpointMock.mockResolvedValue({
         response: new Response(null, {
           status: 429,
           headers: { "retry-after": "30" },
@@ -1434,7 +1412,7 @@ describe("buildGuardedModelFetch", () => {
 
     it("ignores partial OPENCLAW_SDK_RETRY_MAX_WAIT_SECONDS values", async () => {
       process.env.OPENCLAW_SDK_RETRY_MAX_WAIT_SECONDS = "10s";
-      fetchWithSsrFGuardMock.mockResolvedValue({
+      fetchOperatorConfiguredEndpointMock.mockResolvedValue({
         response: new Response(null, {
           status: 429,
           headers: { "retry-after": "30" },
@@ -1454,7 +1432,7 @@ describe("buildGuardedModelFetch", () => {
       "ignores non-decimal OPENCLAW_SDK_RETRY_MAX_WAIT_SECONDS values: %s",
       async (value) => {
         process.env.OPENCLAW_SDK_RETRY_MAX_WAIT_SECONDS = value;
-        fetchWithSsrFGuardMock.mockResolvedValue({
+        fetchOperatorConfiguredEndpointMock.mockResolvedValue({
           response: new Response(null, {
             status: 429,
             headers: { "retry-after": "30" },
@@ -1473,7 +1451,7 @@ describe("buildGuardedModelFetch", () => {
 
     it("ignores unsafe OPENCLAW_SDK_RETRY_MAX_WAIT_SECONDS values", async () => {
       process.env.OPENCLAW_SDK_RETRY_MAX_WAIT_SECONDS = "9007199254740993";
-      fetchWithSsrFGuardMock.mockResolvedValue({
+      fetchOperatorConfiguredEndpointMock.mockResolvedValue({
         response: new Response(null, {
           status: 429,
           headers: { "retry-after": "30" },
@@ -1490,7 +1468,7 @@ describe("buildGuardedModelFetch", () => {
     });
 
     it("injects x-should-retry:false for terminal 429 responses without retry-after", async () => {
-      fetchWithSsrFGuardMock.mockResolvedValue({
+      fetchOperatorConfiguredEndpointMock.mockResolvedValue({
         response: new Response("Sorry, you've exceeded your weekly rate limit.", {
           status: 429,
           headers: { "content-type": "text/plain; charset=utf-8" },
@@ -1509,7 +1487,7 @@ describe("buildGuardedModelFetch", () => {
     });
 
     it("keeps short retry-after 429 responses retryable", async () => {
-      fetchWithSsrFGuardMock.mockResolvedValue({
+      fetchOperatorConfiguredEndpointMock.mockResolvedValue({
         response: new Response(null, {
           status: 429,
           headers: { "retry-after": "30" },
@@ -1527,7 +1505,7 @@ describe("buildGuardedModelFetch", () => {
 
     it("can be disabled with OPENCLAW_SDK_RETRY_MAX_WAIT_SECONDS=0", async () => {
       process.env.OPENCLAW_SDK_RETRY_MAX_WAIT_SECONDS = "0";
-      fetchWithSsrFGuardMock.mockResolvedValue({
+      fetchOperatorConfiguredEndpointMock.mockResolvedValue({
         response: new Response(null, {
           status: 429,
           headers: { "retry-after": "239" },
@@ -1544,7 +1522,7 @@ describe("buildGuardedModelFetch", () => {
     });
 
     it("leaves short retry-after values untouched", async () => {
-      fetchWithSsrFGuardMock.mockResolvedValue({
+      fetchOperatorConfiguredEndpointMock.mockResolvedValue({
         response: new Response(null, {
           status: 429,
           headers: { "retry-after": "30" },
@@ -1563,7 +1541,7 @@ describe("buildGuardedModelFetch", () => {
     it.each(["soon", "1.5", "0x10", "9007199254740993"])(
       "treats malformed 429 retry-after values as terminal: %s",
       async (retryAfter) => {
-        fetchWithSsrFGuardMock.mockResolvedValue({
+        fetchOperatorConfiguredEndpointMock.mockResolvedValue({
           response: new Response(null, {
             status: 429,
             headers: { "retry-after": retryAfter },
@@ -1581,7 +1559,7 @@ describe("buildGuardedModelFetch", () => {
     );
 
     it("ignores retry-after on non-retryable responses", async () => {
-      fetchWithSsrFGuardMock.mockResolvedValue({
+      fetchOperatorConfiguredEndpointMock.mockResolvedValue({
         response: new Response(null, {
           status: 400,
           headers: { "retry-after": "239" },

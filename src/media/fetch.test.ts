@@ -121,7 +121,6 @@ async function expectRedactedBotTokenFetchError(params: {
     maxBytes: 1024,
     ssrfPolicy: {
       allowedHostnames: ["files.example.test"],
-      allowRfc2544BenchmarkRange: true,
     },
   }).catch((err: unknown) => err as Error);
 

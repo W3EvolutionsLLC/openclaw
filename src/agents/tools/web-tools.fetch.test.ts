@@ -4,9 +4,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resolveRequestUrl } from "../../plugin-sdk/request-url.js";
 import { withFetchPreconnect } from "../../test-utils/fetch-mock.js";
 import { makeFetchHeaders } from "./web-fetch.test-harness.js";
-const { extractReadableContentMock, resolveWebFetchDefinitionMock } = vi.hoisted(() => ({
-  extractReadableContentMock: vi.fn(),
-  resolveWebFetchDefinitionMock: vi.fn(),
+const { extractReadableContentMock, lookupMock, resolveWebFetchDefinitionMock } = vi.hoisted(
+  () => ({
+    extractReadableContentMock: vi.fn(),
+    lookupMock: vi.fn(async () => [{ address: "93.184.216.34", family: 4 }]),
+    resolveWebFetchDefinitionMock: vi.fn(),
+  }),
+);
+
+vi.mock("node:dns/promises", () => ({
+  lookup: lookupMock,
 }));
 
 vi.mock("../../web-fetch/content-extractors.runtime.js", async () => {
@@ -144,6 +151,8 @@ describe("web_fetch extraction fallbacks", () => {
     extractReadableContentMock.mockResolvedValue(null);
     resolveWebFetchDefinitionMock.mockReset();
     resolveWebFetchDefinitionMock.mockReturnValue(null);
+    lookupMock.mockReset();
+    lookupMock.mockResolvedValue([{ address: "93.184.216.34", family: 4 }]);
   });
 
   afterEach(() => {

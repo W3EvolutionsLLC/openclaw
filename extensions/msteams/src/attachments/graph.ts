@@ -1,7 +1,7 @@
 // Msteams plugin module implements graph behavior.
 
 import { fetchWithResponseRelease } from "openclaw/plugin-sdk/fetch-runtime";
-import type { SsrFPolicy } from "openclaw/plugin-sdk/ssrf-policy";
+import type { MediaFetchUrlPolicy } from "openclaw/plugin-sdk/media-runtime";
 import {
   normalizeLowercaseStringOrEmpty,
   normalizeOptionalLowercaseString,
@@ -127,7 +127,7 @@ async function fetchGraphCollection(params: {
   url: string;
   accessToken: string;
   fetchFn?: typeof fetch;
-  ssrfPolicy?: SsrFPolicy;
+  ssrfPolicy?: MediaFetchUrlPolicy;
 }): Promise<{ status: number; items: unknown[] }> {
   const fetchFn = params.fetchFn ?? fetch;
   const { response, release } = await fetchWithResponseRelease({
@@ -181,7 +181,7 @@ async function downloadGraphHostedContent(params: {
   maxBytes: number;
   fetchFn?: typeof fetch;
   preserveFilenames?: boolean;
-  ssrfPolicy?: SsrFPolicy;
+  ssrfPolicy?: MediaFetchUrlPolicy;
   logger?: MSTeamsAttachmentDownloadLogger;
 }): Promise<{ media: MSTeamsInboundMedia[]; status: number; count: number }> {
   const hosted = (await fetchGraphCollection({

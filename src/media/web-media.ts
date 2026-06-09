@@ -16,11 +16,11 @@ import { logVerbose, shouldLogVerbose } from "../globals.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import { FsSafeError, readLocalFileSafely } from "../infra/fs-safe.js";
 import { assertNoWindowsNetworkPath, safeFileURLToPath } from "../infra/local-file-access.js";
-import type { PinnedDispatcherPolicy, SsrFPolicy } from "../infra/net/ssrf.js";
+import type { PinnedDispatcherPolicy } from "../infra/net/ssrf.js";
 import { resolvePreferredOpenClawTmpDir } from "../infra/tmp-openclaw-dir.js";
 import { getActivePluginRegistry } from "../plugins/runtime.js";
 import { resolveUserPath } from "../utils.js";
-import { readRemoteMediaBuffer } from "./fetch.js";
+import { readRemoteMediaBuffer, type MediaFetchUrlPolicy } from "./fetch.js";
 import {
   assertLocalMediaAllowed,
   getDefaultLocalRoots,
@@ -49,7 +49,7 @@ type WebMediaOptions = {
   maxBytes?: number;
   optimizeImages?: boolean;
   imageCompression?: ImageCompressionPolicy;
-  ssrfPolicy?: SsrFPolicy;
+  ssrfPolicy?: MediaFetchUrlPolicy;
   proxyUrl?: string;
   fetchImpl?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
   requestInit?: RequestInit;
@@ -119,7 +119,7 @@ async function resolveHostedPluginMediaUrl(mediaUrl: string): Promise<string | n
 
 function resolveWebMediaOptions(params: {
   maxBytesOrOptions?: number | WebMediaOptions;
-  options?: { ssrfPolicy?: SsrFPolicy; localRoots?: readonly string[] | "any" };
+  options?: { ssrfPolicy?: MediaFetchUrlPolicy; localRoots?: readonly string[] | "any" };
   optimizeImages: boolean;
 }): WebMediaOptions {
   if (typeof params.maxBytesOrOptions === "number" || params.maxBytesOrOptions === undefined) {
@@ -1090,7 +1090,7 @@ async function loadWebMediaInternal(
 export async function loadWebMedia(
   mediaUrl: string,
   maxBytesOrOptions?: number | WebMediaOptions,
-  options?: { ssrfPolicy?: SsrFPolicy; localRoots?: readonly string[] | "any" },
+  options?: { ssrfPolicy?: MediaFetchUrlPolicy; localRoots?: readonly string[] | "any" },
 ): Promise<WebMediaResult> {
   return await loadWebMediaInternal(
     mediaUrl,
@@ -1102,7 +1102,7 @@ export async function loadWebMedia(
 export async function loadWebMediaRaw(
   mediaUrl: string,
   maxBytesOrOptions?: number | WebMediaOptions,
-  options?: { ssrfPolicy?: SsrFPolicy; localRoots?: readonly string[] | "any" },
+  options?: { ssrfPolicy?: MediaFetchUrlPolicy; localRoots?: readonly string[] | "any" },
 ): Promise<WebMediaResult> {
   return await loadWebMediaInternal(
     mediaUrl,

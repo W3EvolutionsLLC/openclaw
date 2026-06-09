@@ -8,7 +8,7 @@ import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/st
 import type { Dispatcher } from "undici";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { normalizeResolvedSecretInputString } from "../../config/types.secrets.js";
-import type { GuardedFetchResult } from "../../infra/net/fetch-guard.js";
+import type { FetchWithResponseReleaseResult } from "../../infra/net/egress-fetch.js";
 import { normalizeHostname } from "../../infra/net/hostname.js";
 import { shouldUseEnvHttpProxyForUrl } from "../../infra/net/proxy-env.js";
 import { retainSafeHeadersForCrossOriginRedirect } from "../../infra/net/redirect-headers.js";
@@ -538,7 +538,7 @@ function assertNoUnsupportedWebToolsNetworkGuardOptions(params: Record<string, u
  */
 export async function fetchWithWebToolsNetworkGuard(
   params: WebToolsNetworkGuardCompatParams,
-): Promise<GuardedFetchResult> {
+): Promise<FetchWithResponseReleaseResult> {
   assertNoUnsupportedWebToolsNetworkGuardOptions(params as Record<string, unknown>);
   const timeoutMs = resolveWebToolsEndpointTimeoutMs(params);
   const timeout = buildTimeoutAbortSignal({

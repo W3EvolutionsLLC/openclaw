@@ -3,7 +3,7 @@ import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
 import type { ModelProviderConfig } from "../../config/types.models.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
-import { fetchWithTimeout } from "../../utils/fetch-timeout.js";
+import { fetchOperatorConfiguredEndpoint } from "../../infra/net/egress-fetch.js";
 
 const PREFLIGHT_CACHE_TTL_MS = 5 * 60_000;
 const PREFLIGHT_TIMEOUT_MS = 2_500;
@@ -143,18 +143,19 @@ async function probeLocalProviderEndpoint(params: {
   api: PreflightApi;
   baseUrl: string;
 }): Promise<void> {
-  const response = await fetchWithTimeout(
-    buildProbeUrl(params.api, params.baseUrl),
-    { method: "GET" },
-    PREFLIGHT_TIMEOUT_MS,
-  );
+  const result = await fetchOperatorConfiguredEndpoint({
+    url: buildProbeUrl(params.api, params.baseUrl),
+    init: { method: "GET" },
+    operation: "cron-model-provider-preflight",
+    timeoutMs: PREFLIGHT_TIMEOUT_MS,
+  });
   try {
     // Any HTTP response means the local endpoint is alive. Auth/model errors
     // still belong to the normal model runner where fallback and diagnostics
     // have the full provider context.
-    void response.status;
+    void result.response.status;
   } finally {
-    await response.body?.cancel().catch(() => undefined);
+    await result.release();
   }
 }
 

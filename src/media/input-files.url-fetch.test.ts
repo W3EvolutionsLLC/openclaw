@@ -13,6 +13,10 @@ vi.mock("@openclaw/media-core/mime", () => ({
   detectMime: (...args: unknown[]) => detectMimeMock(...args),
 }));
 
+vi.mock("node:dns/promises", () => ({
+  lookup: vi.fn(async () => [{ address: "93.184.216.34", family: 4 }]),
+}));
+
 async function waitForMicrotaskTurn(): Promise<void> {
   await new Promise<void>((resolve) => {
     queueMicrotask(resolve);

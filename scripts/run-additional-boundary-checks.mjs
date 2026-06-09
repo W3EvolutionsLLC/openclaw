@@ -16,6 +16,11 @@ export const BOUNDARY_CHECKS = [
   ["lint:tmp:channel-agnostic-boundaries", "pnpm", ["run", "lint:tmp:channel-agnostic-boundaries"]],
   ["lint:tmp:tsgo-core-boundary", "pnpm", ["run", "lint:tmp:tsgo-core-boundary"]],
   ["lint:tmp:no-raw-http2-imports", "pnpm", ["run", "lint:tmp:no-raw-http2-imports"]],
+  [
+    "lint:tmp:runtime-http-egress-boundary",
+    "pnpm",
+    ["run", "lint:tmp:runtime-http-egress-boundary"],
+  ],
   ["lint:agent:ingress-owner", "pnpm", ["run", "lint:agent:ingress-owner"]],
   [
     "lint:plugins:no-register-http-handler",

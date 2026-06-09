@@ -5,19 +5,10 @@
  */
 import fs from "node:fs";
 import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
-import type { Dispatcher } from "undici";
+import { fetchOperatorConfiguredEndpoint } from "../infra/net/egress-fetch.js";
 import { shouldUseEnvHttpProxyForUrl } from "../infra/net/proxy-env.js";
-import { retainSafeHeadersForCrossOriginRedirect } from "../infra/net/redirect-headers.js";
-import {
-  fetchWithRuntimeDispatcher,
-  type DispatcherAwareRequestInit,
-} from "../infra/net/runtime-fetch.js";
-import { closeDispatcher } from "../infra/net/ssrf.js";
-import {
-  createHttp1Agent,
-  createHttp1EnvHttpProxyAgent,
-  loadUndiciRuntimeDeps,
-} from "../infra/net/undici-runtime.js";
+import type { PinnedDispatcherPolicy } from "../infra/net/ssrf.js";
+import { loadUndiciRuntimeDeps } from "../infra/net/undici-runtime.js";
 import { resolveDebugProxySettings } from "../proxy-capture/env.js";
 
 /** MCP SDK-compatible fetch function type. */
@@ -31,7 +22,6 @@ export const fetchWithUndici: FetchLike = async (url, init) =>
   )) as unknown as Response;
 
 const MCP_HTTP_MAX_REDIRECTS = 20;
-const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 const managedMcpResponseCleanupRegistry = new FinalizationRegistry<{
   finalize: () => Promise<void>;
 }>((held) => {
@@ -147,63 +137,6 @@ function buildManagedMcpResponse(
   });
 }
 
-function dropBodyHeaders(headers?: HeadersInit): HeadersInit | undefined {
-  if (!headers) {
-    return headers;
-  }
-  const nextHeaders = new Headers(headers);
-  nextHeaders.delete("content-encoding");
-  nextHeaders.delete("content-language");
-  nextHeaders.delete("content-length");
-  nextHeaders.delete("content-location");
-  nextHeaders.delete("content-type");
-  nextHeaders.delete("transfer-encoding");
-  return nextHeaders;
-}
-
-function rewriteRedirectInitForStatus(
-  init: RequestInit | undefined,
-  status: number,
-): RequestInit | undefined {
-  if (!init) {
-    return init;
-  }
-  const method = init.method?.toUpperCase() ?? "GET";
-  const shouldForceGet =
-    status === 303
-      ? method !== "GET" && method !== "HEAD"
-      : (status === 301 || status === 302) && method === "POST";
-  if (!shouldForceGet) {
-    return init;
-  }
-  return {
-    ...init,
-    method: "GET",
-    body: undefined,
-    headers: dropBodyHeaders(init.headers),
-  };
-}
-
-function rewriteRedirectInitForCrossOrigin(init: RequestInit | undefined): RequestInit | undefined {
-  if (!init) {
-    return init;
-  }
-  const method = init.method?.toUpperCase() ?? "GET";
-  const headers = retainSafeHeadersForCrossOriginRedirect(init.headers);
-  if (method === "GET" || method === "HEAD") {
-    return { ...init, headers };
-  }
-  return {
-    ...init,
-    body: undefined,
-    headers: dropBodyHeaders(headers),
-  };
-}
-
-function mcpRedirectVisitKey(url: string, init: RequestInit | undefined): string {
-  return `${init?.method?.toUpperCase() ?? "GET"} ${url}`;
-}
-
 /** Builds an MCP fetch function with optional TLS/client-cert dispatcher support. */
 export function buildMcpHttpFetch(params: {
   sslVerify?: boolean;
@@ -218,111 +151,57 @@ export function buildMcpHttpFetch(params: {
   const allowedOrigins = scopedOrigin ? new Set([scopedOrigin]) : undefined;
 
   let customConnect: Record<string, unknown> | undefined;
-  const resolveCustomDispatcher = (url: URL): Dispatcher | undefined => {
-    if (!needsCustomDispatcher || !scopedOrigin || url.origin !== scopedOrigin) {
-      return undefined;
+  const resolveMcpDispatcherPolicy = (url: URL): PinnedDispatcherPolicy | undefined => {
+    if (needsCustomDispatcher && scopedOrigin && url.origin === scopedOrigin) {
+      customConnect ??= {
+        ...(params.sslVerify === false ? { rejectUnauthorized: false } : {}),
+        ...(params.clientCert ? { cert: fs.readFileSync(params.clientCert, "utf-8") } : {}),
+        ...(params.clientKey ? { key: fs.readFileSync(params.clientKey, "utf-8") } : {}),
+      };
+      return shouldUseEnvHttpProxyForUrl(url.toString())
+        ? {
+            mode: "env-proxy",
+            connect: { ...customConnect },
+          }
+        : {
+            mode: "direct",
+            connect: { ...customConnect },
+          };
     }
-    customConnect ??= {
-      ...(params.sslVerify === false ? { rejectUnauthorized: false } : {}),
-      ...(params.clientCert ? { cert: fs.readFileSync(params.clientCert, "utf-8") } : {}),
-      ...(params.clientKey ? { key: fs.readFileSync(params.clientKey, "utf-8") } : {}),
-    };
-    if (shouldUseEnvHttpProxyForUrl(url.toString())) {
-      return createHttp1EnvHttpProxyAgent({
-        connect: { ...customConnect },
-        requestTls: { ...customConnect },
-      });
-    }
-    return createHttp1Agent({ connect: { ...customConnect } });
+    return shouldUseEnvHttpProxyForUrl(url.toString())
+      ? {
+          mode: "env-proxy",
+        }
+      : {
+          mode: "direct",
+        };
   };
 
   return async (url, init) => {
     const request = resolveFetchRequest(url, init);
-    let currentUrl = request.url;
-    let currentInit = request.init;
-    let redirectCount = 0;
-    const redirectVisits = new Set<string>();
-    let activeDispatcher: Dispatcher | undefined;
-    let released = false;
-    const release = async () => {
-      if (released) {
-        return;
-      }
-      released = true;
-      await closeDispatcher(activeDispatcher);
-    };
-    try {
-      while (true) {
-        const parsed = new URL(currentUrl);
-        const visitKey = mcpRedirectVisitKey(currentUrl, currentInit);
-        if (redirectVisits.has(visitKey)) {
-          throw new Error("Redirect loop detected");
-        }
-        redirectVisits.add(visitKey);
-        if (
-          allowedOrigins &&
-          !allowedOrigins.has(parsed.origin) &&
-          params.allowNonResourceOriginRequests !== true
-        ) {
+    const result = await fetchOperatorConfiguredEndpoint({
+      url: request.url,
+      init: request.init,
+      maxRedirects: MCP_HTTP_MAX_REDIRECTS,
+      operation: "mcp-http-fetch",
+      dispatcherPolicy: resolveMcpDispatcherPolicy,
+      validateUrl: (parsed, { previousUrl }) => {
+        if (allowedOrigins && !allowedOrigins.has(parsed.origin)) {
+          const redirectedFromResourceOrigin =
+            previousUrl && allowedOrigins.has(previousUrl.origin);
+          if (params.allowNonResourceOriginRequests === true && !redirectedFromResourceOrigin) {
+            return;
+          }
           throw new Error(
             `MCP HTTP fetch blocked outside configured resource origin: ${parsed.origin}`,
           );
         }
-        activeDispatcher =
-          resolveCustomDispatcher(parsed) ??
-          (shouldUseEnvHttpProxyForUrl(parsed.toString())
-            ? createHttp1EnvHttpProxyAgent()
-            : createHttp1Agent());
-        const requestInit: DispatcherAwareRequestInit = {
-          ...(currentInit ? { ...currentInit } : {}),
-          redirect: "manual",
-          dispatcher: activeDispatcher,
-        };
-        const response = await fetchWithRuntimeDispatcher(currentUrl, requestInit);
-        await captureMcpHttpExchange({ url: currentUrl, init: requestInit, response });
-        if (!REDIRECT_STATUSES.has(response.status)) {
-          return buildManagedMcpResponse(response, release);
-        }
-        const location = response.headers.get("location");
-        await response.body?.cancel().catch(() => undefined);
-        await closeDispatcher(activeDispatcher);
-        activeDispatcher = undefined;
-        if (!location) {
-          throw new Error(`Redirect missing location header (${response.status})`);
-        }
-        redirectCount += 1;
-        if (redirectCount > MCP_HTTP_MAX_REDIRECTS) {
-          throw new Error(`Too many redirects (limit: ${MCP_HTTP_MAX_REDIRECTS})`);
-        }
-        const nextParsed = new URL(location, currentUrl);
-        if (
-          allowedOrigins &&
-          allowedOrigins.has(parsed.origin) &&
-          !allowedOrigins.has(nextParsed.origin)
-        ) {
-          throw new Error(
-            `MCP HTTP fetch blocked outside configured resource origin: ${nextParsed.origin}`,
-          );
-        }
-        if (
-          allowedOrigins &&
-          !allowedOrigins.has(nextParsed.origin) &&
-          params.allowNonResourceOriginRequests !== true
-        ) {
-          throw new Error(
-            `MCP HTTP fetch blocked outside configured resource origin: ${nextParsed.origin}`,
-          );
-        }
-        currentInit = rewriteRedirectInitForStatus(currentInit, response.status);
-        if (nextParsed.origin !== parsed.origin) {
-          currentInit = rewriteRedirectInitForCrossOrigin(currentInit);
-        }
-        currentUrl = nextParsed.toString();
-      }
-    } catch (error) {
-      await release();
-      throw error;
-    }
+      },
+      onResponse: async ({ url: responseUrl, init: requestInit, response }) => {
+        await captureMcpHttpExchange({ url: responseUrl, init: requestInit, response });
+      },
+    });
+    return buildManagedMcpResponse(result.response, result.release, result.refreshTimeout);
   };
 }
 

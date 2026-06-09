@@ -156,10 +156,14 @@ Current runtime behavior:
 
 ## Network proxy
 
-`web_fetch` no longer exposes per-tool SSRF guard knobs. If your deployment
-needs outbound filtering, DNS-rebinding protection, or private-network blocking
-for agent HTTP egress, enable `proxy.enabled` and enforce that policy in the
-operator-managed proxy. See [Network proxy](/security/network-proxy).
+`web_fetch` no longer exposes per-tool SSRF guard knobs. When
+`proxy.enabled=false`, OpenClaw's stock direct-mode guard blocks untrusted
+`web_fetch` URLs that target localhost, loopback, link-local, known metadata
+hosts, private networks, or DNS results and redirects to those destinations.
+
+For high-assurance outbound filtering, DNS-rebinding protection, audit logs, or
+deployment-specific allow/deny policy, enable `proxy.enabled` and enforce that
+policy in the operator-managed proxy. See [Network proxy](/security/network-proxy).
 
 Legacy `tools.web.fetch.useTrustedEnvProxy` and
 `tools.web.fetch.ssrfPolicy.*` config is removed by `openclaw doctor --fix`.
@@ -170,8 +174,10 @@ Legacy `tools.web.fetch.useTrustedEnvProxy` and
 - Response body is capped at `maxResponseBytes` before parsing; oversized
   responses are truncated with a warning
 - Redirects are checked and limited by `maxRedirects`
-- Private/internal destination policy is the responsibility of the external
-  proxy when `proxy.enabled` is used
+- In direct mode, untrusted URLs to local/private/metadata/link-local
+  destinations are blocked by the stock guard
+- Comprehensive private/internal destination policy is the responsibility of
+  the external proxy when `proxy.enabled` is used
 - `web_fetch` is best-effort -- some sites need the [Web Browser](/tools/browser)
 
 ## Tool profiles
