@@ -907,6 +907,47 @@ describe("embedded attempt session lock lifecycle", () => {
     expect(controller.hasSessionTakeover()).toBe(false);
   });
 
+  it("keeps owned tool-call and tool-result persistence from tripping the prompt fence", async () => {
+    const sessionFile = await createTempSessionFile();
+    const release = vi.fn(async () => {});
+    const acquireSessionWriteLockLocal34 = vi.fn(async () => ({ release }));
+    const controller = await createEmbeddedAttemptSessionLockController({
+      acquireSessionWriteLock: acquireSessionWriteLockLocal34,
+      lockOptions: { ...lockOptions, sessionFile },
+    });
+    const sessionManager = guardSessionManager(SessionManager.open(sessionFile), {
+      onMessagePersisted: () => {
+        controller.refreshAfterOwnedSessionWrite();
+      },
+    });
+
+    await controller.releaseForPrompt();
+    sessionManager.appendMessage({
+      role: "assistant",
+      content: [
+        {
+          type: "toolCall",
+          id: "call_session_status",
+          name: "session_status",
+          arguments: {},
+        },
+      ],
+      stopReason: "toolUse",
+      timestamp: 1,
+    });
+    sessionManager.appendMessage({
+      role: "toolResult",
+      toolCallId: "call_session_status",
+      toolName: "session_status",
+      content: [{ type: "text", text: "Model: huggingface/Qwen/Qwen3-8B" }],
+      isError: false,
+      timestamp: 2,
+    });
+
+    await expect(controller.withSessionWriteLock(() => "finalize")).resolves.toBe("finalize");
+    expect(controller.hasSessionTakeover()).toBe(false);
+  });
+
   it("refreshes the prompt fence after an owned session manager compaction append", async () => {
     const sessionFile = await createTempSessionFile();
     const release = vi.fn(async () => {});
