@@ -1637,6 +1637,24 @@ describe("startGatewayConfigReloader watcher error recovery", () => {
     expect(watchSpy).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(500);
     expect(watchSpy).toHaveBeenCalledTimes(2);
+    second.emit("ready");
+    expect(reloader.hotReloadStatus()).toBe("active");
+    expect(log.error).not.toHaveBeenCalled();
+
+    await reloader.stop();
+  });
+
+  it("resets the retry budget after a replacement watcher becomes ready", async () => {
+    const watchers = Array.from({ length: 5 }, () => createWatcherMock());
+    const { watchSpy, log, reloader } = startReloaderWithWatchers(watchers);
+
+    for (let index = 0; index < 4; index += 1) {
+      watchers[index]?.emit("error");
+      await vi.runOnlyPendingTimersAsync();
+      watchers[index + 1]?.emit("ready");
+    }
+
+    expect(watchSpy).toHaveBeenCalledTimes(5);
     expect(reloader.hotReloadStatus()).toBe("active");
     expect(log.error).not.toHaveBeenCalled();
 

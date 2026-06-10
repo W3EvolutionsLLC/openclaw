@@ -420,6 +420,11 @@ export function startGatewayConfigReloader(opts: {
     next.on("add", scheduleFromWatcher);
     next.on("change", scheduleFromWatcher);
     next.on("unlink", scheduleFromWatcher);
+    next.on("ready", () => {
+      if (next === watcher) {
+        watcherRecreateRetries = 0;
+      }
+    });
     next.on("error", (err) => {
       handleWatcherError(next, err);
     });
