@@ -97,7 +97,7 @@ describe("Codex agent harness reset", () => {
     await expect(
       bindingStore.mutate(nextIdentity, {
         kind: "reclaim-generation",
-        isCurrentSessionGeneration: () => true,
+        expectedPreviousSessionId: identity.sessionId,
       }),
     ).resolves.toBe(true);
     await expect(
