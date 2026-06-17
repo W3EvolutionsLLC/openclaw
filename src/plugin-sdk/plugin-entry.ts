@@ -91,6 +91,8 @@ export type ProviderNormalizeModelIdContext =
   import("../plugins/types.js").ProviderNormalizeModelIdContext;
 export type ProviderNormalizeResolvedModelContext =
   import("../plugins/types.js").ProviderNormalizeResolvedModelContext;
+export type ProviderRouteModelTransportContext =
+  import("../plugins/types.js").ProviderRouteModelTransportContext;
 export type ProviderPrepareDynamicModelContext =
   import("../plugins/types.js").ProviderPrepareDynamicModelContext;
 export type ProviderPrepareExtraParamsContext =

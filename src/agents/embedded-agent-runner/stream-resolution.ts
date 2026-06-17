@@ -4,7 +4,14 @@
 import { getApiProvider } from "../../llm/api-registry.js";
 import { streamSimple } from "../../llm/stream.js";
 import { createAnthropicVertexStreamFnForModel } from "../anthropic-vertex-stream.js";
-import { createBoundaryAwareStreamFnForModel } from "../provider-transport-stream.js";
+import {
+  hasForcedOpenClawTransport,
+  resolveModelDispatchAuthProvider,
+} from "../model-dispatch.js";
+import {
+  createBoundaryAwareStreamFnForModel,
+  createDispatchRoutedStreamFnForModel,
+} from "../provider-transport-stream.js";
 import type { StreamFn } from "../runtime/index.js";
 import { stripSystemPromptCacheBoundary } from "../system-prompt-cache-boundary.js";
 import type { EmbeddedRunAttemptParams } from "./run/types.js";
@@ -75,6 +82,9 @@ export function describeEmbeddedAgentStreamStrategy(params: {
   model: EmbeddedRunAttemptParams["model"];
   resolvedApiKey?: string;
 }): string {
+  if (hasForcedOpenClawTransport(params.model)) {
+    return `dispatch-route:${params.model.api}`;
+  }
   if (params.providerStreamFn) {
     return "provider";
   }
@@ -126,13 +136,27 @@ export function resolveEmbeddedAgentStreamFn(params: {
   authProfileId?: string;
   authStorage?: { getApiKey(provider: string): Promise<string | undefined> };
 }): StreamFn {
+  const authProvider = resolveModelDispatchAuthProvider(params.model);
+  if (hasForcedOpenClawTransport(params.model)) {
+    const dispatchStreamFn = createDispatchRoutedStreamFnForModel(params.model);
+    if (dispatchStreamFn) {
+      return wrapEmbeddedAgentStreamFn(dispatchStreamFn, {
+        runSignal: params.signal,
+        resolvedApiKey: params.resolvedApiKey,
+        authProfileId: params.authProfileId,
+        authStorage: params.authStorage,
+        providerId: authProvider,
+        promptCacheKey: params.promptCacheKey,
+      });
+    }
+  }
   if (params.providerStreamFn) {
     return wrapEmbeddedAgentStreamFn(params.providerStreamFn, {
       runSignal: params.signal,
       resolvedApiKey: params.resolvedApiKey,
       authProfileId: params.authProfileId,
       authStorage: params.authStorage,
-      providerId: params.model.provider,
+      providerId: authProvider,
       promptCacheKey: params.promptCacheKey,
       transformContext: (context) =>
         context.systemPrompt
@@ -159,7 +183,7 @@ export function resolveEmbeddedAgentStreamFn(params: {
       resolvedApiKey: params.resolvedApiKey,
       authProfileId: params.authProfileId,
       authStorage: params.authStorage,
-      providerId: params.model.provider,
+      providerId: authProvider,
       sessionId: params.sessionId,
       promptCacheKey: params.promptCacheKey,
       transformContext: (context) =>
@@ -192,7 +216,7 @@ export function resolveEmbeddedAgentStreamFn(params: {
         resolvedApiKey: params.resolvedApiKey,
         authProfileId: params.authProfileId,
         authStorage: params.authStorage,
-        providerId: params.model.provider,
+        providerId: authProvider,
         promptCacheKey: params.promptCacheKey,
       });
     }
@@ -207,7 +231,7 @@ export function resolveEmbeddedAgentStreamFn(params: {
     resolvedApiKey: undefined,
     authProfileId: undefined,
     authStorage: undefined,
-    providerId: params.model.provider,
+    providerId: authProvider,
     promptCacheKey,
   });
 }

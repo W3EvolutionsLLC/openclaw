@@ -402,6 +402,35 @@ async function resolveDemoLocalApiKey(params: {
 }
 
 describe("getApiKeyForModel", () => {
+  it("resolves credentials from a model's dispatch auth provider", async () => {
+    const auth = await getApiKeyForModel({
+      model: {
+        ...testModelDefinition("claude-sonnet-4-6"),
+        provider: "anthropic",
+        api: "anthropic-messages",
+        dispatch: {
+          authProvider: "clawrouter",
+          forceOpenClawTransport: true,
+        },
+      },
+      store: {
+        version: 1,
+        profiles: {
+          "clawrouter:default": {
+            type: "api_key",
+            provider: "clawrouter",
+            key: "router-key",
+          },
+        },
+      },
+    });
+
+    expect(auth).toMatchObject({
+      apiKey: "router-key",
+      profileId: "clawrouter:default",
+    });
+  });
+
   it("reads oauth auth-profiles entries from auth-profiles.json via explicit profile", async () => {
     await withOpenClawTestState(
       {

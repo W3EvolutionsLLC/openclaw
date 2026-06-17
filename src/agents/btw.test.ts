@@ -481,6 +481,9 @@ describe("runBtwSideQuestion", () => {
       id: "claude-sonnet-4-6",
       api: "anthropic-messages",
     });
+    resolveModelAsyncMock.mockImplementation(async () => ({
+      model: resolveModelWithRegistryMock(),
+    }));
     ensureAuthProfileStoreMock.mockReturnValue({ version: 1, profiles: {} });
     ensureAuthProfileStoreWithoutExternalProfilesMock.mockReturnValue({ version: 1, profiles: {} });
     getApiKeyForModelMock.mockResolvedValue({ apiKey: "secret", mode: "api-key", source: "test" });
@@ -1175,6 +1178,58 @@ describe("runBtwSideQuestion", () => {
       baseUrl: "https://api.enterprise.githubcopilot.com",
     });
     expectRecordFields(streamOptions, { apiKey: "copilot-runtime-token" });
+  });
+
+  it("resolves dispatch-routed BTW models with the gateway credential owner", async () => {
+    resolveModelAsyncMock.mockResolvedValueOnce({
+      model: {
+        provider: "anthropic",
+        id: "claude-sonnet-4-6",
+        api: "anthropic-messages",
+        baseUrl: "https://router.example/v1/native/anthropic",
+        dispatch: {
+          authProvider: "clawrouter",
+          authHeader: "bearer",
+          forceOpenClawTransport: true,
+          upstreamModel: "claude-sonnet-4-6-20260217",
+        },
+      },
+    });
+    getApiKeyForModelMock.mockResolvedValueOnce({
+      apiKey: "router-token",
+      mode: "api-key",
+      source: "profile:clawrouter:work",
+      profileId: "clawrouter:work",
+    });
+    requireApiKeyMock.mockReturnValue("router-token");
+    mockDoneAnswer("Routed answer.");
+
+    const result = await runSideQuestion();
+
+    expect(result).toEqual({ text: "Routed answer." });
+    expect(resolveModelAsyncMock).toHaveBeenCalledWith(
+      DEFAULT_PROVIDER,
+      DEFAULT_MODEL,
+      DEFAULT_AGENT_DIR,
+      expect.anything(),
+      expect.objectContaining({
+        authProfileId: "profile-1",
+        workspaceDir: "/tmp/workspace",
+      }),
+    );
+    expectRecordFields(mockArg(getApiKeyForModelMock, 0, 0), {
+      profileId: undefined,
+      model: expect.objectContaining({
+        dispatch: expect.objectContaining({ authProvider: "clawrouter" }),
+      }),
+    });
+    expectRecordFields(mockArg(prepareProviderRuntimeAuthMock, 0, 0), {
+      provider: "clawrouter",
+      context: expect.objectContaining({
+        provider: "clawrouter",
+        apiKey: "router-token",
+      }),
+    });
   });
 
   it("uses the provider's stream fn when registered so provider URL construction runs (#68336)", async () => {

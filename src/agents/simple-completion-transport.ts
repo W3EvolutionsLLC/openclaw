@@ -10,9 +10,11 @@ import { wrapProviderSimpleCompletionStreamFn } from "../plugins/provider-runtim
 import { createAnthropicVertexStreamFnForModel } from "./anthropic-vertex-stream.js";
 import { ensureCustomApiRegistered } from "./custom-api-registry.js";
 import { prepareGoogleSimpleCompletionModel } from "./google-simple-completion-stream.js";
+import { hasForcedOpenClawTransport } from "./model-dispatch.js";
 import { registerProviderStreamForModel } from "./provider-stream.js";
 import {
   buildTransportAwareSimpleStreamFn,
+  createDispatchRoutedStreamFnForModel,
   createOpenClawTransportStreamFnForModel,
   prepareTransportAwareSimpleModel,
   resolveTransportAwareSimpleApi,
@@ -124,11 +126,33 @@ function prepareCodexSimpleTransportModel<TApi extends Api>(
   };
 }
 
+function prepareForcedDispatchSimpleTransportModel<TApi extends Api>(
+  model: Model<TApi>,
+  cfg?: OpenClawConfig,
+): Model {
+  const streamFn = createDispatchRoutedStreamFnForModel(model, { cfg });
+  if (!streamFn) {
+    throw new Error(
+      `No OpenClaw transport is available for forced dispatch api "${model.api}".`,
+    );
+  }
+  const api = resolveProviderSimpleCompletionApi(model);
+  ensureCustomApiRegistered(api, streamFn);
+  return {
+    ...model,
+    api,
+  };
+}
+
 export function prepareModelForSimpleCompletion<TApi extends Api>(params: {
   model: Model<TApi>;
   cfg?: OpenClawConfig;
 }): Model {
   const { model, cfg } = params;
+  if (hasForcedOpenClawTransport(model)) {
+    return prepareForcedDispatchSimpleTransportModel(model, cfg);
+  }
+
   // Only provider-owned custom APIs need runtime stream registration here.
   if (!getApiProvider(model.api) && registerProviderStreamForModel({ model, cfg })) {
     return applyProviderSimpleCompletionWrapper(model, cfg);

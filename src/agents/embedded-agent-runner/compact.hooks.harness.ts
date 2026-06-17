@@ -43,13 +43,27 @@ export const resolveContextEngineMock = vi.fn(async () => ({
   compact: contextEngineCompactMock,
 }));
 export const resolveModelMock: Mock<
-  (provider?: string, modelId?: string, agentDir?: string, cfg?: unknown) => MockResolvedModel
-> = vi.fn((_provider?: string, _modelId?: string, _agentDir?: string, _cfg?: unknown) => ({
-  model: { provider: "openai", api: "responses", id: "fake", input: [] },
-  error: null,
-  authStorage: { setRuntimeApiKey: vi.fn() },
-  modelRegistry: {},
-}));
+  (
+    provider?: string,
+    modelId?: string,
+    agentDir?: string,
+    cfg?: unknown,
+    options?: unknown,
+  ) => MockResolvedModel
+> = vi.fn(
+  (
+    _provider?: string,
+    _modelId?: string,
+    _agentDir?: string,
+    _cfg?: unknown,
+    _options?: unknown,
+  ) => ({
+    model: { provider: "openai", api: "responses", id: "fake", input: [] },
+    error: null,
+    authStorage: { setRuntimeApiKey: vi.fn() },
+    modelRegistry: {},
+  }),
+);
 export const sessionCompactImpl = vi.fn(async () => ({
   summary: "summary",
   firstKeptEntryId: "entry-1",
@@ -859,8 +873,13 @@ export async function loadCompactHooksHarness(): Promise<{
     buildModelAliasLines: vi.fn(() => []),
     resolveModel: resolveModelMock,
     resolveModelAsync: vi.fn(
-      async (provider: string, modelId: string, agentDir?: string, cfg?: unknown) =>
-        resolveModelMock(provider, modelId, agentDir, cfg),
+      async (
+        provider: string,
+        modelId: string,
+        agentDir?: string,
+        cfg?: unknown,
+        options?: unknown,
+      ) => resolveModelMock(provider, modelId, agentDir, cfg, options),
     ),
   }));
 

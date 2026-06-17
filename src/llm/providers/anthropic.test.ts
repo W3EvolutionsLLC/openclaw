@@ -83,6 +83,34 @@ describe("Anthropic provider", () => {
     expect(config.defaultHeaders?.["cf-aig-authorization"]).toBe("Bearer gateway-token");
   });
 
+  it("preserves static bearer proxy headers alongside Anthropic API-key auth", async () => {
+    const model = makeAnthropicModel({
+      provider: "custom-anthropic-proxy",
+      baseUrl: "https://anthropic-proxy.example/v1",
+      headers: {
+        Authorization: "Bearer proxy-token",
+      },
+    });
+    const context = {
+      messages: [{ role: "user", content: "hello", timestamp: 1 }],
+    } satisfies Context;
+
+    streamAnthropic(model, context, {
+      apiKey: "sk-ant-provider",
+    });
+
+    await vi.waitFor(() => expect(anthropicMockState.configs).toHaveLength(1));
+    const config = anthropicMockState.configs[0] as {
+      apiKey?: string | null;
+      authToken?: string | null;
+      defaultHeaders?: Record<string, string | null>;
+    };
+
+    expect(config.apiKey).toBe("sk-ant-provider");
+    expect(config.authToken).toBeNull();
+    expect(config.defaultHeaders?.Authorization).toBe("Bearer proxy-token");
+  });
+
   it("uses bearer auth for Microsoft Foundry Anthropic requests", async () => {
     const model = makeAnthropicModel({
       provider: "microsoft-foundry",
@@ -112,6 +140,36 @@ describe("Anthropic provider", () => {
     expect(config.authToken).toBe("entra-access-token");
     expect(config.defaultHeaders?.Authorization).toBeUndefined();
     expect(config.defaultHeaders?.["api-key"]).toBeUndefined();
+    expect(config.defaultHeaders?.["x-api-key"]).toBeUndefined();
+  });
+
+  it("uses bearer auth for Microsoft Foundry static bearer headers", async () => {
+    const model = makeAnthropicModel({
+      provider: "microsoft-foundry",
+      baseUrl: "https://example.services.ai.azure.com/anthropic",
+      headers: {
+        Authorization: "Bearer stale-foundry-token",
+        "x-api-key": "stale-resource-key",
+      },
+    });
+    const context = {
+      messages: [{ role: "user", content: "hello", timestamp: 1 }],
+    } satisfies Context;
+
+    streamAnthropic(model, context, {
+      apiKey: "entra-access-token",
+    });
+
+    await vi.waitFor(() => expect(anthropicMockState.configs).toHaveLength(1));
+    const config = anthropicMockState.configs[0] as {
+      apiKey?: string | null;
+      authToken?: string | null;
+      defaultHeaders?: Record<string, string | null>;
+    };
+
+    expect(config.apiKey).toBeNull();
+    expect(config.authToken).toBe("entra-access-token");
+    expect(config.defaultHeaders?.Authorization).toBeUndefined();
     expect(config.defaultHeaders?.["x-api-key"]).toBeUndefined();
   });
 

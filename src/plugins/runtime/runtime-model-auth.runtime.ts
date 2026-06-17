@@ -6,6 +6,7 @@ import {
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { Model } from "../../llm/types.js";
 import { prepareProviderRuntimeAuth } from "../provider-runtime.runtime.js";
+import { resolveModelDispatchAuthProvider } from "../../agents/model-dispatch.js";
 import type { ResolvedProviderRuntimeAuth } from "./model-auth-types.js";
 
 export async function getApiKeyForModel(
@@ -29,6 +30,7 @@ export async function getRuntimeAuthForModel(params: {
   cfg?: OpenClawConfig;
   workspaceDir?: string;
 }): Promise<ResolvedProviderRuntimeAuth> {
+  const authProvider = resolveModelDispatchAuthProvider(params.model);
   const resolvedAuth = await resolveModelApiKey({
     model: params.model,
     cfg: params.cfg,
@@ -40,7 +42,7 @@ export async function getRuntimeAuthForModel(params: {
   }
 
   const preparedAuth = await prepareProviderRuntimeAuth({
-    provider: params.model.provider,
+    provider: authProvider,
     config: params.cfg,
     workspaceDir: params.workspaceDir,
     env: process.env,
@@ -48,7 +50,7 @@ export async function getRuntimeAuthForModel(params: {
       config: params.cfg,
       workspaceDir: params.workspaceDir,
       env: process.env,
-      provider: params.model.provider,
+      provider: authProvider,
       modelId: params.model.id,
       model: params.model,
       apiKey: resolvedAuth.apiKey,

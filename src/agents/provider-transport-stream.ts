@@ -8,6 +8,10 @@ import type { Api, Model } from "../llm/types.js";
 import { resolveProviderStreamFn } from "../plugins/provider-runtime.js";
 import { createAnthropicMessagesTransportStreamFn } from "./anthropic-transport-stream.js";
 import {
+  prepareModelForDispatch,
+  restoreCanonicalModelIdentityForStream,
+} from "./model-dispatch.js";
+import {
   createAzureOpenAIResponsesTransportStreamFn,
   createOpenAICompletionsTransportStreamFn,
   createOpenAIResponsesTransportStreamFn,
@@ -40,6 +44,15 @@ type ProviderTransportStreamContext = {
   workspaceDir?: string;
   env?: NodeJS.ProcessEnv;
 };
+
+function isPromiseLike<T>(value: T | PromiseLike<T>): value is PromiseLike<T> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "then" in value &&
+    typeof (value as { then?: unknown }).then === "function"
+  );
+}
 
 function createProviderOwnedGoogleTransportStreamFn(
   model: Model,
@@ -143,6 +156,32 @@ export function createOpenClawTransportStreamFnForModel(
     return undefined;
   }
   return createSupportedTransportStreamFn(model, ctx);
+}
+
+/**
+ * Creates a forced OpenClaw transport that applies a late-bound dispatch route
+ * only after the resolved credential is available.
+ */
+export function createDispatchRoutedStreamFnForModel(
+  model: Model,
+  ctx?: ProviderTransportStreamContext,
+): StreamFn | undefined {
+  const inner = createOpenClawTransportStreamFnForModel(model, ctx);
+  if (!inner) {
+    return undefined;
+  }
+  return (requestModel, context, options) => {
+    const stream = inner(
+      prepareModelForDispatch({ ...requestModel, api: model.api }, options?.apiKey),
+      context,
+      options,
+    );
+    return isPromiseLike(stream)
+      ? Promise.resolve(stream).then((resolved) =>
+          restoreCanonicalModelIdentityForStream(resolved, requestModel.id),
+        )
+      : restoreCanonicalModelIdentityForStream(stream, requestModel.id);
+  };
 }
 
 export function createBoundaryAwareStreamFnForModel(

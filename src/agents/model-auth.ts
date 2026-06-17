@@ -1530,7 +1530,7 @@ export async function getApiKeyForModel(params: {
   credentialPrecedence?: ProviderCredentialPrecedence;
 }): Promise<ResolvedProviderAuth> {
   return resolveApiKeyForProvider({
-    provider: params.model.provider,
+    provider: params.model.dispatch?.authProvider ?? params.model.provider,
     cfg: params.cfg,
     profileId: params.profileId,
     preferredProfile: params.preferredProfile,

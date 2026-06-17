@@ -260,22 +260,19 @@ function mergeHeaders(
 }
 
 function hasBearerAuthorizationHeader(headers?: Record<string, string>): boolean {
-  if (!headers) {
-    return false;
-  }
-  return Object.entries(headers).some(
+  return Object.entries(headers ?? {}).some(
     ([key, value]) => key.toLowerCase() === "authorization" && /^bearer\s+\S+/i.test(value.trim()),
   );
 }
 
-function usesFoundryBearerAuth(model: Model<"anthropic-messages">): boolean {
+function usesBearerAuthorization(model: Model<"anthropic-messages">): boolean {
   return (
-    model.provider === "microsoft-foundry" &&
-    (model.authHeader === true || hasBearerAuthorizationHeader(model.headers))
+    model.authHeader === true ||
+    (model.provider === "microsoft-foundry" && hasBearerAuthorizationHeader(model.headers))
   );
 }
 
-function omitFoundryBearerCredentialHeaders(
+function omitBearerCredentialHeaders(
   headers?: Record<string, string>,
 ): Record<string, string> | undefined {
   if (!headers) {
@@ -982,7 +979,7 @@ function createClient(
     return { client, isOAuthToken: false };
   }
 
-  if (usesFoundryBearerAuth(model)) {
+  if (usesBearerAuthorization(model)) {
     const client = new Anthropic({
       apiKey: null,
       authToken: apiKey,
@@ -994,7 +991,7 @@ function createClient(
           "anthropic-dangerous-direct-browser-access": "true",
           ...(betaFeatures.length > 0 ? { "anthropic-beta": betaFeatures.join(",") } : {}),
         },
-        omitFoundryBearerCredentialHeaders(model.headers),
+        omitBearerCredentialHeaders(model.headers),
         dynamicHeaders,
         optionsHeaders,
       ),

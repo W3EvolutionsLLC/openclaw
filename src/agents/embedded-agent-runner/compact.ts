@@ -94,6 +94,7 @@ import {
   MissingProviderAuthError,
   resolveModelAuthMode,
 } from "../model-auth.js";
+import { resolveModelDispatchAuthProvider } from "../model-dispatch.js";
 import { isFallbackSummaryError, runWithModelFallback } from "../model-fallback.js";
 import { supportsModelTools } from "../model-tool-support.js";
 import { ensureOpenClawModelsJson } from "../models-config.js";
@@ -634,6 +635,10 @@ async function compactEmbeddedAgentSessionDirectOnce(
     modelId,
     agentDir,
     params.config,
+    {
+      workspaceDir: resolvedWorkspace,
+      authProfileId,
+    },
   );
   if (!model) {
     const reason = error ?? `Unknown model: ${runtimeProvider}/${modelId}`;
@@ -653,11 +658,11 @@ async function compactEmbeddedAgentSessionDirectOnce(
 
     if (!apiKeyInfo.apiKey) {
       if (apiKeyInfo.mode !== "aws-sdk") {
-        throw new MissingProviderAuthError(runtimeModel.provider, apiKeyInfo);
+        throw new MissingProviderAuthError(resolveModelDispatchAuthProvider(runtimeModel), apiKeyInfo);
       }
     } else {
       const preparedAuth = await prepareProviderRuntimeAuth({
-        provider: runtimeModel.provider,
+        provider: resolveModelDispatchAuthProvider(runtimeModel),
         config: params.config,
         workspaceDir: resolvedWorkspace,
         env: process.env,
@@ -666,7 +671,7 @@ async function compactEmbeddedAgentSessionDirectOnce(
           agentDir,
           workspaceDir: resolvedWorkspace,
           env: process.env,
-          provider: runtimeModel.provider,
+          provider: resolveModelDispatchAuthProvider(runtimeModel),
           modelId,
           model: runtimeModel,
           apiKey: apiKeyInfo.apiKey,
@@ -680,7 +685,7 @@ async function compactEmbeddedAgentSessionDirectOnce(
       if (!runtimeApiKey) {
         throw new Error(`Provider "${runtimeModel.provider}" runtime auth returned no apiKey.`);
       }
-      authStorage.setRuntimeApiKey(runtimeModel.provider, runtimeApiKey);
+      authStorage.setRuntimeApiKey(resolveModelDispatchAuthProvider(runtimeModel), runtimeApiKey);
     }
   } catch (err) {
     const reason = formatErrorMessage(err);

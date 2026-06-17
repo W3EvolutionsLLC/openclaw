@@ -27,7 +27,7 @@ import { readBtwTranscriptMessages, resolveBtwSessionTranscriptPath } from "./bt
 import { executePreparedCliRun } from "./cli-runner/execute.runtime.js";
 import { prepareCliRunContext } from "./cli-runner/prepare.runtime.js";
 import { EmbeddedBlockChunker, type BlockReplyChunking } from "./embedded-agent-block-chunker.js";
-import { resolveModelWithRegistry } from "./embedded-agent-runner/model.js";
+import { resolveModelAsync } from "./embedded-agent-runner/model.js";
 import { getActiveEmbeddedRunSnapshot } from "./embedded-agent-runner/runs.js";
 import { resolveEmbeddedAgentStreamFn } from "./embedded-agent-runner/stream-resolution.js";
 import {
@@ -45,6 +45,7 @@ import {
   getApiKeyForModel,
   requireApiKey,
 } from "./model-auth.js";
+import { resolveModelDispatchAuthProvider } from "./model-dispatch.js";
 import {
   isCliRuntimeAliasForProvider,
   resolveCliRuntimeExecutionProvider,
@@ -314,16 +315,6 @@ async function resolveRuntimeModel(params: {
   await ensureOpenClawModelsJson(params.cfg, params.agentDir, modelsOptions);
   const authStorage = discoverAuthStorage(params.agentDir);
   const modelRegistry = discoverModels(authStorage, params.agentDir, modelsOptions);
-  const model = resolveModelWithRegistry({
-    provider: params.provider,
-    modelId: params.model,
-    modelRegistry,
-    cfg: params.cfg,
-  });
-  if (!model) {
-    throw new Error(`Unknown model: ${params.provider}/${params.model}`);
-  }
-
   const authProfileId = await resolveSessionAuthProfileOverride({
     cfg: params.cfg,
     provider: params.provider,
@@ -345,8 +336,23 @@ async function resolveRuntimeModel(params: {
     storePath: params.storePath,
     isNewSession: params.isNewSession,
   });
+  const resolved = await resolveModelAsync(
+    params.provider,
+    params.model,
+    params.agentDir,
+    params.cfg,
+    {
+      authStorage,
+      modelRegistry,
+      ...(params.workspaceDir ? { workspaceDir: params.workspaceDir } : {}),
+      ...(authProfileId ? { authProfileId } : {}),
+    },
+  );
+  if (!resolved.model) {
+    throw new Error(resolved.error ?? `Unknown model: ${params.provider}/${params.model}`);
+  }
   return {
-    model,
+    model: resolved.model,
     authProfileId,
     authProfileIdSource: resolveReturnedAuthProfileSource(params.sessionEntry, authProfileId),
   };
@@ -639,26 +645,33 @@ export async function runBtwSideQuestion(
     storePath: params.storePath,
     isNewSession: params.isNewSession,
   });
+  const authProvider = resolveModelDispatchAuthProvider(model);
+  const routedAuthProfileId =
+    authProvider === model.provider || authProfileId?.startsWith(`${authProvider}:`)
+      ? authProfileId
+      : undefined;
+  const routedAuthProfileIdSource = routedAuthProfileId ? authProfileIdSource : undefined;
   let externalCliAuthScope = resolveExternalCliAuthOverlayScopeFromSelection({
-    provider: model.provider,
+    provider: authProvider,
     cfg: params.cfg,
     agentId: sessionAgentId,
     modelId: model.id,
     workspaceDir,
-    userLockedAuthProfileId: authProfileIdSource === "user" ? authProfileId : undefined,
+    userLockedAuthProfileId: routedAuthProfileIdSource === "user" ? routedAuthProfileId : undefined,
   });
   if (!externalCliAuthScope.providerIds) {
     const noExternalAuthStore = ensureAuthProfileStoreWithoutExternalProfiles(params.agentDir, {
       allowKeychainPrompt: false,
     });
     externalCliAuthScope = resolveExternalCliAuthOverlayScopeFromSelection({
-      provider: model.provider,
+      provider: authProvider,
       cfg: params.cfg,
       agentId: sessionAgentId,
       modelId: model.id,
       workspaceDir,
       store: noExternalAuthStore,
-      userLockedAuthProfileId: authProfileIdSource === "user" ? authProfileId : undefined,
+      userLockedAuthProfileId:
+        routedAuthProfileIdSource === "user" ? routedAuthProfileId : undefined,
     });
   }
   const authStore = externalCliAuthScope.providerIds
@@ -668,9 +681,9 @@ export async function runBtwSideQuestion(
       })
     : undefined;
   const effectiveAuthProfileId =
-    externalCliAuthScope.ignoreAutoPreferredProfile && authProfileIdSource !== "user"
+    externalCliAuthScope.ignoreAutoPreferredProfile && routedAuthProfileIdSource !== "user"
       ? undefined
-      : authProfileId;
+      : routedAuthProfileId;
   const apiKeyInfo = await getApiKeyForModel({
     model,
     cfg: params.cfg,
@@ -683,10 +696,10 @@ export async function runBtwSideQuestion(
   let apiKey =
     apiKeyInfo.mode === "aws-sdk" && !apiKeyInfo.apiKey
       ? undefined
-      : requireApiKey(apiKeyInfo, model.provider);
+      : requireApiKey(apiKeyInfo, authProvider);
   if (apiKey) {
     const preparedAuth = await prepareProviderRuntimeAuth({
-      provider: model.provider,
+      provider: authProvider,
       config: params.cfg,
       workspaceDir,
       env: process.env,
@@ -695,7 +708,7 @@ export async function runBtwSideQuestion(
         agentDir: params.agentDir,
         workspaceDir,
         env: process.env,
-        provider: model.provider,
+        provider: authProvider,
         modelId: model.id,
         model,
         apiKey,

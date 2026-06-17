@@ -99,6 +99,7 @@ function createMutableEmbeddedRunAuthController(params: {
   authStore?: AuthProfileStore;
   fallbackConfigured?: boolean;
   warn?: (message: string) => void;
+  refreshModelForAuthProfile?: (profileId?: string) => Promise<void>;
 }) {
   return createEmbeddedRunAuthController({
     config: undefined,
@@ -126,6 +127,9 @@ function createMutableEmbeddedRunAuthController(params: {
     setEffectiveModel: (next) => {
       params.harness.effectiveModel = next;
     },
+    ...(params.refreshModelForAuthProfile
+      ? { refreshModelForAuthProfile: params.refreshModelForAuthProfile }
+      : {}),
     getApiKeyInfo: () => params.harness.apiKeyInfo as never,
     setApiKeyInfo: (next) => {
       params.harness.apiKeyInfo = next;
@@ -451,6 +455,68 @@ describe("createEmbeddedRunAuthController", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("refreshes transport routing for every auth-profile candidate", async () => {
+    const harness = createMutableAuthControllerHarness();
+    const refreshModelForAuthProfile = vi.fn(async (profileId?: string) => {
+      harness.runtimeModel = {
+        ...harness.runtimeModel,
+        baseUrl: `https://${profileId}.router.example/v1`,
+      };
+      harness.effectiveModel = harness.runtimeModel;
+    });
+    const setRuntimeApiKey = vi.fn<(provider: string, apiKey: string) => void>();
+    mocks.getApiKeyForModel.mockImplementation(async ({ profileId }) => ({
+      apiKey: `${profileId}-token`,
+      mode: "api-key",
+      profileId,
+      source: "profile",
+    }));
+    mocks.prepareProviderRuntimeAuth.mockResolvedValue(undefined);
+    const controller = createMutableEmbeddedRunAuthController({
+      harness,
+      setRuntimeApiKey,
+      profileCandidates: ["clawrouter:first", "clawrouter:second"],
+      refreshModelForAuthProfile,
+    });
+
+    await controller.initializeAuthProfile();
+    await controller.advanceAuthProfile();
+
+    expect(refreshModelForAuthProfile).toHaveBeenNthCalledWith(1, "clawrouter:first");
+    expect(refreshModelForAuthProfile).toHaveBeenNthCalledWith(2, "clawrouter:second");
+    expect(harness.runtimeModel.baseUrl).toBe("https://clawrouter:second.router.example/v1");
+  });
+
+  it("skips a profile when route refresh rejects its credential", async () => {
+    const harness = createMutableAuthControllerHarness();
+    const refreshModelForAuthProfile = vi.fn(async (profileId?: string) => {
+      if (profileId === "clawrouter:denied") {
+        throw new Error(`Model is not available for auth profile ${profileId}.`);
+      }
+    });
+    const setRuntimeApiKey = vi.fn<(provider: string, apiKey: string) => void>();
+    mocks.getApiKeyForModel.mockResolvedValue({
+      apiKey: "allowed-token",
+      mode: "api-key",
+      profileId: "clawrouter:allowed",
+      source: "profile",
+    });
+    mocks.prepareProviderRuntimeAuth.mockResolvedValue(undefined);
+    const controller = createMutableEmbeddedRunAuthController({
+      harness,
+      setRuntimeApiKey,
+      profileCandidates: ["clawrouter:denied", "clawrouter:allowed"],
+      refreshModelForAuthProfile,
+    });
+
+    await controller.initializeAuthProfile();
+
+    expect(refreshModelForAuthProfile).toHaveBeenNthCalledWith(1, "clawrouter:denied");
+    expect(refreshModelForAuthProfile).toHaveBeenNthCalledWith(2, "clawrouter:allowed");
+    expect(mocks.getApiKeyForModel).toHaveBeenCalledTimes(1);
+    expect(setRuntimeApiKey).toHaveBeenCalledWith("custom-openai", "allowed-token");
   });
 
   describe("aws-sdk auth without explicit API key (IMDS / instance role)", () => {

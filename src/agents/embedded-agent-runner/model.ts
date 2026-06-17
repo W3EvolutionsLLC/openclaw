@@ -9,9 +9,11 @@ import type { ModelRegistry as CoreModelRegistry } from "../../llm/model-registr
 import type { Api, Model } from "../../llm/types.js";
 import type { ProviderRuntimeModel } from "../../plugins/provider-runtime-model.types.js";
 import {
+  applyModelTransportRoute,
   applyProviderResolvedTransportWithPlugin,
   buildProviderUnknownModelHintWithPlugin,
   normalizeProviderTransportWithPlugin,
+  prepareModelTransportRoutes,
   prepareProviderDynamicModel,
   runProviderDynamicModel,
   normalizeProviderResolvedModelWithPlugin,
@@ -61,6 +63,7 @@ import {
 } from "./model.static-catalog.js";
 
 type ProviderRuntimeHooks = {
+  applyModelTransportRoute?: (params: Parameters<typeof applyModelTransportRoute>[0]) => unknown;
   applyProviderResolvedTransportWithPlugin?: (
     params: Parameters<typeof applyProviderResolvedTransportWithPlugin>[0],
   ) => unknown;
@@ -69,6 +72,9 @@ type ProviderRuntimeHooks = {
   ) => string | undefined;
   prepareProviderDynamicModel: (
     params: Parameters<typeof prepareProviderDynamicModel>[0],
+  ) => Promise<void>;
+  prepareModelTransportRoutes?: (
+    params: Parameters<typeof prepareModelTransportRoutes>[0],
   ) => Promise<void>;
   runProviderDynamicModel: (params: Parameters<typeof runProviderDynamicModel>[0]) => unknown;
   shouldPreferProviderRuntimeResolvedModel?: (
@@ -88,7 +94,9 @@ type StaticCatalogFallbackModel = Model & {
 };
 
 const TARGET_PROVIDER_RUNTIME_HOOKS: ProviderRuntimeHooks = {
+  applyModelTransportRoute,
   buildProviderUnknownModelHintWithPlugin,
+  prepareModelTransportRoutes,
   prepareProviderDynamicModel,
   runProviderDynamicModel,
   shouldPreferProviderRuntimeResolvedModel,
@@ -106,8 +114,10 @@ const DEFAULT_PROVIDER_RUNTIME_HOOKS: ProviderRuntimeHooks = {
 };
 
 const STATIC_PROVIDER_RUNTIME_HOOKS: ProviderRuntimeHooks = {
+  applyModelTransportRoute: () => undefined,
   applyProviderResolvedTransportWithPlugin: () => undefined,
   buildProviderUnknownModelHintWithPlugin: () => undefined,
+  prepareModelTransportRoutes: async () => {},
   prepareProviderDynamicModel: async () => {},
   runProviderDynamicModel: () => undefined,
   normalizeProviderResolvedModelWithPlugin: () => undefined,
@@ -313,6 +323,71 @@ function normalizeResolvedModel(params: {
       model: fallbackTransportNormalized ?? pluginNormalized ?? normalizedInputModel,
     }),
   });
+}
+
+function applyResolvedModelTransportRoute(params: {
+  provider: string;
+  modelId: string;
+  model: Model;
+  cfg?: OpenClawConfig;
+  agentDir?: string;
+  workspaceDir?: string;
+  authProfileId?: string;
+  preferredProfile?: string;
+  runtimeHooks: ProviderRuntimeHooks;
+}): Model {
+  const routed = params.runtimeHooks.applyModelTransportRoute?.({
+    config: params.cfg,
+    workspaceDir: params.workspaceDir,
+    context: {
+      config: params.cfg,
+      agentDir: params.agentDir,
+      workspaceDir: params.workspaceDir,
+      provider: params.provider,
+      modelId: params.modelId,
+      model: params.model as ProviderRuntimeModel,
+      authProfileId: params.authProfileId,
+      preferredProfile: params.preferredProfile,
+    },
+  });
+  if (!routed || typeof routed !== "object") {
+    return params.model;
+  }
+  const candidate = routed as Model;
+  return {
+    ...candidate,
+    provider: params.model.provider,
+    id: params.model.id,
+    name: params.model.name,
+  };
+}
+
+async function prepareAndApplyResolvedModelTransportRoute(params: {
+  provider: string;
+  modelId: string;
+  model: Model;
+  cfg?: OpenClawConfig;
+  agentDir?: string;
+  workspaceDir?: string;
+  authProfileId?: string;
+  preferredProfile?: string;
+  runtimeHooks: ProviderRuntimeHooks;
+}): Promise<Model> {
+  await params.runtimeHooks.prepareModelTransportRoutes?.({
+    config: params.cfg,
+    workspaceDir: params.workspaceDir,
+    context: {
+      config: params.cfg,
+      agentDir: params.agentDir,
+      workspaceDir: params.workspaceDir,
+      provider: params.provider,
+      modelId: params.modelId,
+      model: params.model as ProviderRuntimeModel,
+      authProfileId: params.authProfileId,
+      preferredProfile: params.preferredProfile,
+    },
+  });
+  return applyResolvedModelTransportRoute(params);
 }
 
 function resolveProviderTransport(params: {
@@ -1608,7 +1683,21 @@ export function resolveModel(
     runtimeHooks,
   });
   if (model) {
-    return { model, authStorage, modelRegistry };
+    return {
+      model: applyResolvedModelTransportRoute({
+        provider: normalizedRef.provider,
+        modelId: normalizedRef.model,
+        model,
+        cfg,
+        agentDir: resolvedAgentDir,
+        workspaceDir,
+        authProfileId: options?.authProfileId,
+        preferredProfile: options?.preferredProfile,
+        runtimeHooks,
+      }),
+      authStorage,
+      modelRegistry,
+    };
   }
 
   return {
@@ -1634,6 +1723,7 @@ export async function resolveModelAsync(
     authStorage?: AuthStorage;
     modelRegistry?: ModelRegistry;
     allowBundledStaticCatalogFallback?: boolean;
+    applyTransportRouting?: boolean;
     preferBundledStaticCatalogTransport?: boolean;
     retryTransientProviderRuntimeMiss?: boolean;
     runtimeHooks?: ProviderRuntimeHooks;
@@ -1693,7 +1783,24 @@ export async function resolveModelAsync(
       runtimeHooks,
     });
     if (suppressedRuntimeModel) {
-      return { model: suppressedRuntimeModel, authStorage, modelRegistry };
+      return {
+        model:
+          options?.applyTransportRouting === false
+            ? suppressedRuntimeModel
+            : await prepareAndApplyResolvedModelTransportRoute({
+                provider: normalizedRef.provider,
+                modelId: normalizedRef.model,
+                model: suppressedRuntimeModel,
+                cfg,
+                agentDir: resolvedAgentDir,
+                workspaceDir,
+                authProfileId: options?.authProfileId,
+                preferredProfile: options?.preferredProfile,
+                runtimeHooks,
+              }),
+        authStorage,
+        modelRegistry,
+      };
     }
     return {
       error: buildUnknownModelError({
@@ -1835,7 +1942,24 @@ export async function resolveModelAsync(
     }
   }
   if (model) {
-    return { model, authStorage, modelRegistry };
+    return {
+      model:
+        options?.applyTransportRouting === false
+          ? model
+          : await prepareAndApplyResolvedModelTransportRoute({
+              provider: normalizedRef.provider,
+              modelId: normalizedRef.model,
+              model,
+              cfg,
+              agentDir: resolvedAgentDir,
+              workspaceDir,
+              authProfileId: options?.authProfileId,
+              preferredProfile: options?.preferredProfile,
+              runtimeHooks,
+            }),
+      authStorage,
+      modelRegistry,
+    };
   }
 
   return {

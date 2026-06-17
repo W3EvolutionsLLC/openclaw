@@ -76,6 +76,7 @@ import type {
   ProviderNormalizeTransportContext,
   ProviderModernModelPolicyContext,
   ProviderPrepareDynamicModelContext,
+  ProviderRouteModelTransportContext,
   ProviderPreferRuntimeResolvedModelContext,
   ProviderPlugin,
   ProviderResolveExternalAuthProfilesContext,
@@ -172,6 +173,38 @@ export {
   wrapProviderSimpleCompletionStreamFn,
   wrapProviderStreamFn,
 };
+
+/**
+ * Warm generic late-bound model transport routes owned by enabled provider
+ * plugins. This deliberately does not use the selected model's provider
+ * owner: a credential gateway may route any canonical provider/model.
+ */
+export async function prepareModelTransportRoutes(params: {
+  config?: OpenClawConfig;
+  workspaceDir?: string;
+  env?: NodeJS.ProcessEnv;
+  context: ProviderRouteModelTransportContext;
+}): Promise<void> {
+  for (const plugin of resolveProviderPluginsForHooks(params)) {
+    await plugin.prepareModelTransportRoute?.(params.context);
+  }
+}
+
+/** Applies the first enabled generic model transport route that accepts the model. */
+export function applyModelTransportRoute(params: {
+  config?: OpenClawConfig;
+  workspaceDir?: string;
+  env?: NodeJS.ProcessEnv;
+  context: ProviderRouteModelTransportContext;
+}): ProviderRuntimeModel | undefined {
+  for (const plugin of resolveProviderPluginsForHooks(params)) {
+    const routed = plugin.routeModelTransport?.(params.context);
+    if (routed) {
+      return routed;
+    }
+  }
+  return undefined;
+}
 
 function resetExternalAuthFallbackWarningCacheForTest(): void {
   warnedExternalAuthFallbackPluginIds.clear();

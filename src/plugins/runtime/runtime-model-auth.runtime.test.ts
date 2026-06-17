@@ -106,6 +106,42 @@ describe("runtime-model-auth.runtime", () => {
     });
   });
 
+  it("prepares runtime auth with the dispatch credential owner", async () => {
+    hoisted.getApiKeyForModel.mockResolvedValue({
+      apiKey: "router-token",
+      source: "profile:clawrouter:work",
+      mode: "api-key",
+      profileId: "clawrouter:work",
+    });
+    hoisted.prepareProviderRuntimeAuth.mockResolvedValue(undefined);
+    const model = {
+      ...MODEL,
+      id: "claude-sonnet-4-6",
+      provider: "anthropic",
+      api: "anthropic-messages",
+      dispatch: {
+        authProvider: "clawrouter",
+        authHeader: "bearer",
+        forceOpenClawTransport: true,
+      },
+    };
+
+    await getRuntimeAuthForModel({
+      model: model as never,
+    });
+
+    expect(hoisted.prepareProviderRuntimeAuth).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "clawrouter",
+        context: expect.objectContaining({
+          provider: "clawrouter",
+          modelId: "claude-sonnet-4-6",
+          model,
+        }),
+      }),
+    );
+  });
+
   it("skips provider preparation when raw auth does not expose an apiKey", async () => {
     hoisted.getApiKeyForModel.mockResolvedValue({
       source: "env:AWS_PROFILE",

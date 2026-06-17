@@ -138,6 +138,36 @@ describe("prepareSimpleCompletionModel", () => {
     expect(hoisted.setRuntimeApiKeyMock).toHaveBeenCalledWith("anthropic", "sk-test");
   });
 
+  it("always resolves models asynchronously so transport routes can prepare", async () => {
+    const asyncResolver = vi.fn().mockResolvedValue({
+      model: {
+        provider: "anthropic",
+        id: "claude-opus-4-6",
+      },
+      authStorage: {
+        setRuntimeApiKey: hoisted.setRuntimeApiKeyMock,
+      },
+      modelRegistry: {},
+    });
+
+    const result = await prepareSimpleCompletionModel({
+      cfg: undefined,
+      provider: "anthropic",
+      modelId: "claude-opus-4-6",
+      modelResolver: asyncResolver,
+    });
+
+    expectPreparedModelResult(result);
+    expect(asyncResolver).toHaveBeenCalledWith(
+      "anthropic",
+      "claude-opus-4-6",
+      undefined,
+      undefined,
+      {},
+    );
+    expect(hoisted.resolveModelMock).not.toHaveBeenCalled();
+  });
+
   it("returns error when model resolution fails", async () => {
     hoisted.resolveModelMock.mockReturnValueOnce({
       error: "Unknown model: anthropic/missing-model",
@@ -437,6 +467,48 @@ describe("prepareSimpleCompletionModel", () => {
     expect(result.auth.apiKey).toBe("bedrock-runtime-token");
   });
 
+  it("uses the dispatch auth provider for runtime credentials", async () => {
+    hoisted.resolveModelAsyncMock.mockResolvedValueOnce({
+      model: {
+        provider: "anthropic",
+        id: "claude-opus-4-6",
+        dispatch: {
+          authProvider: "clawrouter",
+          authHeader: "bearer",
+          forceOpenClawTransport: true,
+        },
+      },
+      authStorage: {
+        setRuntimeApiKey: hoisted.setRuntimeApiKeyMock,
+      },
+      modelRegistry: {},
+    });
+    hoisted.getApiKeyForModelMock.mockResolvedValueOnce({
+      apiKey: "router-token",
+      source: "profile:clawrouter:work",
+      mode: "api-key",
+      profileId: "clawrouter:work",
+    });
+
+    const result = await prepareSimpleCompletionModel({
+      cfg: undefined,
+      provider: "anthropic",
+      modelId: "claude-opus-4-6",
+    });
+
+    expectPreparedModelResult(result);
+    expect(hoisted.prepareProviderRuntimeAuthMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "clawrouter",
+        context: expect.objectContaining({
+          provider: "clawrouter",
+          modelId: "claude-opus-4-6",
+        }),
+      }),
+    );
+    expect(hoisted.setRuntimeApiKeyMock).toHaveBeenCalledWith("clawrouter", "router-token");
+  });
+
   it("can skip agent model/auth discovery for config-scoped one-shot completions", async () => {
     hoisted.resolveModelAsyncMock.mockResolvedValueOnce({
       model: {
@@ -475,7 +547,7 @@ describe("prepareSimpleCompletionModel", () => {
     );
   });
 
-  it("can preserve asynchronous provider model discovery", async () => {
+  it("accepts the legacy async-resolution option without changing async routing", async () => {
     // Use a standalone mock so the default beforeEach delegation from
     // resolveModelAsyncMock → resolveModelMock does not pollute call
     // history. The point of the test is that when useAsyncModelResolution

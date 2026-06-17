@@ -775,7 +775,14 @@ function buildGoogleHeaders(
   apiKey: string | undefined,
   optionHeaders: Record<string, string> | undefined,
 ): Record<string, string> {
-  const authHeaders = apiKey ? parseGeminiAuth(apiKey).headers : undefined;
+  const hasBearerAuthorization = [model.headers, optionHeaders].some((headers) =>
+    Object.entries(headers ?? {}).some(
+      ([name, value]) =>
+        name.toLowerCase() === "authorization" && /^Bearer\s+\S+$/i.test(value.trim()),
+    ),
+  );
+  const authHeaders =
+    apiKey && !hasBearerAuthorization ? parseGeminiAuth(apiKey).headers : undefined;
   return (
     mergeTransportHeaders(
       {

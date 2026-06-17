@@ -553,6 +553,19 @@ export type ProviderNormalizeResolvedModelContext = {
 };
 
 /**
+ * Generic late-bound model transport routing.
+ *
+ * Unlike provider-owned normalization, this runs against every resolved
+ * canonical model. Credential/gateway plugins use it to replace only the
+ * dispatch transport while OpenClaw keeps the selected provider and model id
+ * for configuration, traces, and UI.
+ */
+export type ProviderRouteModelTransportContext = ProviderNormalizeResolvedModelContext & {
+  authProfileId?: string;
+  preferredProfile?: string;
+};
+
+/**
  * Provider-owned model-id normalization before config/runtime lookup.
  *
  * Use this for provider-specific alias cleanup that should stay with the
@@ -1344,6 +1357,22 @@ export type ProviderPlugin = {
    */
   normalizeResolvedModel?: (
     ctx: ProviderNormalizeResolvedModelContext,
+  ) => ProviderRuntimeModel | null | undefined;
+  /**
+   * Optional async cache warm-up for generic model transport routing.
+   *
+   * Use this for credential-scoped gateway discovery. It runs only during
+   * asynchronous model resolution and must not mutate the canonical model.
+   */
+  prepareModelTransportRoute?: (ctx: ProviderRouteModelTransportContext) => Promise<void>;
+  /**
+   * Optionally route a resolved canonical model through a different transport.
+   *
+   * Return a cloned model with dispatch metadata; retain the original
+   * `provider` and `id` so model selection and policy remain canonical.
+   */
+  routeModelTransport?: (
+    ctx: ProviderRouteModelTransportContext,
   ) => ProviderRuntimeModel | null | undefined;
   /**
    * Provider-owned model-id normalization.

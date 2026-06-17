@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createLlmStreamSimpleMock } from "../../../test/helpers/agents/llm-stream-simple-mock.js";
 import type { Model } from "../../llm/types.js";
 import {
+  applyExtraParamsToAgent,
   testing as extraParamsTesting,
   resolveAgentTransportOverride,
   resolveExplicitSettingsTransport,
@@ -93,6 +94,34 @@ describe("extra-params: provider runtime handoff", () => {
     // this wire-format distinction.
     expect(payload.think).toBe(false);
     expect((payload.options as Record<string, unknown>).think).toBeUndefined();
+  });
+
+  it("does not apply canonical provider wrappers to forced gateway transport", () => {
+    const wrapProviderStreamFn = vi.fn(({ context }) => context.streamFn);
+    extraParamsTesting.setProviderRuntimeDepsForTest({ wrapProviderStreamFn });
+    const model = {
+      api: "openai-completions",
+      provider: "local-provider",
+      id: "local-model:9b",
+      dispatch: {
+        authProvider: "clawrouter",
+        forceOpenClawTransport: true,
+      },
+    } as unknown as Model<"openai-completions">;
+
+    applyExtraParamsToAgent(
+      { streamFn: vi.fn() },
+      undefined,
+      model.provider,
+      model.id,
+      undefined,
+      "off",
+      undefined,
+      undefined,
+      model,
+    );
+
+    expect(wrapProviderStreamFn).not.toHaveBeenCalled();
   });
 
   it("does not apply the plugin wrapper for other providers", () => {

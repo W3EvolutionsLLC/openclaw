@@ -578,6 +578,22 @@ export interface VercelGatewayRouting {
   order?: string[];
 }
 
+/**
+ * Late-bound request routing applied after a canonical provider/model has been
+ * selected. This keeps user-facing model identity separate from the endpoint,
+ * credential owner, and upstream model used for dispatch.
+ */
+export type ModelDispatchRoute = {
+  /** Provider whose credential should authorize the dispatched request. */
+  authProvider?: Provider;
+  /** Upstream model id used only while constructing the outbound request. */
+  upstreamModel?: string;
+  /** Send the resolved credential as an HTTP Bearer token. */
+  authHeader?: "bearer";
+  /** Bypass provider-owned stream selection and use OpenClaw's HTTP transport. */
+  forceOpenClawTransport?: boolean;
+};
+
 // Model interface for the unified model system
 export interface Model<TApi extends Api = Api> {
   id: string;
@@ -611,6 +627,8 @@ export interface Model<TApi extends Api = Api> {
   headers?: Record<string, string>;
   /** Sends runtime credentials as Authorization: Bearer instead of provider-specific key headers. */
   authHeader?: boolean;
+  /** Late-bound request routing that preserves the selected provider/model identity. */
+  dispatch?: ModelDispatchRoute;
   /** Compatibility overrides for OpenAI-compatible APIs. If not set, auto-detected from baseUrl. */
   compat?: TApi extends "openai-completions"
     ? OpenAICompletionsCompat

@@ -102,6 +102,7 @@ import {
   resolveAuthProfileOrder,
   shouldPreferExplicitConfigApiKeyAuth,
 } from "../model-auth.js";
+import { resolveModelDispatchAuthProvider } from "../model-dispatch.js";
 import {
   buildModelAliasIndex,
   resolveDefaultModelForAgent,
@@ -942,6 +943,7 @@ async function runEmbeddedAgentInternal(
             // first generating OpenClaw models.json. This keeps one-shot model runs from
             // blocking on unrelated provider discovery.
             skipAgentDiscovery: true,
+            applyTransportRouting: !pluginHarnessOwnsTransport,
             allowBundledStaticCatalogFallback: pluginHarnessOwnsTransport,
             preferBundledStaticCatalogTransport: pluginHarnessOwnsTransport,
             workspaceDir: resolvedWorkspace,
@@ -969,6 +971,7 @@ async function runEmbeddedAgentInternal(
             agentDir,
             params.config,
             {
+              applyTransportRouting: !pluginHarnessOwnsTransport,
               workspaceDir: resolvedWorkspace,
               authProfileId: params.authProfileId,
             },
@@ -1017,6 +1020,7 @@ async function runEmbeddedAgentInternal(
       });
       const ctxInfo = resolvedRuntimeModel.ctxInfo;
       let effectiveModel = resolvedRuntimeModel.effectiveModel;
+      const authProvider = resolveModelDispatchAuthProvider(effectiveModel);
       startupStages.mark("model-resolution");
       notifyExecutionPhase("model_resolution", { provider, model: modelId });
 
@@ -1028,7 +1032,7 @@ async function runEmbeddedAgentInternal(
         !pluginHarnessOwnsTransport &&
         provider === OPENAI_PROVIDER_ID &&
         effectiveModel.api === "openai-chatgpt-responses";
-      let piExternalCliAuthScope = pluginHarnessOwnsTransport
+      let piExternalCliAuthScope = pluginHarnessOwnsTransport || authProvider !== provider
         ? { ignoreAutoPreferredProfile: false }
         : openClawNativeCodexResponsesNeedsAuthBootstrap
           ? {
@@ -1167,7 +1171,7 @@ async function runEmbeddedAgentInternal(
                 workspaceDir: resolvedWorkspace,
               })
             : undefined;
-          const runProvider = resolveProviderIdForAuth(provider, {
+          const runProvider = resolveProviderIdForAuth(authProvider, {
             config: params.config,
             workspaceDir: resolvedWorkspace,
           });
@@ -1186,27 +1190,29 @@ async function runEmbeddedAgentInternal(
         const eligibility = resolveAuthProfileEligibility({
           cfg: params.config,
           store: authStore,
-          provider,
+          provider: authProvider,
           profileId: lockedProfileId,
         });
         if (!eligibility.eligible) {
-          throw new Error(`Auth profile "${lockedProfileId}" is not configured for ${provider}.`);
+          throw new Error(
+            `Auth profile "${lockedProfileId}" is not configured for ${authProvider}.`,
+          );
         }
       }
-      const profileOrder = shouldPreferExplicitConfigApiKeyAuth(params.config, provider)
+      const profileOrder = shouldPreferExplicitConfigApiKeyAuth(params.config, authProvider)
         ? []
         : [
             ...new Set(
               listOpenAIAuthProfileProvidersForAgentRuntime({
-                provider,
+                provider: authProvider,
                 harnessRuntime: agentHarness.id,
                 agentHarnessId: agentHarness.id,
                 config: params.config,
-              }).flatMap((authProvider) =>
+              }).flatMap((profileProvider) =>
                 resolveAuthProfileOrder({
                   cfg: params.config,
                   store: authStore,
-                  provider: authProvider,
+                  provider: profileProvider,
                   preferredProfile: preferredProfileId,
                 }),
               ),
@@ -1215,14 +1221,14 @@ async function runEmbeddedAgentInternal(
       const providerPreferredProfileId = lockedProfileId
         ? undefined
         : resolveProviderAuthProfileId({
-            provider,
+            provider: authProvider,
             config: params.config,
             workspaceDir: resolvedWorkspace,
             context: {
               config: params.config,
               agentDir,
               workspaceDir: resolvedWorkspace,
-              provider,
+              provider: authProvider,
               modelId,
               preferredProfileId,
               lockedProfileId,
@@ -1296,6 +1302,41 @@ async function runEmbeddedAgentInternal(
       let lastProfileId: string | undefined;
       let runtimeAuthState: RuntimeAuthState | null = null;
       let runtimeAuthRefreshCancelled = false;
+      const refreshModelForAuthProfile = runtimeModel.dispatch
+        ? async (profileId?: string) => {
+            const refreshed = await resolveModelAsync(provider, modelId, agentDir, params.config, {
+              authStorage,
+              modelRegistry,
+              workspaceDir: resolvedWorkspace,
+              authProfileId: profileId,
+            });
+            if (!refreshed.model) {
+              throw new Error(
+                refreshed.error ?? `Unknown model: ${provider}/${modelId} for auth profile ${profileId}`,
+              );
+            }
+            runtimeModel = refreshed.model;
+            effectiveModel = resolveEffectiveRuntimeModel({
+              cfg: params.config,
+              provider,
+              contextConfigProvider: resolveContextConfigProviderForRuntime({
+                provider: modelConfigProvider,
+                runtimeId: agentHarness.id,
+                config: params.config,
+              }),
+              modelId,
+              runtimeModel,
+            }).effectiveModel;
+            if (
+              profileId?.split(":", 1)[0] === authProvider &&
+              resolveModelDispatchAuthProvider(runtimeModel) !== authProvider
+            ) {
+              throw new Error(
+                `Model ${provider}/${modelId} is not available for auth profile ${profileId}.`,
+              );
+            }
+          }
+        : undefined;
       const {
         advanceAuthProfile,
         initializeAuthProfile,
@@ -1313,7 +1354,7 @@ async function runEmbeddedAgentInternal(
         attemptedThinking,
         fallbackConfigured,
         allowTransientCooldownProbe: params.allowTransientCooldownProbe === true,
-        getProvider: () => provider,
+        getProvider: () => authProvider,
         getModelId: () => modelId,
         getRuntimeModel: () => runtimeModel,
         setRuntimeModel: (next) => {
@@ -1323,6 +1364,7 @@ async function runEmbeddedAgentInternal(
         setEffectiveModel: (next) => {
           effectiveModel = next;
         },
+        ...(refreshModelForAuthProfile ? { refreshModelForAuthProfile } : {}),
         getApiKeyInfo: () => apiKeyInfo,
         setApiKeyInfo: (next) => {
           apiKeyInfo = next;

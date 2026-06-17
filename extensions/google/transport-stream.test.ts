@@ -476,6 +476,37 @@ describe("google transport stream", () => {
     expect(result.content[2]).toHaveProperty("thoughtSignature", "Y2FsbF9zaWdfMQ==");
   });
 
+  it("keeps Google API-key auth when authHeader has no injected bearer token", async () => {
+    guardedFetchMock.mockResolvedValueOnce(
+      buildSseResponse([
+        {
+          candidates: [
+            {
+              content: { parts: [{ text: "answer" }] },
+              finishReason: "STOP",
+            },
+          ],
+        },
+      ]),
+    );
+    const streamFn = createGoogleGenerativeAiTransportStreamFn();
+    const stream = await Promise.resolve(
+      streamFn(
+        buildGeminiModel({ authHeader: true }),
+        {
+          messages: [{ role: "user", content: "hello", timestamp: 0 }],
+        } as Parameters<typeof streamFn>[1],
+        { apiKey: "gemini-api-key" } as Parameters<typeof streamFn>[2],
+      ),
+    );
+
+    await stream.result();
+
+    const guardedCall = requireMockCall(guardedFetchMock, 0, "guarded fetch");
+    const headers = new Headers(requireRequestInit(guardedCall, "guarded fetch").headers);
+    expect(headers.get("x-goog-api-key")).toBe("gemini-api-key");
+  });
+
   it("strips redundant google provider prefixes from Gemini API model paths", async () => {
     guardedFetchMock.mockResolvedValueOnce(buildSseResponse([]));
 

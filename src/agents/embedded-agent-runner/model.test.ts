@@ -278,6 +278,63 @@ function mockCallArg(mock: ReturnType<typeof vi.fn>, callIndex = 0): Record<stri
 }
 
 describe("resolveModel", () => {
+  it("applies a prepared gateway transport route without changing canonical identity", async () => {
+    mockDiscoveredModel(discoverModels, {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-6",
+      templateModel: {
+        provider: "anthropic",
+        api: "anthropic-messages",
+        baseUrl: "https://api.anthropic.com",
+        ...makeModel("claude-sonnet-4-6"),
+      },
+    });
+    const prepareModelTransportRoutes = vi.fn(async () => {});
+    const applyModelTransportRoute = vi.fn(({ context }) => ({
+      ...context.model,
+      api: "openai-responses",
+      baseUrl: "https://router.example/v1",
+      dispatch: {
+        authProvider: "clawrouter",
+        forceOpenClawTransport: true,
+      },
+    }));
+    const runtimeHooks = {
+      ...createRuntimeHooks(),
+      prepareModelTransportRoutes,
+      applyModelTransportRoute,
+    };
+
+    const result = await resolveModelAsync("anthropic", "claude-sonnet-4-6", "/tmp/agent", undefined, {
+      authStorage: { mocked: true } as never,
+      modelRegistry: discoverModels({ mocked: true } as never, "/tmp/agent"),
+      authProfileId: "clawrouter:maintainer",
+      runtimeHooks,
+    });
+    const model = expectResolvedModel(result);
+
+    expect(prepareModelTransportRoutes).toHaveBeenCalledWith(
+      expect.objectContaining({
+        context: expect.objectContaining({
+          provider: "anthropic",
+          modelId: "claude-sonnet-4-6",
+          authProfileId: "clawrouter:maintainer",
+        }),
+      }),
+    );
+    expect(applyModelTransportRoute).toHaveBeenCalledOnce();
+    expect(model).toMatchObject({
+      provider: "anthropic",
+      id: "claude-sonnet-4-6",
+      api: "openai-responses",
+      baseUrl: "https://router.example/v1",
+      dispatch: {
+        authProvider: "clawrouter",
+        forceOpenClawTransport: true,
+      },
+    });
+  });
+
   it("reuses agent discovery stores while the agent model files are unchanged", async () => {
     mockDiscoveredModel(discoverModels, {
       provider: "openai",

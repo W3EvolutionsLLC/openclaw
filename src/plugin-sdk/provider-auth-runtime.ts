@@ -4,6 +4,7 @@ import fs from "node:fs";
 import { createServer } from "node:http";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { resolveAuthProfileOrder } from "../agents/auth-profiles/order.js";
 import { ensureAuthProfileStore } from "../agents/auth-profiles/store.js";
 import { resolveApiKeyForProvider as resolveModelApiKeyForProvider } from "../agents/model-auth.js";
 import { normalizeProviderId } from "../agents/model-selection.js";
@@ -66,6 +67,27 @@ export function resolveProviderAuthProfileMetadata(params: {
     profileId,
     ...(profile.type === "oauth" && profile.accountId ? { accountId: profile.accountId } : {}),
   };
+}
+
+/**
+ * Resolves usable provider profile ids in the same order as runtime auth failover.
+ */
+export function resolveProviderAuthProfileOrder(params: {
+  provider: string;
+  cfg?: OpenClawConfig;
+  preferredProfile?: string;
+  agentDir?: string;
+}): string[] {
+  const store = ensureAuthProfileStore(params.agentDir, {
+    config: params.cfg,
+    readOnly: true,
+  });
+  return resolveAuthProfileOrder({
+    cfg: params.cfg,
+    store,
+    provider: params.provider,
+    preferredProfile: params.preferredProfile,
+  });
 }
 
 // IdP-host allowlist for CORS echo on the loopback OAuth callback. Plugins

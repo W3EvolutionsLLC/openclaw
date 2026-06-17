@@ -34,6 +34,7 @@ import {
   wrapProviderStreamFn as wrapProviderStreamFnRuntime,
 } from "../../plugins/provider-hook-runtime.js";
 import type { ProviderRuntimeModel } from "../../plugins/provider-runtime-model.types.js";
+import { hasForcedOpenClawTransport } from "../model-dispatch.js";
 import { canonicalizeMaxTokensParam, resolveMaxTokensParam } from "../model-max-tokens-params.js";
 import { legacyModelKey, modelKey } from "../model-selection-normalize.js";
 import { supportsGptParallelToolCallsPayload } from "../provider-api-families.js";
@@ -1105,23 +1106,26 @@ export function applyExtraParamsToAgent(
         ...options.nativeWebSearchPolicyContext,
       })
     : undefined;
-  const pluginWrappedStreamFn = providerRuntimeDeps.wrapProviderStreamFn({
-    provider,
-    config: cfg,
-    context: {
-      config: cfg,
-      agentDir,
-      workspaceDir,
-      agentId,
-      nativeWebSearchAllowedByToolPolicy,
-      provider,
-      modelId,
-      extraParams: effectiveExtraParams,
-      thinkingLevel,
-      model,
-      streamFn: providerStreamBase,
-    },
-  });
+  const pluginWrappedStreamFn =
+    model && hasForcedOpenClawTransport(model)
+      ? undefined
+      : providerRuntimeDeps.wrapProviderStreamFn({
+          provider,
+          config: cfg,
+          context: {
+            config: cfg,
+            agentDir,
+            workspaceDir,
+            agentId,
+            nativeWebSearchAllowedByToolPolicy,
+            provider,
+            modelId,
+            extraParams: effectiveExtraParams,
+            thinkingLevel,
+            model,
+            streamFn: providerStreamBase,
+          },
+        });
   agent.streamFn = pluginWrappedStreamFn ?? providerStreamBase;
   // Apply caller/config extra params outside provider defaults so explicit runtime
   // transport values can override provider-added defaults.

@@ -7,7 +7,11 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { Api, Model } from "../llm/types.js";
 import { resolveProviderStreamFn } from "../plugins/provider-runtime.js";
 import { ensureCustomApiRegistered } from "./custom-api-registry.js";
-import { createTransportAwareStreamFnForModel } from "./provider-transport-stream.js";
+import { hasForcedOpenClawTransport } from "./model-dispatch.js";
+import {
+  createDispatchRoutedStreamFnForModel,
+  createTransportAwareStreamFnForModel,
+} from "./provider-transport-stream.js";
 import type { StreamFn } from "./runtime/index.js";
 
 /** Resolves and registers the stream function for a provider-backed model. */
@@ -20,6 +24,14 @@ export function registerProviderStreamForModel<TApi extends Api>(params: {
   allowRuntimePluginLoad?: boolean;
 }): StreamFn | undefined {
   const streamFn =
+    (hasForcedOpenClawTransport(params.model)
+      ? createDispatchRoutedStreamFnForModel(params.model, {
+          cfg: params.cfg,
+          agentDir: params.agentDir,
+          workspaceDir: params.workspaceDir,
+          env: params.env,
+        })
+      : undefined) ??
     resolveProviderStreamFn({
       provider: params.model.provider,
       config: params.cfg,

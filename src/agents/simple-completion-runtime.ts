@@ -15,7 +15,7 @@ import type {
 import { prepareProviderRuntimeAuth } from "../plugins/provider-runtime.runtime.js";
 import { resolveAgentDir, resolveAgentEffectiveModelPrimary } from "./agent-scope.js";
 import { DEFAULT_PROVIDER } from "./defaults.js";
-import { resolveModel, resolveModelAsync } from "./embedded-agent-runner/model.js";
+import { resolveModelAsync } from "./embedded-agent-runner/model.js";
 import { resolveAgentHarnessPolicy } from "./harness/policy.js";
 import {
   applyLocalNoAuthHeaderOverride,
@@ -23,6 +23,7 @@ import {
   getApiKeyForModel,
   type ResolvedProviderAuth,
 } from "./model-auth.js";
+import { resolveModelDispatchAuthProvider } from "./model-dispatch.js";
 import { splitTrailingAuthProfile } from "./model-ref-profile.js";
 import {
   buildModelAliasIndex,
@@ -151,7 +152,8 @@ async function setRuntimeApiKeyForCompletion(params: {
   workspaceDir?: string;
   profileId?: string;
 }): Promise<CompletionRuntimeCredential> {
-  if (params.model.provider === "github-copilot") {
+  const authProvider = resolveModelDispatchAuthProvider(params.model);
+  if (authProvider === "github-copilot" && params.model.provider === "github-copilot") {
     const { resolveCopilotApiToken } = await import("./github-copilot-token.js");
     const copilotToken = await resolveCopilotApiToken({
       githubToken: params.apiKey,
@@ -163,7 +165,7 @@ async function setRuntimeApiKeyForCompletion(params: {
     };
   }
   const preparedAuth = await prepareProviderRuntimeAuth({
-    provider: params.model.provider,
+    provider: authProvider,
     config: params.cfg,
     workspaceDir: params.workspaceDir,
     env: process.env,
@@ -171,7 +173,7 @@ async function setRuntimeApiKeyForCompletion(params: {
       config: params.cfg,
       workspaceDir: params.workspaceDir,
       env: process.env,
-      provider: params.model.provider,
+      provider: authProvider,
       modelId: params.model.id,
       model: params.model,
       apiKey: params.apiKey,
@@ -180,7 +182,7 @@ async function setRuntimeApiKeyForCompletion(params: {
     },
   });
   const runtimeApiKey = preparedAuth?.apiKey?.trim() || params.apiKey;
-  params.authStorage.setRuntimeApiKey(params.model.provider, runtimeApiKey);
+  params.authStorage.setRuntimeApiKey(authProvider, runtimeApiKey);
   return {
     apiKey: runtimeApiKey,
     model: applyPreparedRuntimeAuthToModel(params.model, preparedAuth),
@@ -203,30 +205,25 @@ export async function prepareSimpleCompletionModel(params: {
   preferredProfile?: string;
   allowMissingApiKeyModes?: ReadonlyArray<AllowedMissingApiKeyMode>;
   allowBundledStaticCatalogFallback?: boolean;
+  /** @deprecated Model resolution is asynchronous so gateway route hooks can prepare requests. */
   useAsyncModelResolution?: boolean;
   skipAgentDiscovery?: boolean;
   modelResolver?: typeof resolveModelAsync;
 }): Promise<PreparedSimpleCompletionModel> {
-  const resolved =
-    params.useAsyncModelResolution || params.skipAgentDiscovery
-      ? await (params.modelResolver ?? resolveModelAsync)(
-          params.provider,
-          params.modelId,
-          params.agentDir,
-          params.cfg,
-          {
-            ...(params.allowBundledStaticCatalogFallback !== undefined
-              ? { allowBundledStaticCatalogFallback: params.allowBundledStaticCatalogFallback }
-              : {}),
-            ...(params.skipAgentDiscovery ? { skipAgentDiscovery: true } : {}),
-            authProfileId: params.profileId,
-            preferredProfile: params.preferredProfile,
-          },
-        )
-      : resolveModel(params.provider, params.modelId, params.agentDir, params.cfg, {
-          authProfileId: params.profileId,
-          preferredProfile: params.preferredProfile,
-        });
+  const resolved = await (params.modelResolver ?? resolveModelAsync)(
+    params.provider,
+    params.modelId,
+    params.agentDir,
+    params.cfg,
+    {
+      ...(params.allowBundledStaticCatalogFallback !== undefined
+        ? { allowBundledStaticCatalogFallback: params.allowBundledStaticCatalogFallback }
+        : {}),
+      ...(params.skipAgentDiscovery ? { skipAgentDiscovery: true } : {}),
+      authProfileId: params.profileId,
+      preferredProfile: params.preferredProfile,
+    },
+  );
   if (!resolved.model) {
     return {
       error: resolved.error ?? `Unknown model: ${params.provider}/${params.modelId}`,
@@ -256,7 +253,7 @@ export async function prepareSimpleCompletionModel(params: {
     })
   ) {
     return {
-      error: formatMissingAuthError(auth, resolved.model.provider),
+      error: formatMissingAuthError(auth, resolveModelDispatchAuthProvider(resolved.model)),
       auth,
     };
   }
@@ -295,6 +292,7 @@ export async function prepareSimpleCompletionModelForAgent(params: {
   preferredProfile?: string;
   allowMissingApiKeyModes?: ReadonlyArray<AllowedMissingApiKeyMode>;
   allowBundledStaticCatalogFallback?: boolean;
+  /** @deprecated Model resolution is asynchronous so gateway route hooks can prepare requests. */
   useAsyncModelResolution?: boolean;
   skipAgentDiscovery?: boolean;
   modelResolver?: typeof resolveModelAsync;

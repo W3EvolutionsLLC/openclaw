@@ -11,6 +11,7 @@ const ensureCustomApiRegistered = vi.fn();
 const resolveProviderStreamFn = vi.fn();
 const wrapProviderSimpleCompletionStreamFn = vi.fn();
 const buildTransportAwareSimpleStreamFn = vi.fn();
+const createDispatchRoutedStreamFnForModel = vi.fn();
 const createOpenClawTransportStreamFnForModel = vi.fn();
 const createTransportAwareStreamFnForModel = vi.fn();
 const prepareTransportAwareSimpleModel = vi.fn();
@@ -31,6 +32,7 @@ vi.mock("./google-simple-completion-stream.js", () => ({
 
 vi.mock("./provider-transport-stream.js", () => ({
   buildTransportAwareSimpleStreamFn,
+  createDispatchRoutedStreamFnForModel,
   createOpenClawTransportStreamFnForModel,
   createTransportAwareStreamFnForModel,
   prepareTransportAwareSimpleModel,
@@ -64,6 +66,7 @@ describe("prepareModelForSimpleCompletion", () => {
     resolveProviderStreamFn.mockReset();
     wrapProviderSimpleCompletionStreamFn.mockReset();
     buildTransportAwareSimpleStreamFn.mockReset();
+    createDispatchRoutedStreamFnForModel.mockReset();
     createOpenClawTransportStreamFnForModel.mockReset();
     createTransportAwareStreamFnForModel.mockReset();
     prepareTransportAwareSimpleModel.mockReset();
@@ -73,6 +76,7 @@ describe("prepareModelForSimpleCompletion", () => {
     resolveProviderStreamFn.mockReturnValue("ollama-stream");
     wrapProviderSimpleCompletionStreamFn.mockReturnValue(undefined);
     buildTransportAwareSimpleStreamFn.mockReturnValue(undefined);
+    createDispatchRoutedStreamFnForModel.mockReturnValue(undefined);
     createOpenClawTransportStreamFnForModel.mockReturnValue(undefined);
     createTransportAwareStreamFnForModel.mockReturnValue(undefined);
     prepareTransportAwareSimpleModel.mockImplementation((model) => model);
@@ -139,6 +143,42 @@ describe("prepareModelForSimpleCompletion", () => {
     expect(stream).toBe(sourceResult);
     expect(stream).not.toBeInstanceOf(Promise);
     expect(capturedApi).toBe(sourceApi);
+  });
+
+  it("forces dispatch-routed models through a custom OpenClaw transport alias", () => {
+    const model: Model<"anthropic-messages"> = {
+      id: "claude-sonnet-4-6",
+      name: "Claude Sonnet 4.6",
+      api: "anthropic-messages",
+      provider: "anthropic",
+      baseUrl: "https://router.example/v1/native/anthropic",
+      reasoning: true,
+      input: ["text"],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 200_000,
+      maxTokens: 32_768,
+      dispatch: {
+        authProvider: "clawrouter",
+        authHeader: "bearer",
+        forceOpenClawTransport: true,
+        upstreamModel: "claude-sonnet-4-6-20260217",
+      },
+    };
+    createDispatchRoutedStreamFnForModel.mockReturnValueOnce("dispatch-stream");
+
+    const result = prepareModelForSimpleCompletion({ model });
+
+    expect(createDispatchRoutedStreamFnForModel).toHaveBeenCalledWith(model, { cfg: undefined });
+    expect(resolveProviderStreamFn).not.toHaveBeenCalled();
+    expect(wrapProviderSimpleCompletionStreamFn).not.toHaveBeenCalled();
+    expect(ensureCustomApiRegistered).toHaveBeenCalledWith(
+      "openclaw-provider-simple:anthropic:claude-sonnet-4-6:anthropic-messages:https%3A%2F%2Frouter.example%2Fv1%2Fnative%2Fanthropic",
+      "dispatch-stream",
+    );
+    expect(result).toEqual({
+      ...model,
+      api: "openclaw-provider-simple:anthropic:claude-sonnet-4-6:anthropic-messages:https%3A%2F%2Frouter.example%2Fv1%2Fnative%2Fanthropic",
+    });
   });
 
   it("registers the configured Ollama transport and keeps the original api", () => {

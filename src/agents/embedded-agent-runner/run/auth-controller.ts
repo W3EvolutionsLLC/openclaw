@@ -24,6 +24,7 @@ import {
   MissingProviderAuthError,
   type ResolvedProviderAuth,
 } from "../../model-auth.js";
+import { resolveModelDispatchAuthProvider } from "../../model-dispatch.js";
 import {
   applyPreparedRuntimeAuthToModel,
   type ModelProviderRequestTransportOverrides,
@@ -72,6 +73,7 @@ export function createEmbeddedRunAuthController(params: {
   setRuntimeModel(next: Model): void;
   getEffectiveModel(): Model;
   setEffectiveModel(next: Model): void;
+  refreshModelForAuthProfile?(profileId?: string): Promise<void>;
   getApiKeyInfo(): ApiKeyInfo | null;
   setApiKeyInfo(next: ApiKeyInfo | null): void;
   getLastProfileId(): string | undefined;
@@ -119,7 +121,7 @@ export function createEmbeddedRunAuthController(params: {
     profileId?: string;
   }) =>
     prepareProviderRuntimeAuth({
-      provider: prepareParams.runtimeModel.provider,
+      provider: resolveModelDispatchAuthProvider(prepareParams.runtimeModel),
       config: params.config,
       workspaceDir: params.workspaceDir,
       env: process.env,
@@ -128,7 +130,7 @@ export function createEmbeddedRunAuthController(params: {
         agentDir: params.agentDir,
         workspaceDir: params.workspaceDir,
         env: process.env,
-        provider: prepareParams.runtimeModel.provider,
+        provider: resolveModelDispatchAuthProvider(prepareParams.runtimeModel),
         modelId: params.getModelId(),
         model: prepareParams.runtimeModel,
         apiKey: prepareParams.apiKey,
@@ -198,7 +200,10 @@ export function createEmbeddedRunAuthController(params: {
         );
         return;
       }
-      params.authStorage.setRuntimeApiKey(runtimeModel.provider, preparedAuth.apiKey);
+      params.authStorage.setRuntimeApiKey(
+        resolveModelDispatchAuthProvider(runtimeModel),
+        preparedAuth.apiKey,
+      );
       applyPreparedRuntimeRequestOverrides({ runtimeModel, preparedAuth });
       params.setRuntimeAuthState({
         ...activeRuntimeAuthState,
@@ -377,13 +382,14 @@ export function createEmbeddedRunAuthController(params: {
   };
 
   const applyApiKeyInfo = async (candidate?: string): Promise<void> => {
+    await params.refreshModelForAuthProfile?.(candidate);
     const apiKeyInfo = await resolveApiKeyForCandidate(candidate);
     params.setApiKeyInfo(apiKeyInfo);
     const resolvedProfileId = apiKeyInfo.profileId ?? candidate;
     if (!apiKeyInfo.apiKey) {
       if (apiKeyInfo.mode !== "aws-sdk") {
         const runtimeModel = params.getRuntimeModel();
-        throw new MissingProviderAuthError(runtimeModel.provider, apiKeyInfo);
+        throw new MissingProviderAuthError(resolveModelDispatchAuthProvider(runtimeModel), apiKeyInfo);
       }
       // AWS SDK auth via IMDS / instance role / ECS task role: no explicit API
       // key is available but the SDK default credential chain can resolve
@@ -404,7 +410,10 @@ export function createEmbeddedRunAuthController(params: {
         applyPreparedRuntimeRequestOverrides({ runtimeModel, preparedAuth: preparedAuth ?? {} });
         if (preparedAuth?.apiKey) {
           clearRuntimeAuthRefreshTimer();
-          params.authStorage.setRuntimeApiKey(runtimeModel.provider, preparedAuth.apiKey);
+          params.authStorage.setRuntimeApiKey(
+            resolveModelDispatchAuthProvider(runtimeModel),
+            preparedAuth.apiKey,
+          );
           params.setRuntimeAuthState({
             generation: nextRuntimeAuthGeneration(),
             sourceApiKey: AWS_SDK_AUTH_SENTINEL,
@@ -427,7 +436,10 @@ export function createEmbeddedRunAuthController(params: {
       // sentinel so OpenClaw runtime's hasConfiguredAuth() passes and the AWS SDK default
       // credential chain handles actual request signing.
       clearRuntimeAuthRefreshTimer();
-      params.authStorage.setRuntimeApiKey(runtimeModel.provider, AWS_SDK_AUTH_SENTINEL);
+      params.authStorage.setRuntimeApiKey(
+        resolveModelDispatchAuthProvider(runtimeModel),
+        AWS_SDK_AUTH_SENTINEL,
+      );
       params.setRuntimeAuthState(null);
       params.setLastProfileId(resolvedProfileId);
       return;
@@ -443,7 +455,10 @@ export function createEmbeddedRunAuthController(params: {
     applyPreparedRuntimeRequestOverrides({ runtimeModel, preparedAuth: preparedAuth ?? {} });
     if (preparedAuth?.apiKey) {
       clearRuntimeAuthRefreshTimer();
-      params.authStorage.setRuntimeApiKey(runtimeModel.provider, preparedAuth.apiKey);
+      params.authStorage.setRuntimeApiKey(
+        resolveModelDispatchAuthProvider(runtimeModel),
+        preparedAuth.apiKey,
+      );
       params.setRuntimeAuthState({
         generation: nextRuntimeAuthGeneration(),
         sourceApiKey: apiKeyInfo.apiKey,
@@ -458,7 +473,10 @@ export function createEmbeddedRunAuthController(params: {
     }
     if (!runtimeAuthHandled) {
       clearRuntimeAuthRefreshTimer();
-      params.authStorage.setRuntimeApiKey(runtimeModel.provider, apiKeyInfo.apiKey);
+      params.authStorage.setRuntimeApiKey(
+        resolveModelDispatchAuthProvider(runtimeModel),
+        apiKeyInfo.apiKey,
+      );
       params.setRuntimeAuthState(null);
     }
     params.setLastProfileId(apiKeyInfo.profileId);

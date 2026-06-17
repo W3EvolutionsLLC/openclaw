@@ -266,6 +266,55 @@ describe("anthropic transport stream", () => {
     expect(headers.get("X-Provider")).toBe("foundry");
   });
 
+  it("uses bearer auth for Microsoft Foundry static bearer headers", async () => {
+    const model = makeAnthropicTransportModel({
+      provider: "microsoft-foundry",
+      baseUrl: "https://example.services.ai.azure.com/anthropic",
+      headers: {
+        Authorization: "Bearer stale-foundry-token",
+        "x-api-key": "stale-resource-key",
+      },
+    });
+
+    await runTransportStream(
+      model,
+      {
+        messages: [{ role: "user", content: "hello" }],
+      } as AnthropicStreamContext,
+      {
+        apiKey: "entra-access-token",
+      } as AnthropicStreamOptions,
+    );
+
+    const headers = latestAnthropicRequestHeaders();
+    expect(headers.get("authorization")).toBe("Bearer entra-access-token");
+    expect(headers.get("x-api-key")).toBeNull();
+  });
+
+  it("preserves static bearer proxy headers alongside Anthropic API-key auth", async () => {
+    const model = makeAnthropicTransportModel({
+      provider: "custom-anthropic-proxy",
+      baseUrl: "https://anthropic-proxy.example/v1",
+      headers: {
+        Authorization: "Bearer proxy-token",
+      },
+    });
+
+    await runTransportStream(
+      model,
+      {
+        messages: [{ role: "user", content: "hello" }],
+      } as AnthropicStreamContext,
+      {
+        apiKey: "sk-ant-api",
+      } as AnthropicStreamOptions,
+    );
+
+    const headers = latestAnthropicRequestHeaders();
+    expect(headers.get("authorization")).toBe("Bearer proxy-token");
+    expect(headers.get("x-api-key")).toBe("sk-ant-api");
+  });
+
   it("honors ANTHROPIC_BASE_URL when model base URL is blank", async () => {
     vi.stubEnv("ANTHROPIC_BASE_URL", " https://anthropic-proxy.example/v1 ");
 

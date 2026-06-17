@@ -1780,6 +1780,23 @@ describe("compactEmbeddedAgentSession hooks (ownsCompaction engine)", () => {
     });
   });
 
+  it("resolves compaction transport with the selected auth profile", async () => {
+    const result = await compactEmbeddedAgentSessionDirect(
+      wrappedCompactionArgs({
+        workspaceDir: "/tmp/compaction-workspace",
+        provider: "anthropic",
+        model: "claude-sonnet-4-6",
+        authProfileId: "clawrouter:maintainer",
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    expectRecordFields(mockCallArg(resolveModelMock, 0, 4), {
+      workspaceDir: "/tmp/compaction-workspace",
+      authProfileId: "clawrouter:maintainer",
+    });
+  });
+
   it("clamps caller context token budget before queued engine-owned compaction", async () => {
     resolveContextWindowInfoMock.mockReturnValueOnce({ tokens: 32_000 });
 
