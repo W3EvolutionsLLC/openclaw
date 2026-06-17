@@ -2626,9 +2626,7 @@ describe("dispatchPreparedSlackMessage preview fallback", () => {
       expect.stringMatching(/^command_call_1_[a-f0-9]{8}$/),
     ]);
     expect(taskUpdates.at(0)?.id).toEqual(expect.stringMatching(/^command_call_1_[a-f0-9]{8}$/));
-    expect(taskUpdates).toContainEqual(
-      taskUpdate(taskUpdates.at(0)?.id, "bash — completed", "complete"),
-    );
+    expect(taskUpdates).toContainEqual(taskUpdate(taskUpdates.at(0)?.id, "completed", "complete"));
     expect(deliverRepliesMock).toHaveBeenCalledTimes(1);
     expectDeliverReplyCall(0, FINAL_REPLY_TEXT);
   });
