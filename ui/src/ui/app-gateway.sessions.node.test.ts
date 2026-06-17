@@ -142,7 +142,7 @@ function createHost() {
     lastErrorCode: null,
     eventLogBuffer: [],
     eventLog: [],
-    tab: "overview",
+    routeId: "overview",
     presenceEntries: [],
     presenceError: null,
     presenceStatus: null,
@@ -449,7 +449,7 @@ describe("handleGatewayEvent sessions.changed", () => {
       payload: { sessionKey: "agent:main:main", reason: "cleanup" },
       seq: 1,
     });
-    host.tab = "chat";
+    host.routeId = "chat";
     vi.advanceTimersByTime(5_000);
 
     expect(loadSessionsMock).not.toHaveBeenCalled();

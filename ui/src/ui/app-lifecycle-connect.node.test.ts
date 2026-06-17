@@ -28,7 +28,7 @@ vi.mock("./app-settings.ts", () => ({
   attachThemeListener: vi.fn(),
   detachThemeListener: vi.fn(),
   inferBasePath: vi.fn(() => "/"),
-  syncTabWithLocation: vi.fn(),
+  syncRouteWithLocation: vi.fn(),
   syncThemeWithSettings: vi.fn(),
 }));
 
@@ -71,7 +71,7 @@ function createHost() {
     client: null,
     connectGeneration: 0,
     connected: false,
-    tab: "chat",
+    routeId: "chat",
     assistantName: "OpenClaw",
     assistantAvatar: null,
     assistantAgentId: null,
@@ -206,7 +206,7 @@ describe("handleConnected", () => {
     expect(startNodesPollingMock).not.toHaveBeenCalled();
 
     const nodesHost = createHost();
-    nodesHost.tab = "nodes";
+    nodesHost.routeId = "nodes";
     handleConnected(nodesHost as never);
     expect(startNodesPollingMock).toHaveBeenCalledWith(nodesHost);
   });

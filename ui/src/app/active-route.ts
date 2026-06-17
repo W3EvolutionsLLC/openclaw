@@ -1,6 +1,6 @@
 // Control UI active route lifecycle and refresh orchestration.
 import { t } from "../i18n/index.ts";
-import type { Tab } from "../routes/route-registry.ts";
+import type { RouteId } from "../routes/route-registry.ts";
 import { refreshChat } from "../ui/app-chat.ts";
 import {
   startDebugPolling,
@@ -17,7 +17,7 @@ import {
   finishControlUiRefresh,
   recordControlUiPerformanceEvent,
   roundedControlUiDurationMs,
-  scheduleControlUiTabVisibleTiming,
+  scheduleControlUiRouteVisibleTiming,
 } from "../ui/control-ui-performance.ts";
 import { loadAgentFiles } from "../ui/controllers/agent-files.ts";
 import { loadAgentIdentities, loadAgentIdentity } from "../ui/controllers/agent-identity.ts";
@@ -55,9 +55,13 @@ import { resetChatViewState } from "../ui/views/chat.ts";
 import type { SettingsAppHost, SettingsHost } from "./app-host.ts";
 import { hasOperatorReadAccess, hasOperatorWriteAccess } from "./operator-access.ts";
 
-export function applyActiveRouteTransition(host: SettingsHost, previous: Tab, next: Tab): void {
+export function applyActiveRouteTransition(
+  host: SettingsHost,
+  previous: RouteId,
+  next: RouteId,
+): void {
   if (previous !== next) {
-    scheduleControlUiTabVisibleTiming(host, previous, next);
+    scheduleControlUiRouteVisibleTiming(host, previous, next);
     clearPendingSessionsChangedReload(host);
   }
 
@@ -90,16 +94,16 @@ export async function refreshActiveRoute(
   opts?: { chatStartup?: boolean },
 ): Promise<void> {
   const app = host as unknown as SettingsAppHost;
-  const refreshRun = beginControlUiRefresh(host, host.tab);
+  const refreshRun = beginControlUiRefresh(host, host.routeId);
   try {
-    switch (host.tab) {
+    switch (host.routeId) {
       case "config":
       case "communications":
       case "appearance":
       case "automation":
       case "mcp":
       case "infrastructure":
-      case "aiAgents":
+      case "ai-agents":
         {
           const primaryRefresh = loadConfig(app);
           loadConfigSchemaAfterPrimary(host, app, primaryRefresh);
@@ -145,7 +149,7 @@ export async function refreshActiveRoute(
         reconcileSkillsAgentId(app, app.agentsList);
         await loadSkills(app);
         break;
-      case "skillWorkshop":
+      case "skill-workshop":
         await loadSkillWorkshopProposals(app, { force: true });
         break;
       case "agents":
@@ -202,7 +206,7 @@ export async function loadOverview(host: SettingsHost, opts?: { refresh?: boolea
   const overviewSeq = (host.controlUiOverviewRefreshSeq ?? 0) + 1;
   host.controlUiOverviewRefreshSeq = overviewSeq;
   const isCurrentOverviewRefresh = () =>
-    host.controlUiOverviewRefreshSeq === overviewSeq && host.tab === "overview";
+    host.controlUiOverviewRefreshSeq === overviewSeq && host.routeId === "overview";
 
   await Promise.allSettled([
     loadChannels(app, false),
@@ -247,8 +251,8 @@ export async function loadCron(host: SettingsHost) {
   const cronSeq = (host.controlUiCronRefreshSeq ?? 0) + 1;
   host.controlUiCronRefreshSeq = cronSeq;
   const isCurrentCronRefresh = () =>
-    host.controlUiCronRefreshSeq === cronSeq && host.tab === "cron";
-  const useTableFilters = host.tab === "cron";
+    host.controlUiCronRefreshSeq === cronSeq && host.routeId === "cron";
+  const useTableFilters = host.routeId === "cron";
   const runsStartedAtMs = controlUiNowMs();
   const runsRefresh = loadCronRuns(app, activeCronJobId)
     .catch(() => "error" as const)

@@ -138,12 +138,12 @@ vi.mock("../ui/controllers/workboard.ts", () => ({
   stopWorkboardPolling: mocks.stopWorkboardPollingMock,
 }));
 
-import { setTab } from "../ui/app-settings.ts";
+import { setRoute } from "../ui/app-settings.ts";
 import { refreshActiveRoute } from "./active-route.ts";
 
 function createHost() {
   return {
-    tab: "agents",
+    routeId: "agents",
     connected: true,
     client: {},
     agentsPanel: "overview",
@@ -232,7 +232,7 @@ describe("refreshActiveRoute", () => {
 
   it("syncs selected agent before refreshing the Dreams tab", async () => {
     const host = createHost();
-    host.tab = "dreams";
+    host.routeId = "dreams";
     host.sessionKey = "agent:research:main";
     mocks.loadDreamingStatusMock.mockImplementationOnce(async () => {
       expect(host.selectedAgentId).toBe("research");
@@ -291,7 +291,7 @@ describe("refreshActiveRoute", () => {
   it("loads the Channels tab without automatic live probes", async () => {
     const host = createHost();
 
-    host.tab = "channels";
+    host.routeId = "channels";
     await refreshActiveRoute(host as never);
 
     expect(mocks.loadChannelsMock).toHaveBeenCalledWith(host, false);
@@ -301,7 +301,7 @@ describe("refreshActiveRoute", () => {
 
   it("refreshes logs tab by resetting bottom-follow and scheduling scroll", async () => {
     const host = createHost();
-    host.tab = "logs";
+    host.routeId = "logs";
 
     await refreshActiveRoute(host as never);
 
@@ -312,17 +312,17 @@ describe("refreshActiveRoute", () => {
 
   it("records tab visible timing without waiting for the tab refresh RPC", async () => {
     const host = createHost();
-    host.tab = "chat";
+    host.routeId = "chat";
     const sessions = createDeferred();
     mocks.loadSessionsMock.mockReturnValueOnce(sessions.promise);
 
-    setTab(host as never, "sessions");
+    setRoute(host as never, "sessions");
 
     expect(host.requestUpdate).toHaveBeenCalled();
     await vi.waitFor(() => {
-      expectBufferedPerformanceEvent(host, "control-ui.tab.visible", {
-        previousTab: "chat",
-        tab: "sessions",
+      expectBufferedPerformanceEvent(host, "control-ui.routeId.visible", {
+        previousRouteId: "chat",
+        routeId: "sessions",
       });
     });
 
@@ -331,7 +331,7 @@ describe("refreshActiveRoute", () => {
 
   it("loads config before rendering session Workboard actions", async () => {
     const host = createHost();
-    host.tab = "sessions";
+    host.routeId = "sessions";
 
     await refreshActiveRoute(host as never);
 
@@ -341,7 +341,7 @@ describe("refreshActiveRoute", () => {
 
   it("refreshes workboard cards with config, sessions, and agents", async () => {
     const host = createHost();
-    host.tab = "workboard";
+    host.routeId = "workboard";
 
     await refreshActiveRoute(host as never);
 
@@ -359,7 +359,7 @@ describe("refreshActiveRoute", () => {
 
   it("keeps read-only Workboard tab preload on the read refresh path", async () => {
     const host = createHost();
-    host.tab = "workboard";
+    host.routeId = "workboard";
     host.hello = { auth: { role: "operator", scopes: ["operator.read"] } };
 
     await refreshActiveRoute(host as never);
@@ -375,7 +375,7 @@ describe("refreshActiveRoute", () => {
 
   it("loads agents before rendering the Skills tab agent selector", async () => {
     const host = createHost();
-    host.tab = "skills";
+    host.routeId = "skills";
     const calls: string[] = [];
     mocks.loadAgentsMock.mockImplementationOnce(async () => {
       calls.push("agents");
@@ -398,11 +398,11 @@ describe("refreshActiveRoute", () => {
   it("starts node polling and stops inactive tab pollers on tab changes", () => {
     vi.useFakeTimers();
     const host = createHost();
-    host.tab = "workboard";
+    host.routeId = "workboard";
     const pendingReload = vi.fn();
     host.sessionsChangedReloadTimer = globalThis.setTimeout(() => pendingReload(), 1_000);
 
-    setTab(host as never, "nodes");
+    setRoute(host as never, "nodes");
 
     expect(host.sessionsChangedReloadTimer).toBeNull();
     expect(mocks.startNodesPollingMock).toHaveBeenCalledWith(host);
@@ -413,13 +413,13 @@ describe("refreshActiveRoute", () => {
     vi.advanceTimersByTime(1_000);
     expect(pendingReload).not.toHaveBeenCalled();
 
-    setTab(host as never, "sessions");
+    setRoute(host as never, "sessions");
     expect(mocks.stopNodesPollingMock).toHaveBeenCalledWith(host);
   });
 
   it("does not wait for secondary overview refreshes before resolving", async () => {
     const host = createHost();
-    host.tab = "overview";
+    host.routeId = "overview";
     mocks.loadUsageMock.mockReturnValueOnce(new Promise<void>(() => {}));
 
     const refresh = refreshActiveRoute(host as never);
@@ -433,13 +433,13 @@ describe("refreshActiveRoute", () => {
 
   it("skips overview usage refresh if the user leaves while primary loaders run", async () => {
     const host = createHost();
-    host.tab = "overview";
+    host.routeId = "overview";
     const channels = createDeferred();
     mocks.loadChannelsMock.mockReturnValueOnce(channels.promise);
 
     const refresh = refreshActiveRoute(host as never);
     await Promise.resolve();
-    host.tab = "sessions";
+    host.routeId = "sessions";
     channels.resolve();
 
     await refresh;
@@ -450,7 +450,7 @@ describe("refreshActiveRoute", () => {
 
   it("does not wait for config schema before resolving config tab refresh", async () => {
     const host = createHost();
-    host.tab = "config";
+    host.routeId = "config";
     const schema = createDeferred();
     mocks.loadConfigSchemaMock.mockReturnValueOnce(schema.promise);
 
@@ -471,7 +471,7 @@ describe("refreshActiveRoute", () => {
 
   it("loads scoped settings snapshots before starting the schema refresh", async () => {
     const host = createHost();
-    host.tab = "communications";
+    host.routeId = "communications";
     const config = createDeferred();
     mocks.loadConfigMock.mockReturnValueOnce(config.promise);
 
@@ -492,7 +492,7 @@ describe("refreshActiveRoute", () => {
 
   it("loads config, sessions, and agents before rendering the Workboard tab", async () => {
     const host = createHost();
-    host.tab = "workboard";
+    host.routeId = "workboard";
 
     await refreshActiveRoute(host as never);
 
@@ -504,7 +504,7 @@ describe("refreshActiveRoute", () => {
 
   it("does not start the deferred schema refresh when scoped settings fail to load", async () => {
     const host = createHost();
-    host.tab = "communications";
+    host.routeId = "communications";
     const error = new Error("config unavailable");
     mocks.loadConfigMock.mockRejectedValueOnce(error);
 
@@ -516,7 +516,7 @@ describe("refreshActiveRoute", () => {
 
   it("renders channels from the cheap snapshot without waiting for config schema", async () => {
     const host = createHost();
-    host.tab = "channels";
+    host.routeId = "channels";
     const schema = createDeferred();
     mocks.loadConfigSchemaMock.mockReturnValueOnce(schema.promise);
 
@@ -537,7 +537,7 @@ describe("refreshActiveRoute", () => {
 
   it("records overview secondary refresh duration and aggregate status", async () => {
     const host = createHost();
-    host.tab = "overview";
+    host.routeId = "overview";
     const usage = createDeferred();
     mocks.loadUsageMock.mockReturnValueOnce(usage.promise);
     mocks.loadSkillsMock.mockRejectedValueOnce(new Error("skills failed"));
@@ -555,7 +555,7 @@ describe("refreshActiveRoute", () => {
 
   it("does not wait for cron runs before resolving the cron tab refresh", async () => {
     const host = createHost();
-    host.tab = "cron";
+    host.routeId = "cron";
     mocks.loadCronRunsMock.mockReturnValueOnce(new Promise<"ok">(() => {}));
 
     const refresh = refreshActiveRoute(host as never);
@@ -570,7 +570,7 @@ describe("refreshActiveRoute", () => {
 
   it("refreshes model auth status on the chat tab for the quota pill", async () => {
     const host = createHost();
-    host.tab = "chat";
+    host.routeId = "chat";
 
     await refreshActiveRoute(host as never);
 
@@ -581,7 +581,7 @@ describe("refreshActiveRoute", () => {
 
   it("does not wait for quota status before scrolling the chat tab", async () => {
     const host = createHost();
-    host.tab = "chat";
+    host.routeId = "chat";
     const quotaRefresh = createDeferred();
     mocks.loadModelAuthStatusStateMock.mockReturnValueOnce(quotaRefresh.promise);
 
@@ -598,7 +598,7 @@ describe("refreshActiveRoute", () => {
 
   it("preserves chat refresh failures while loading quota status", async () => {
     const host = createHost();
-    host.tab = "chat";
+    host.routeId = "chat";
     mocks.refreshChatMock.mockRejectedValueOnce(new Error("chat refresh failed"));
 
     await expect(refreshActiveRoute(host as never)).rejects.toThrow("chat refresh failed");
@@ -609,7 +609,7 @@ describe("refreshActiveRoute", () => {
 
   it("contains quota status failures on the chat tab", async () => {
     const host = createHost();
-    host.tab = "chat";
+    host.routeId = "chat";
     mocks.loadModelAuthStatusStateMock.mockRejectedValueOnce(new Error("quota failed"));
 
     await expect(refreshActiveRoute(host as never)).resolves.toBeUndefined();
@@ -620,7 +620,7 @@ describe("refreshActiveRoute", () => {
 
   it("records failed cron runs status from the controller outcome", async () => {
     const host = createHost();
-    host.tab = "cron";
+    host.routeId = "cron";
     mocks.loadCronRunsMock.mockResolvedValueOnce("error" as const);
 
     await expect(refreshActiveRoute(host as never)).resolves.toBeUndefined();
@@ -634,7 +634,7 @@ describe("refreshActiveRoute", () => {
 
   it("contains rejected cron runs refreshes without failing the primary cron tab refresh", async () => {
     const host = createHost();
-    host.tab = "cron";
+    host.routeId = "cron";
     mocks.loadCronRunsMock.mockRejectedValueOnce(new Error("cron runs slow path failed"));
 
     await expect(refreshActiveRoute(host as never)).resolves.toBeUndefined();
@@ -648,12 +648,12 @@ describe("refreshActiveRoute", () => {
 
   it("does not record stale cron run timing after leaving the cron tab", async () => {
     const host = createHost();
-    host.tab = "cron";
+    host.routeId = "cron";
     const runs = createDeferred<"ok">();
     mocks.loadCronRunsMock.mockReturnValueOnce(runs.promise);
 
     await refreshActiveRoute(host as never);
-    host.tab = "chat";
+    host.routeId = "chat";
     runs.resolve("ok");
     await Promise.resolve();
 
