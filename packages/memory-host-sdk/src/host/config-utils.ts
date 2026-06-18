@@ -316,6 +316,20 @@ function listAgentEntries(cfg: OpenClawConfig): AgentConfig[] {
     : [];
 }
 
+/** Lists unique configured agent ids, falling back to the default agent id. */
+export function listAgentIds(cfg: OpenClawConfig): string[] {
+  const seen = new Set<string>();
+  const ids: string[] = [];
+  for (const agent of listAgentEntries(cfg)) {
+    const agentId = normalizeAgentId(agent.id);
+    if (!seen.has(agentId)) {
+      seen.add(agentId);
+      ids.push(agentId);
+    }
+  }
+  return ids.length > 0 ? ids : [DEFAULT_AGENT_ID];
+}
+
 /** Resolve the default agent id from explicit default marker or first agent entry. */
 function resolveDefaultAgentId(cfg: OpenClawConfig): string {
   const agents = listAgentEntries(cfg);

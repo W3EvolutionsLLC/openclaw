@@ -267,6 +267,69 @@ describe("resolveMemoryBackendConfig", () => {
     ]);
   });
 
+  it("excludes private dream artifacts from broad qmd custom collections", () => {
+    const workspaceDir = "/workspace/root";
+    const cfg = {
+      agents: {
+        defaults: {
+          workspace: workspaceDir,
+          memory: {
+            backend: "qmd",
+            qmd: {
+              includeDefaultMemory: false,
+              paths: [
+                { path: ".", name: "workspace" },
+                { path: "memory", name: "memory" },
+                { path: "notes", name: "notes" },
+              ],
+            },
+          },
+        },
+      },
+    } as OpenClawConfig;
+
+    const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
+
+    expect(requireQmdCollection(resolved, "workspace-main").ignore).toEqual(["memory/.dreams/**"]);
+    expect(requireQmdCollection(resolved, "memory-main").ignore).toEqual([".dreams/**"]);
+    expect(requireQmdCollection(resolved, "notes-main").ignore).toBeUndefined();
+  });
+
+  it("excludes every configured agent's private dreams from cross-agent QMD collections", () => {
+    const writerWorkspaceDir = "/workspace/writer";
+    const researchWorkspaceDir = "/workspace/research";
+    const cfg = {
+      agents: {
+        defaults: {
+          memory: {
+            backend: "qmd",
+            qmd: { includeDefaultMemory: false },
+          },
+        },
+        list: [
+          { id: "writer", workspace: writerWorkspaceDir },
+          {
+            id: "research",
+            default: true,
+            workspace: researchWorkspaceDir,
+            memory: {
+              search: {
+                extraPaths: [writerWorkspaceDir],
+              },
+            },
+          },
+        ],
+      },
+    } as OpenClawConfig;
+
+    const resolved = resolveMemoryBackendConfig({ cfg, agentId: "research" });
+
+    expect(requireQmdCollection(resolved, "custom-1-research")).toMatchObject({
+      path: writerWorkspaceDir,
+      ignore: ["memory/.dreams/**"],
+    });
+  });
+
   it("scopes qmd collection names per agent", () => {
     const cfg = {
       agents: {
@@ -395,6 +458,7 @@ describe("resolveMemoryBackendConfig", () => {
     const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
     const names = collectionNames(resolved);
     expect(names).toStrictEqual(["workspace-main"]);
+    expect(requireQmdCollection(resolved, "workspace-main").ignore).toEqual(["memory/.dreams/**"]);
   });
 
   it("keeps unresolved child paths under a symlinked workspace agent-scoped", async () => {

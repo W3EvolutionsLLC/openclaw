@@ -947,16 +947,20 @@ export function registerWikiCli(
     | MemoryWikiPluginConfig
     | ResolvedMemoryWikiConfig
     | ((agentId?: string) => ResolvedMemoryWikiConfig),
-  appConfig?: OpenClawConfig,
+  appConfig?: OpenClawConfig | (() => OpenClawConfig | undefined),
 ) {
+  const resolveAppConfig = () => (typeof appConfig === "function" ? appConfig() : appConfig);
   const resolveConfig =
     typeof pluginConfig === "function"
       ? pluginConfig
       : isResolvedMemoryWikiConfig(pluginConfig)
         ? () => pluginConfig
-        : appConfig
-          ? (agentId?: string) => resolveMemoryWikiConfigForAgent(appConfig, agentId)
-          : () => resolveMemoryWikiConfig(pluginConfig);
+        : (agentId?: string) => {
+            const currentAppConfig = resolveAppConfig();
+            return currentAppConfig
+              ? resolveMemoryWikiConfigForAgent(currentAppConfig, agentId)
+              : resolveMemoryWikiConfig(pluginConfig);
+          };
   let config = resolveConfig();
   const wiki = program
     .command("wiki")
@@ -972,7 +976,7 @@ export function registerWikiCli(
     .description("Show wiki vault status")
     .option("--json", "Print JSON")
     .action(async (opts: WikiStatusCommandOptions) => {
-      await runWikiStatus({ config, appConfig, json: opts.json });
+      await runWikiStatus({ config, appConfig: resolveAppConfig(), json: opts.json });
     });
 
   wiki
@@ -980,7 +984,7 @@ export function registerWikiCli(
     .description("Audit wiki vault setup and report actionable fixes")
     .option("--json", "Print JSON")
     .action(async (opts: WikiDoctorCommandOptions) => {
-      await runWikiDoctor({ config, appConfig, json: opts.json });
+      await runWikiDoctor({ config, appConfig: resolveAppConfig(), json: opts.json });
     });
 
   wiki
@@ -996,7 +1000,7 @@ export function registerWikiCli(
     .description("Refresh generated wiki indexes")
     .option("--json", "Print JSON")
     .action(async (opts: WikiCompileCommandOptions) => {
-      await runWikiCompile({ config, appConfig, json: opts.json });
+      await runWikiCompile({ config, appConfig: resolveAppConfig(), json: opts.json });
     });
 
   wiki
@@ -1004,7 +1008,7 @@ export function registerWikiCli(
     .description("Lint the wiki vault and write a report")
     .option("--json", "Print JSON")
     .action(async (opts: WikiLintCommandOptions) => {
-      await runWikiLint({ config, appConfig, json: opts.json });
+      await runWikiLint({ config, appConfig: resolveAppConfig(), json: opts.json });
     });
 
   wiki
@@ -1041,7 +1045,7 @@ export function registerWikiCli(
     .action(async (query: string, opts: WikiSearchCommandOptions) => {
       await runWikiSearch({
         config,
-        appConfig,
+        appConfig: resolveAppConfig(),
         query,
         maxResults: opts.maxResults,
         searchBackend: opts.backend,
@@ -1067,7 +1071,7 @@ export function registerWikiCli(
     .action(async (lookup: string, opts: WikiGetCommandOptions) => {
       await runWikiGet({
         config,
-        appConfig,
+        appConfig: resolveAppConfig(),
         lookup,
         fromLine: opts.from,
         lineCount: opts.lines,
@@ -1090,7 +1094,7 @@ export function registerWikiCli(
     .action(async (title: string, opts: WikiApplySynthesisCommandOptions) => {
       await runWikiApplySynthesis({
         config,
-        appConfig,
+        appConfig: resolveAppConfig(),
         title,
         body: opts.body,
         bodyFile: opts.bodyFile,
@@ -1113,7 +1117,7 @@ export function registerWikiCli(
     .action(async (lookup: string, opts: WikiApplyMetadataCommandOptions) => {
       await runWikiApplyMetadata({
         config,
-        appConfig,
+        appConfig: resolveAppConfig(),
         lookup,
         sourceIds: opts.sourceId,
         contradictions: opts.contradiction,
@@ -1133,7 +1137,7 @@ export function registerWikiCli(
     .description("Sync bridge-backed memory artifacts into wiki source pages")
     .option("--json", "Print JSON")
     .action(async (opts: WikiBridgeImportCommandOptions) => {
-      await runWikiBridgeImport({ config, appConfig, json: opts.json });
+      await runWikiBridgeImport({ config, appConfig: resolveAppConfig(), json: opts.json });
     });
 
   const unsafeLocal = wiki
@@ -1144,7 +1148,7 @@ export function registerWikiCli(
     .description("Sync unsafe-local configured paths into wiki source pages")
     .option("--json", "Print JSON")
     .action(async (opts: WikiUnsafeLocalImportCommandOptions) => {
-      await runWikiUnsafeLocalImport({ config, appConfig, json: opts.json });
+      await runWikiUnsafeLocalImport({ config, appConfig: resolveAppConfig(), json: opts.json });
     });
 
   const chatgpt = wiki

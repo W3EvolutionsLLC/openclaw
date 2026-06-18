@@ -4,6 +4,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { OpenClawConfig } from "../config/config.js";
+import { assertNoSymlinkParents } from "../infra/fs-safe-advanced.js";
 import type { MemoryPluginPublicArtifact } from "../plugins/memory-state.js";
 import { normalizeAgentId } from "../routing/session-key.js";
 import { listAgentIds, resolveAgentWorkspaceDir } from "./memory-core-host-runtime-core.js";
@@ -11,10 +12,13 @@ import { resolveMemoryHostEventLogPath } from "./memory-host-events.js";
 
 export * from "./memory-core-host-runtime-core.js";
 
-async function pathExists(filePath: string): Promise<boolean> {
+async function isRegularFileWithinWorkspace(
+  workspaceRoot: string,
+  filePath: string,
+): Promise<boolean> {
   try {
-    await fs.access(filePath);
-    return true;
+    await assertNoSymlinkParents({ rootDir: workspaceRoot, targetPath: filePath });
+    return (await fs.lstat(filePath)).isFile();
   } catch {
     return false;
   }
@@ -25,6 +29,9 @@ async function listMarkdownFilesRecursive(rootDir: string): Promise<string[]> {
   const files: string[] = [];
   for (const entry of entries) {
     const fullPath = path.join(rootDir, entry.name);
+    if (entry.isSymbolicLink()) {
+      continue;
+    }
     if (entry.isDirectory()) {
       files.push(...(await listMarkdownFilesRecursive(fullPath)));
       continue;
@@ -46,6 +53,11 @@ function resolveArtifactAgentIds(
       // Private artifacts without a recognized owner must not cross an agent boundary.
       return null;
     }
+    if (relativePath.startsWith("memory/dreaming/") && workspaceAgentIds.length > 1) {
+      // Legacy dream reports predate agent ownership metadata. A shared
+      // workspace cannot safely attribute them, so keep them private.
+      return null;
+    }
     return workspaceAgentIds;
   }
   return workspaceAgentIds.includes(match[1]) ? [match[1]] : null;
@@ -58,21 +70,23 @@ function resolveMemoryArtifactKind(relativePath: string): "daily-note" | "dream-
     : "daily-note";
 }
 
-function resolveMemoryArtifactWorkspaces(cfg: OpenClawConfig): Array<{
-  workspaceDir: string;
-  agentIds: string[];
-}> {
+async function resolveMemoryArtifactWorkspaces(cfg: OpenClawConfig): Promise<
+  Array<{
+    workspaceDir: string;
+    agentIds: string[];
+  }>
+> {
   const byWorkspace = new Map<string, { workspaceDir: string; agentIds: string[] }>();
   for (const rawAgentId of listAgentIds(cfg)) {
     const agentId = normalizeAgentId(rawAgentId);
     const workspaceDir = resolveAgentWorkspaceDir(cfg, agentId);
-    const key = path.resolve(workspaceDir);
-    const existing = byWorkspace.get(key);
+    const workspaceRoot = await fs.realpath(workspaceDir).catch(() => path.resolve(workspaceDir));
+    const existing = byWorkspace.get(workspaceRoot);
     if (existing) {
       existing.agentIds.push(agentId);
       continue;
     }
-    byWorkspace.set(key, { workspaceDir, agentIds: [agentId] });
+    byWorkspace.set(workspaceRoot, { workspaceDir: workspaceRoot, agentIds: [agentId] });
   }
   return [...byWorkspace.values()];
 }
@@ -83,17 +97,20 @@ export async function listMemoryWorkspacePublicArtifacts(params: {
   agentIds: string[];
 }): Promise<MemoryPluginPublicArtifact[]> {
   const artifacts: MemoryPluginPublicArtifact[] = [];
+  const workspaceRoot = await fs
+    .realpath(params.workspaceDir)
+    .catch(() => path.resolve(params.workspaceDir));
   const workspaceEntries = new Set(
-    (await fs.readdir(params.workspaceDir, { withFileTypes: true }).catch(() => []))
+    (await fs.readdir(workspaceRoot, { withFileTypes: true }).catch(() => []))
       .filter((entry) => entry.isFile())
       .map((entry) => entry.name),
   );
 
   if (workspaceEntries.has("MEMORY.md")) {
-    const absolutePath = path.join(params.workspaceDir, "MEMORY.md");
+    const absolutePath = path.join(workspaceRoot, "MEMORY.md");
     artifacts.push({
       kind: "memory-root",
-      workspaceDir: params.workspaceDir,
+      workspaceDir: workspaceRoot,
       relativePath: "MEMORY.md",
       absolutePath,
       agentIds: [...params.agentIds],
@@ -101,50 +118,53 @@ export async function listMemoryWorkspacePublicArtifacts(params: {
     });
   }
 
-  const memoryDir = path.join(params.workspaceDir, "memory");
-  for (const absolutePath of await listMarkdownFilesRecursive(memoryDir)) {
-    const relativePath = path.relative(params.workspaceDir, absolutePath).replace(/\\/g, "/");
-    const agentIds = resolveArtifactAgentIds(relativePath, params.agentIds);
-    if (!agentIds) {
-      continue;
+  const memoryDir = path.join(workspaceRoot, "memory");
+  const memoryDirStat = await fs.lstat(memoryDir).catch(() => undefined);
+  if (memoryDirStat?.isDirectory()) {
+    for (const absolutePath of await listMarkdownFilesRecursive(memoryDir)) {
+      const relativePath = path.relative(workspaceRoot, absolutePath).replace(/\\/g, "/");
+      const agentIds = resolveArtifactAgentIds(relativePath, params.agentIds);
+      if (!agentIds) {
+        continue;
+      }
+      artifacts.push({
+        kind: resolveMemoryArtifactKind(relativePath),
+        workspaceDir: workspaceRoot,
+        relativePath,
+        absolutePath,
+        agentIds,
+        contentType: "markdown",
+      });
     }
-    artifacts.push({
-      kind: resolveMemoryArtifactKind(relativePath),
-      workspaceDir: params.workspaceDir,
-      relativePath,
-      absolutePath,
-      agentIds,
-      contentType: "markdown",
-    });
-  }
 
-  for (const agentId of params.agentIds) {
-    const eventLogPath = resolveMemoryHostEventLogPath(params.workspaceDir, agentId);
-    if (!(await pathExists(eventLogPath))) {
-      continue;
-    }
-    artifacts.push({
-      kind: "event-log",
-      workspaceDir: params.workspaceDir,
-      relativePath: path.relative(params.workspaceDir, eventLogPath).replace(/\\/g, "/"),
-      absolutePath: eventLogPath,
-      agentIds: [agentId],
-      contentType: "json",
-    });
-  }
-  // The legacy journal has no owner. Do not expose it from a shared workspace:
-  // it may contain recall queries from every agent that used that workspace.
-  if (params.agentIds.length === 1) {
-    const eventLogPath = resolveMemoryHostEventLogPath(params.workspaceDir);
-    if (await pathExists(eventLogPath)) {
+    for (const agentId of params.agentIds) {
+      const eventLogPath = resolveMemoryHostEventLogPath(workspaceRoot, agentId);
+      if (!(await isRegularFileWithinWorkspace(workspaceRoot, eventLogPath))) {
+        continue;
+      }
       artifacts.push({
         kind: "event-log",
-        workspaceDir: params.workspaceDir,
-        relativePath: path.relative(params.workspaceDir, eventLogPath).replace(/\\/g, "/"),
+        workspaceDir: workspaceRoot,
+        relativePath: path.relative(workspaceRoot, eventLogPath).replace(/\\/g, "/"),
         absolutePath: eventLogPath,
-        agentIds: [...params.agentIds],
+        agentIds: [agentId],
         contentType: "json",
       });
+    }
+    // The legacy journal has no owner. Do not expose it from a shared workspace:
+    // it may contain recall queries from every agent that used that workspace.
+    if (params.agentIds.length === 1) {
+      const eventLogPath = resolveMemoryHostEventLogPath(workspaceRoot);
+      if (await isRegularFileWithinWorkspace(workspaceRoot, eventLogPath)) {
+        artifacts.push({
+          kind: "event-log",
+          workspaceDir: workspaceRoot,
+          relativePath: path.relative(workspaceRoot, eventLogPath).replace(/\\/g, "/"),
+          absolutePath: eventLogPath,
+          agentIds: [...params.agentIds],
+          contentType: "json",
+        });
+      }
     }
   }
 
@@ -161,7 +181,7 @@ export async function listMemoryHostPublicArtifacts(params: {
   agentId?: string;
 }): Promise<MemoryPluginPublicArtifact[]> {
   const requestedAgentId = params.agentId ? normalizeAgentId(params.agentId) : undefined;
-  const workspaces = resolveMemoryArtifactWorkspaces(params.cfg);
+  const workspaces = await resolveMemoryArtifactWorkspaces(params.cfg);
   const artifacts: MemoryPluginPublicArtifact[] = [];
   for (const workspace of workspaces) {
     artifacts.push(

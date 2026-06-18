@@ -426,6 +426,51 @@ describe("memory cli", () => {
     expect(close).toHaveBeenCalled();
   });
 
+  it("reports dreaming status for each agent", async () => {
+    getRuntimeConfig.mockReturnValue({
+      agents: {
+        defaults: {
+          workspace: "/tmp/main",
+          memory: {
+            extensions: {
+              "memory-core": {
+                dreaming: { enabled: true, frequency: "0 9 * * *" },
+              },
+            },
+          },
+        },
+        list: [
+          { id: "main", default: true, workspace: "/tmp/main" },
+          {
+            id: "writer",
+            workspace: "/tmp/writer",
+            memory: {
+              extensions: {
+                "memory-core": {
+                  dreaming: { enabled: false },
+                },
+              },
+            },
+          },
+        ],
+      },
+    });
+    const close = vi.fn(async () => {});
+    getMemorySearchManager.mockResolvedValue({
+      manager: {
+        status: () => makeMemoryStatus({ workspaceDir: undefined }),
+        close,
+      },
+    });
+
+    const log = spyRuntimeLogs(defaultRuntime);
+    await runMemoryCli(["status"]);
+
+    expectLogged(log, "Dreaming: 0 9 * * *");
+    expectLogged(log, "Dreaming: off");
+    expect(close).toHaveBeenCalledTimes(2);
+  });
+
   it("prints index identity mismatch reasons", async () => {
     const close = vi.fn(async () => {});
     mockManager({

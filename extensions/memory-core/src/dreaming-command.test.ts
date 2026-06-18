@@ -209,6 +209,34 @@ describe("memory-core /dreaming command", () => {
     expect(resolveAgentStoredDreaming(getRuntimeConfig(), "Team Ops").enabled).toBe(false);
   });
 
+  it("rejects unknown routed agents without changing inherited defaults", async () => {
+    const { command, runtime, getRuntimeConfig } = createHarness({
+      agents: {
+        defaults: {
+          memory: {
+            extensions: {
+              "memory-core": {
+                dreaming: { enabled: true },
+              },
+            },
+          },
+        },
+        list: [{ id: "research" }],
+      },
+    });
+
+    const result = await command.handler(
+      createCommandContext("off", {
+        agentId: "writer",
+        sessionKey: "plugin-owned:command-session",
+      }),
+    );
+
+    expect(result.text).toContain('cannot be changed for unknown agent "writer"');
+    expect(runtime.config.mutateConfigFile).not.toHaveBeenCalled();
+    expect(resolveStoredDreaming(getRuntimeConfig()).enabled).toBe(true);
+  });
+
   it("blocks unscoped gateway callers from persisting dreaming config", async () => {
     const { command, runtime } = createHarness();
 

@@ -933,6 +933,7 @@ export async function runCodexAppServerAttempt(
       citationsMode: params.config
         ? resolveAgentMemoryConfig(params.config, sessionAgentId)?.citations
         : undefined,
+      agentId: sessionAgentId,
       modelId: params.modelId,
       contextEngineHostSupport: CODEX_APP_SERVER_CONTEXT_ENGINE_HOST,
       providerId: params.provider,

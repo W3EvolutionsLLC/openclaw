@@ -12,14 +12,18 @@ function updateDreamingEnabledInConfig(
   cfg: OpenClawConfig,
   agentId: string,
   enabled: boolean,
-): OpenClawConfig {
+): OpenClawConfig | null {
   const agentList = [...(cfg.agents?.list ?? [])];
   const agentIndex = agentList.findIndex(
     (entry) => normalizeAgentId(entry?.id) === normalizeAgentId(agentId),
   );
+  const isDefaultAgent = normalizeAgentId(agentId) === normalizeAgentId(resolveDefaultAgentId(cfg));
+  if (agentIndex < 0 && (agentList.length > 0 || !isDefaultAgent)) {
+    return null;
+  }
   const existingAgentMemory =
     agentIndex >= 0 ? (agentList[agentIndex]?.memory ?? {}) : (cfg.agents?.defaults?.memory ?? {});
-  const extensions = { ...(existingAgentMemory.extensions ?? {}) };
+  const extensions = { ...existingAgentMemory.extensions };
   const memoryCore = asRecord(extensions["memory-core"]) ?? {};
   const dreaming = asRecord(memoryCore.dreaming) ?? {};
   extensions["memory-core"] = {
@@ -123,10 +127,16 @@ export async function handleDreamingCommand(api: OpenClawPluginApi, ctx: PluginC
       return { text: "⚠️ /dreaming on|off requires operator.admin for gateway clients." };
     }
     const enabled = firstToken === "on";
+    if (!updateDreamingEnabledInConfig(currentConfig, agentId, enabled)) {
+      return { text: `Dreaming config cannot be changed for unknown agent "${agentId}".` };
+    }
     const committed = await api.runtime.config.mutateConfigFile({
       afterWrite: { mode: "auto" },
       mutate: (draft) => {
         const nextConfig = updateDreamingEnabledInConfig(draft, agentId, enabled);
+        if (!nextConfig) {
+          throw new Error(`Dreaming config target disappeared: ${agentId}`);
+        }
         Object.assign(draft, nextConfig);
       },
     });

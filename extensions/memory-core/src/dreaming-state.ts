@@ -207,10 +207,12 @@ export async function clearMemoryCoreWorkspaceNamespace(params: {
 export async function migrateMemoryCoreWorkspaceNamespaceToAgent(params: {
   namespace: string;
   workspaceDir: string;
+  sourceWorkspaceDir?: string;
   agentId: string;
 }): Promise<{ sourceEntries: number; migratedEntries: number; retainedAgentEntries: number }> {
   const agentId = normalizeAgentId(params.agentId);
-  const sourceWorkspaceKey = memoryCoreWorkspaceStateKey(params.workspaceDir);
+  const sourceWorkspaceDir = params.sourceWorkspaceDir ?? params.workspaceDir;
+  const sourceWorkspaceKey = memoryCoreWorkspaceStateKey(sourceWorkspaceDir);
   const targetWorkspaceKey = memoryCoreWorkspaceStateKey(params.workspaceDir, agentId);
   if (sourceWorkspaceKey === targetWorkspaceKey) {
     return { sourceEntries: 0, migratedEntries: 0, retainedAgentEntries: 0 };

@@ -1,12 +1,12 @@
 // Memory Wiki plugin module implements bridge behavior.
 import { createHash } from "node:crypto";
-import fs from "node:fs/promises";
 import path from "node:path";
 import {
   getMemoryCapabilityRegistration,
   listActiveMemoryPublicArtifacts,
   type MemoryPluginPublicArtifact,
 } from "openclaw/plugin-sdk/memory-host-core";
+import { openFileWithinRoot } from "openclaw/plugin-sdk/security-runtime";
 import type { OpenClawConfig } from "../api.js";
 import type { ResolvedMemoryWikiConfig } from "./config.js";
 import { appendMemoryWikiLog } from "./log.js";
@@ -17,7 +17,6 @@ import {
   slugifyWikiSegment,
 } from "./markdown.js";
 import { writeImportedSourcePage } from "./source-page-shared.js";
-import { resolveArtifactKey } from "./source-path-shared.js";
 import {
   assertMemoryWikiSourceSyncStateCapacity,
   pruneImportedSourceEntries,
@@ -72,13 +71,14 @@ async function collectBridgeArtifacts(
     if (!shouldImportArtifact(artifact, bridgeConfig)) {
       continue;
     }
-    const syncKey = await resolveArtifactKey(artifact.absolutePath);
+    const absolutePath = path.resolve(artifact.workspaceDir, artifact.relativePath);
+    const syncKey = absolutePath;
     collected.push({
       syncKey,
       artifactType: artifact.kind === "event-log" ? "memory-events" : "markdown",
       workspaceDir: artifact.workspaceDir,
       relativePath: artifact.relativePath,
-      absolutePath: artifact.absolutePath,
+      absolutePath,
       agentIds: artifact.agentIds ?? [],
     });
   }
@@ -132,6 +132,7 @@ function resolveBridgePagePath(params: { workspaceDir: string; relativePath: str
 async function writeBridgeSourcePage(params: {
   config: ResolvedMemoryWikiConfig;
   artifact: BridgeArtifact;
+  sourceContent: string;
   sourceUpdatedAtMs: number;
   sourceSize: number;
   state: Awaited<ReturnType<typeof readMemoryWikiSourceSyncState>>;
@@ -155,6 +156,7 @@ async function writeBridgeSourcePage(params: {
     vaultRoot: params.config.vault.path,
     syncKey: params.artifact.syncKey,
     sourcePath: params.artifact.absolutePath,
+    sourceContent: params.sourceContent,
     sourceUpdatedAtMs: params.sourceUpdatedAtMs,
     sourceSize: params.sourceSize,
     renderFingerprint,
@@ -244,17 +246,26 @@ export async function syncMemoryWikiBridgeSources(params: {
   });
   const artifactCount = artifacts.length;
   for (const artifact of artifacts) {
-    const stats = await fs.stat(artifact.absolutePath);
-    activeKeys.add(artifact.syncKey);
-    results.push(
-      await writeBridgeSourcePage({
-        config: params.config,
-        artifact,
-        sourceUpdatedAtMs: stats.mtimeMs,
-        sourceSize: stats.size,
-        state,
-      }),
-    );
+    const source = await openFileWithinRoot({
+      rootDir: artifact.workspaceDir,
+      relativePath: artifact.relativePath,
+    });
+    try {
+      const resolvedArtifact = { ...artifact, absolutePath: source.realPath };
+      activeKeys.add(artifact.syncKey);
+      results.push(
+        await writeBridgeSourcePage({
+          config: params.config,
+          artifact: resolvedArtifact,
+          sourceContent: (await source.handle.readFile()).toString("utf8"),
+          sourceUpdatedAtMs: source.stat.mtimeMs,
+          sourceSize: source.stat.size,
+          state,
+        }),
+      );
+    } finally {
+      await source.handle.close().catch(() => undefined);
+    }
   }
   const workspaceCount = new Set(scopedArtifacts.map((artifact) => artifact.workspaceDir)).size;
 

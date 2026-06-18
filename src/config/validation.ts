@@ -1753,18 +1753,19 @@ function validateConfigObjectWithPluginsBase(
         for (const error of result.errors) {
           const errorBelongsToAgent =
             configuredValue !== undefined && hasConfiguredPath(configuredValue, error.path);
-          const base =
+          const extensionIssueBase =
             errorBelongsToAgent || defaultValue === undefined
               ? `${target.path}.${extensionId}`
               : `agents.defaults.memory.extensions.${extensionId}`;
-          const path = error.path === "<root>" ? base : `${base}.${error.path}`;
-          const issueKey = `${record.id}\0${path}\0${error.message}`;
+          const issuePath =
+            error.path === "<root>" ? extensionIssueBase : `${extensionIssueBase}.${error.path}`;
+          const issueKey = `${record.id}\0${issuePath}\0${error.message}`;
           if (reportedIssues.has(issueKey)) {
             continue;
           }
           reportedIssues.add(issueKey);
           issues.push({
-            path,
+            path: issuePath,
             message: `invalid memory extension config: ${error.message}`,
             allowedValues: error.allowedValues,
             allowedValuesHiddenCount: error.allowedValuesHiddenCount,

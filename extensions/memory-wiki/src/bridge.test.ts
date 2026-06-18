@@ -421,6 +421,86 @@ describe("syncMemoryWikiBridgeSources", () => {
     expect(page).not.toContain("writer-only");
   });
 
+  it("refuses symlinked event journals supplied by a public artifact provider", async () => {
+    const workspaceDir = await createBridgeWorkspace("symlinked-events-workspace");
+    const { config } = await createVault({
+      rootDir: nextCaseRoot("symlinked-events-vault"),
+      config: {
+        vaultMode: "bridge",
+        bridge: {
+          enabled: true,
+          followMemoryEvents: true,
+        },
+      },
+    });
+    const eventLogPath = resolveMemoryHostEventLogPath(workspaceDir, "main");
+    const outsidePath = path.join(workspaceDir, "outside-events.jsonl");
+    await fs.mkdir(path.dirname(eventLogPath), { recursive: true });
+    await fs.writeFile(outsidePath, '{"type":"memory.recall.recorded"}\n', "utf8");
+    await fs.symlink(outsidePath, eventLogPath);
+    registerBridgeArtifacts([
+      {
+        kind: "event-log",
+        workspaceDir,
+        relativePath: "memory/.dreams/agents/main/events.jsonl",
+        absolutePath: eventLogPath,
+        agentIds: ["main"],
+        contentType: "json",
+      },
+    ]);
+
+    await expect(
+      syncMemoryWikiBridgeSources({
+        config,
+        appConfig: {
+          agents: {
+            list: [{ id: "main", default: true, workspace: workspaceDir }],
+          },
+        },
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("refuses bridge artifacts with symlinked parent directories", async () => {
+    const workspaceDir = await createBridgeWorkspace("symlinked-parent-workspace");
+    const { config } = await createVault({
+      rootDir: nextCaseRoot("symlinked-parent-vault"),
+      config: {
+        vaultMode: "bridge",
+        bridge: {
+          enabled: true,
+          readMemoryArtifacts: true,
+          indexDailyNotes: true,
+        },
+      },
+    });
+    const outsideDir = nextCaseRoot("symlinked-parent-outside");
+    await fs.mkdir(outsideDir, { recursive: true });
+    await fs.writeFile(path.join(outsideDir, "2026-04-05.md"), "# Outside\n", "utf8");
+    await fs.symlink(outsideDir, path.join(workspaceDir, "memory"));
+    registerBridgeArtifacts([
+      {
+        kind: "daily-note",
+        workspaceDir,
+        relativePath: "memory/2026-04-05.md",
+        absolutePath: path.join(workspaceDir, "memory", "2026-04-05.md"),
+        agentIds: ["main"],
+        contentType: "markdown",
+      },
+    ]);
+
+    await expect(
+      syncMemoryWikiBridgeSources({
+        config,
+        appConfig: {
+          agents: {
+            list: [{ id: "main", default: true, workspace: workspaceDir }],
+          },
+        },
+      }),
+    ).rejects.toThrow();
+  });
+
   it("prunes stale bridge pages when the source artifact disappears", async () => {
     const workspaceDir = await createBridgeWorkspace("prune-workspace");
     const { rootDir: vaultDir, config } = await createVault({

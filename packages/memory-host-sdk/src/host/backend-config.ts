@@ -11,6 +11,7 @@ import {
   type MemoryQmdSearchMode,
   type MemoryQmdStartupMode,
   type OpenClawConfig,
+  listAgentIds,
   parseDurationMs,
   resolveAgentMemoryConfig,
   resolveAgentWorkspaceDir,
@@ -162,6 +163,22 @@ function isPathInsideRoot(candidatePath: string, rootPath: string): boolean {
   );
 }
 
+function resolvePrivateDreamsIgnorePattern(
+  collectionPath: string,
+  privateDreamsPath: string,
+): string | undefined {
+  if (!isPathInsideRoot(privateDreamsPath, collectionPath)) {
+    return undefined;
+  }
+  const relativePath = path
+    .relative(
+      canonicalizePathForContainment(collectionPath),
+      canonicalizePathForContainment(privateDreamsPath),
+    )
+    .replace(/\\/g, "/");
+  return relativePath ? `${relativePath}/**` : undefined;
+}
+
 function ensureUniqueName(base: string, existing: Set<string>): string {
   const name = sanitizeName(base);
   if (!existing.has(name)) {
@@ -297,6 +314,7 @@ function resolveCustomPaths(
   workspaceDir: string,
   existing: Set<string>,
   agentId: string,
+  privateDreamsPaths: string[],
 ): ResolvedQmdCollection[] {
   if (!rawPaths?.length) {
     return [];
@@ -329,7 +347,11 @@ function resolveCustomPaths(
     } catch {
       // not a file or can't stat, use as-is
     }
-    if (isPathInsideRoot(collectionPath, path.join(workspaceDir, "memory", ".dreams"))) {
+    if (
+      privateDreamsPaths.some((privateDreamsPath) =>
+        isPathInsideRoot(collectionPath, privateDreamsPath),
+      )
+    ) {
       return;
     }
     const dedupeKey = `${collectionPath}\u0000${pattern}`;
@@ -343,12 +365,23 @@ function resolveCustomPaths(
         ? explicitName
         : scopeCollectionBase(explicitName || `custom-${index + 1}`, agentId);
     const name = ensureUniqueName(baseName, existing);
-    collections.push({
+    const collection: ResolvedQmdCollection = {
       name,
       path: collectionPath,
       pattern,
       kind: "custom",
-    });
+    };
+    const privateDreamsIgnorePatterns = uniqueStrings(
+      privateDreamsPaths
+        .map((privateDreamsPath) =>
+          resolvePrivateDreamsIgnorePattern(collectionPath, privateDreamsPath),
+        )
+        .filter((ignorePattern): ignorePattern is string => Boolean(ignorePattern)),
+    );
+    if (privateDreamsIgnorePatterns.length > 0) {
+      collection.ignore = privateDreamsIgnorePatterns;
+    }
+    collections.push(collection);
   });
   return collections;
 }
@@ -392,13 +425,18 @@ function resolveDefaultCollections(
       ignore: [".dreams/**"],
     },
   ];
-  return entries.map((entry) => ({
-    name: ensureUniqueName(scopeCollectionBase(entry.base, agentId), existing),
-    path: entry.path,
-    pattern: entry.pattern,
-    ...(entry.ignore ? { ignore: entry.ignore } : {}),
-    kind: "memory",
-  }));
+  return entries.map((entry) => {
+    const collection: ResolvedQmdCollection = {
+      name: ensureUniqueName(scopeCollectionBase(entry.base, agentId), existing),
+      path: entry.path,
+      pattern: entry.pattern,
+      kind: "memory",
+    };
+    if (entry.ignore) {
+      collection.ignore = entry.ignore;
+    }
+    return collection;
+  });
 }
 
 export function resolveMemoryBackendConfig(params: {
@@ -414,6 +452,12 @@ export function resolveMemoryBackendConfig(params: {
   }
 
   const workspaceDir = resolveAgentWorkspaceDir(params.cfg, normalizedAgentId);
+  const privateDreamsPaths = uniqueStrings([
+    path.join(workspaceDir, "memory", ".dreams"),
+    ...listAgentIds(params.cfg).map((agentId) =>
+      path.join(resolveAgentWorkspaceDir(params.cfg, agentId), "memory", ".dreams"),
+    ),
+  ]);
   const qmdCfg = memory?.qmd;
   const includeDefaultMemory = qmdCfg?.includeDefaultMemory !== false;
   const nameSet = new Set<string>();
@@ -447,7 +491,13 @@ export function resolveMemoryBackendConfig(params: {
 
   const collections = [
     ...resolveDefaultCollections(includeDefaultMemory, workspaceDir, nameSet, normalizedAgentId),
-    ...resolveCustomPaths(allQmdPaths, workspaceDir, nameSet, normalizedAgentId),
+    ...resolveCustomPaths(
+      allQmdPaths,
+      workspaceDir,
+      nameSet,
+      normalizedAgentId,
+      privateDreamsPaths,
+    ),
   ];
 
   const rawCommand = qmdCfg?.command?.trim() || "qmd";

@@ -502,4 +502,134 @@ describe("memory-core doctor dreaming migration", () => {
       }),
     ).toEqual([]);
   });
+
+  it("treats symlinked workspace aliases as shared during legacy state migration", async () => {
+    const workspaceAliasDir = path.join(rootDir, "workspace-alias");
+    await fs.symlink(workspaceDir, workspaceAliasDir);
+    configureMemoryCoreDreamingState(context().openPluginStateKeyedStore);
+    await writeMemoryCoreWorkspaceEntries({
+      namespace: DREAMING_DAILY_INGESTION_NAMESPACE,
+      workspaceDir: workspaceAliasDir,
+      entries: [
+        {
+          key: "memory/2026-04-07.md",
+          value: {
+            size: 22,
+            mtimeMs: 3,
+            contentHash: "shared-daily-hash",
+            ingestedAt: "2026-04-07T10:00:00.000Z",
+          },
+        },
+      ],
+    });
+    const config: OpenClawConfig = {
+      agents: {
+        list: [
+          { id: "main", default: true, workspace: workspaceDir },
+          { id: "research", workspace: workspaceAliasDir },
+        ],
+      },
+    };
+    const migration = migrationById("memory-core-workspace-state-to-agent-scope");
+
+    const preview = await migration.detectLegacyState(migrationParams(config));
+    expect(preview?.preview.join("\n")).toContain("shared workspace");
+    expect(preview?.preview.join("\n")).toContain("main, research");
+
+    const result = await migration.migrateLegacyState(migrationParams(config));
+    expect(result.changes).toEqual([]);
+    expect(result.warnings).toEqual([expect.stringContaining("shared workspace")]);
+    expect(
+      await readMemoryCoreWorkspaceEntries({
+        namespace: DREAMING_DAILY_INGESTION_NAMESPACE,
+        workspaceDir,
+      }),
+    ).toEqual([]);
+    expect(
+      await readMemoryCoreWorkspaceEntries({
+        namespace: DREAMING_DAILY_INGESTION_NAMESPACE,
+        workspaceDir: workspaceAliasDir,
+      }),
+    ).toHaveLength(1);
+    expect(
+      await readMemoryCoreWorkspaceEntries({
+        namespace: DREAMING_DAILY_INGESTION_NAMESPACE,
+        workspaceDir: workspaceAliasDir,
+        agentId: "main",
+      }),
+    ).toEqual([]);
+  });
+
+  it("moves legacy alias state into the configured workspace scope", async () => {
+    const workspaceAliasDir = path.join(rootDir, "workspace-alias");
+    const workspaceCanonicalDir = await fs.realpath(workspaceDir);
+    await fs.symlink(workspaceDir, workspaceAliasDir);
+    configureMemoryCoreDreamingState(context().openPluginStateKeyedStore);
+    await writeMemoryCoreWorkspaceEntries({
+      namespace: DREAMING_DAILY_INGESTION_NAMESPACE,
+      workspaceDir: workspaceCanonicalDir,
+      entries: [
+        {
+          key: "memory/2026-04-08.md",
+          value: {
+            size: 23,
+            mtimeMs: 4,
+            contentHash: "alias-daily-hash",
+            ingestedAt: "2026-04-08T10:00:00.000Z",
+          },
+        },
+      ],
+    });
+    const config: OpenClawConfig = {
+      agents: {
+        list: [{ id: "main", default: true, workspace: workspaceAliasDir }],
+      },
+    };
+    const migration = migrationById("memory-core-workspace-state-to-agent-scope");
+
+    const result = await migration.migrateLegacyState(migrationParams(config));
+    expect(result.warnings).toEqual([]);
+    expect(result.changes).toEqual([
+      "Migrated Memory Core daily ingestion -> agent-scoped SQLite state (1 row(s), 0 existing agent row(s) retained)",
+    ]);
+    await expect(
+      readMemoryCoreWorkspaceEntries({
+        namespace: DREAMING_DAILY_INGESTION_NAMESPACE,
+        workspaceDir: workspaceCanonicalDir,
+      }),
+    ).resolves.toEqual([]);
+    await expect(
+      readMemoryCoreWorkspaceEntries({
+        namespace: DREAMING_DAILY_INGESTION_NAMESPACE,
+        workspaceDir: workspaceAliasDir,
+        agentId: "main",
+      }),
+    ).resolves.toHaveLength(1);
+  });
+
+  it("does not migrate legacy sources through symlinked dream directories", async () => {
+    const dreamsDir = path.join(workspaceDir, "memory", ".dreams");
+    const outsideDreamsDir = path.join(rootDir, "outside-dreams");
+    const outsideLegacyPath = path.join(outsideDreamsDir, "short-term-recall.json");
+    await fs.rm(dreamsDir, { recursive: true, force: true });
+    await fs.mkdir(outsideDreamsDir, { recursive: true });
+    await fs.writeFile(
+      outsideLegacyPath,
+      JSON.stringify({
+        version: 1,
+        updatedAt: "2026-04-07T10:00:00.000Z",
+        entries: {},
+      }),
+      "utf8",
+    );
+    await fs.symlink(outsideDreamsDir, dreamsDir);
+
+    const migration = migrationById("memory-core-dreams-json-to-sqlite");
+    expect(await migration.detectLegacyState(migrationParams())).toBeNull();
+
+    const result = await migration.migrateLegacyState(migrationParams());
+    expect(result).toEqual({ changes: [], warnings: [] });
+    await expect(fs.access(outsideLegacyPath)).resolves.toBeUndefined();
+    await expect(fs.access(`${outsideLegacyPath}.migrated`)).rejects.toThrow();
+  });
 });

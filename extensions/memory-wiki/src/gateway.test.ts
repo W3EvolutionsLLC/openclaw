@@ -244,13 +244,59 @@ describe("memory-wiki gateway methods", () => {
       respond,
     });
 
-    expect(resolveConfig).toHaveBeenCalledWith("writer");
+    expect(resolveConfig).toHaveBeenCalledWith("writer", expect.any(Object));
     expect(syncMemoryWikiImportedSources).toHaveBeenCalledWith({
       config: writerConfig,
       appConfig: expect.any(Object),
     });
     expect(resolveMemoryWikiStatus).toHaveBeenCalledWith(writerConfig, {
       appConfig: expect.any(Object),
+    });
+  });
+
+  it("resolves the application config at request time with the matching agent config", async () => {
+    const { config: mainConfig } = await createVault({ prefix: "memory-wiki-gateway-main-" });
+    const { config: writerConfig } = await createVault({
+      prefix: "memory-wiki-gateway-writer-",
+    });
+    const { api, registerGatewayMethod } = createPluginApi();
+    let appConfig = {
+      agents: {
+        list: [{ id: "main", default: true }],
+      },
+    };
+    const resolveConfig = vi.fn((agentId?: string) =>
+      agentId === "writer" ? writerConfig : mainConfig,
+    );
+
+    registerMemoryWikiGatewayMethods({
+      api,
+      config: mainConfig,
+      resolveConfig,
+      resolveAppConfig: () => appConfig,
+    });
+    appConfig = {
+      agents: {
+        list: [{ id: "writer", default: true }],
+      },
+    };
+    const handler = findGatewayHandler(registerGatewayMethod, "wiki.status");
+    if (!handler) {
+      throw new Error("wiki.status handler missing");
+    }
+
+    await handler({
+      params: {},
+      respond: vi.fn(),
+    });
+
+    expect(resolveConfig).toHaveBeenLastCalledWith("writer", appConfig);
+    expect(syncMemoryWikiImportedSources).toHaveBeenLastCalledWith({
+      config: writerConfig,
+      appConfig,
+    });
+    expect(resolveMemoryWikiStatus).toHaveBeenLastCalledWith(writerConfig, {
+      appConfig,
     });
   });
 

@@ -14,9 +14,7 @@ const resolveAgentWorkspaceDir = vi.hoisted(() =>
 );
 const listAgentIds = vi.hoisted(() =>
   vi.fn((cfg: OpenClawConfig) => {
-    const configured = cfg.agents?.list
-      ?.map((agent) => agent.id)
-      .filter((id): id is string => !!id);
+    const configured = cfg.agents?.list?.map((agent) => agent.id).filter(Boolean);
     return configured && configured.length > 0 ? configured : ["main"];
   }),
 );

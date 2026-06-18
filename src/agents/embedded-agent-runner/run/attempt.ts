@@ -3321,6 +3321,7 @@ export async function runEmbeddedAttempt(
               citationsMode: params.config
                 ? resolveAgentMemoryConfig(params.config, sessionAgentId)?.citations
                 : undefined,
+              agentId: sessionAgentId,
               modelId: params.modelId,
               contextEngineHostSupport: OPENCLAW_EMBEDDED_CONTEXT_ENGINE_HOST,
               providerId: params.provider,

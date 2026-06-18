@@ -1439,7 +1439,7 @@ describe("short-term promotion", () => {
         releaseFirstMemoryRead = resolve;
       });
       vi.spyOn(fs, "readFile").mockImplementation(async (filePath, options) => {
-        if (String(filePath) === memoryPath) {
+        if (filePath === memoryPath) {
           memoryReadCount += 1;
           if (memoryReadCount === 1) {
             await firstMemoryRead;
@@ -1505,7 +1505,9 @@ describe("short-term promotion", () => {
         minUniqueQueries: 0,
       });
 
-      await new Promise<void>((resolve) => setTimeout(resolve, 25));
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 25);
+      });
       expect(memoryReadCount).toBe(1);
       releaseFirstMemoryRead();
       await Promise.all([research, writer]);

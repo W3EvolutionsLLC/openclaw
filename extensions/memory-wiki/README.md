@@ -28,7 +28,6 @@ can override it at `agents.list[].memory.extensions.memory-wiki`.
           "memory-wiki": {
             vaultMode: "isolated",
             vault: {
-              path: "~/.openclaw/wiki/main", // omit for ~/.openclaw/wiki/<agentId>
               renderMode: "obsidian", // or "native"
             },
             obsidian: {

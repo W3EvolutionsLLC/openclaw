@@ -7,6 +7,7 @@ import {
   migrateMemoryWikiLegacyConfig,
   normalizeCompatibilityConfig,
 } from "./config-compat.js";
+import { resolveMemoryWikiConfigForAgent } from "./config.js";
 
 describe("memory-wiki config compatibility", () => {
   it("detects any legacy global plugin config", () => {
@@ -102,12 +103,9 @@ describe("memory-wiki config compatibility", () => {
       "Preserved legacy ~/.openclaw/wiki/main as the default agent Memory Wiki vault.",
     ]);
     expect(
-      (
-        migration!.config.agents!.list![0]!.memory!.extensions!["memory-wiki"] as {
-          vault?: { path?: string };
-        }
-      ).vault?.path,
-    ).toBe("~/.openclaw/wiki/main");
-    expect(migration!.config.agents!.defaults?.memory?.extensions?.["memory-wiki"]).toBeUndefined();
+      resolveMemoryWikiConfigForAgent(migration?.config ?? config, "research", { homedir }).vault
+        .path,
+    ).toBe(path.join(homedir, ".openclaw", "wiki", "main"));
+    expect(migration?.config.agents?.defaults?.memory?.extensions?.["memory-wiki"]).toBeUndefined();
   });
 });

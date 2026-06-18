@@ -226,9 +226,9 @@ async function createHistoricalRemHarnessWorkspace(params: {
   };
 }
 
-function formatDreamingSummary(cfg: OpenClawConfig): string {
-  const pluginConfig = resolveMemoryPluginConfig(cfg);
-  const dreaming = resolveShortTermPromotionDreamingConfig({ pluginConfig, cfg });
+function formatDreamingSummary(cfg: OpenClawConfig, agentId: string): string {
+  const pluginConfig = resolveMemoryPluginConfig(cfg, agentId);
+  const dreaming = resolveShortTermPromotionDreamingConfig({ pluginConfig, cfg, agentId });
   if (!dreaming.enabled) {
     return "off";
   }
@@ -887,7 +887,7 @@ export async function runMemoryStatus(opts: MemoryCommandOptions) {
       `${label("Dirty")} ${status.dirty ? warn("yes") : muted("no")}`,
       `${label("Store")} ${info(storePath)}`,
       `${label("Workspace")} ${info(workspacePath)}`,
-      `${label("Dreaming")} ${info(formatDreamingSummary(cfg))}`,
+      `${label("Dreaming")} ${info(formatDreamingSummary(cfg, agentId))}`,
     ].filter(Boolean) as string[];
     if (embeddingProbe) {
       const state =

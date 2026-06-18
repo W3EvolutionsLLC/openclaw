@@ -27,13 +27,14 @@ export default definePluginEntry({
   description: "Persistent wiki compiler and Obsidian-friendly knowledge vault for OpenClaw.",
   configSchema: memoryWikiConfigSchema,
   register(api) {
-    const resolveConfig = (agentId?: string) =>
-      resolveMemoryWikiConfigForAgent(
-        (api.runtime.config.current?.() ?? api.config) as Parameters<
-          typeof resolveMemoryWikiConfigForAgent
-        >[0],
-        agentId,
-      );
+    const resolveAppConfig = () =>
+      (api.runtime.config?.current?.() ?? api.config) as Parameters<
+        typeof resolveMemoryWikiConfigForAgent
+      >[0];
+    const resolveConfig = (
+      agentId?: string,
+      appConfig: Parameters<typeof resolveMemoryWikiConfigForAgent>[0] = resolveAppConfig(),
+    ) => resolveMemoryWikiConfigForAgent(appConfig, agentId);
     const config = resolveConfig();
     configureMemoryWikiSourceSyncStateStore(
       createMemoryWikiSourceSyncStateStore(api.runtime.state.openKeyedStore),
@@ -44,21 +45,24 @@ export default definePluginEntry({
 
     api.registerMemoryPromptSupplement(createWikiPromptSectionBuilder(resolveConfig));
     api.registerMemoryCorpusSupplement(
-      createWikiCorpusSupplement({ resolveConfig, appConfig: api.config }),
+      createWikiCorpusSupplement({ resolveConfig, resolveAppConfig }),
     );
-    registerMemoryWikiGatewayMethods({ api, config, resolveConfig, appConfig: api.config });
-    api.registerTool((ctx) => createWikiStatusTool(resolveConfig(ctx.agentId), api.config), {
-      name: "wiki_status",
-    });
-    api.registerTool((ctx) => createWikiLintTool(resolveConfig(ctx.agentId), api.config), {
+    registerMemoryWikiGatewayMethods({ api, config, resolveConfig, resolveAppConfig });
+    api.registerTool(
+      (ctx) => createWikiStatusTool(resolveConfig(ctx.agentId), resolveAppConfig()),
+      {
+        name: "wiki_status",
+      },
+    );
+    api.registerTool((ctx) => createWikiLintTool(resolveConfig(ctx.agentId), resolveAppConfig()), {
       name: "wiki_lint",
     });
-    api.registerTool((ctx) => createWikiApplyTool(resolveConfig(ctx.agentId), api.config), {
+    api.registerTool((ctx) => createWikiApplyTool(resolveConfig(ctx.agentId), resolveAppConfig()), {
       name: "wiki_apply",
     });
     api.registerTool(
       (ctx) =>
-        createWikiSearchTool(resolveConfig(ctx.agentId), api.config, {
+        createWikiSearchTool(resolveConfig(ctx.agentId), resolveAppConfig(), {
           agentId: ctx.agentId,
           agentSessionKey: ctx.sessionKey,
           sandboxed: ctx.sandboxed,
@@ -67,7 +71,7 @@ export default definePluginEntry({
     );
     api.registerTool(
       (ctx) =>
-        createWikiGetTool(resolveConfig(ctx.agentId), api.config, {
+        createWikiGetTool(resolveConfig(ctx.agentId), resolveAppConfig(), {
           agentId: ctx.agentId,
           agentSessionKey: ctx.sessionKey,
           sandboxed: ctx.sandboxed,
@@ -76,7 +80,7 @@ export default definePluginEntry({
     );
     api.registerCli(
       ({ program }) => {
-        registerWikiCli(program, resolveConfig, api.config);
+        registerWikiCli(program, resolveConfig, resolveAppConfig);
       },
       {
         descriptors: [

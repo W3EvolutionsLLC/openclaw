@@ -415,7 +415,6 @@ Enable the plugin once under `plugins.entries`; its settings remain agent-scoped
           "memory-wiki": {
             vaultMode: "isolated",
             vault: {
-              path: "~/.openclaw/wiki/main",
               renderMode: "obsidian",
             },
             obsidian: {
