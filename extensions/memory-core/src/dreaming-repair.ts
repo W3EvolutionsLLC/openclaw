@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { extractErrorCode } from "openclaw/plugin-sdk/error-runtime";
 import { normalizeAgentId } from "openclaw/plugin-sdk/routing";
+import { assertNoSymlinkParents } from "openclaw/plugin-sdk/security-runtime";
 import {
   clearMemoryCoreWorkspaceNamespace,
   DREAMING_DAILY_INGESTION_NAMESPACE,
@@ -141,15 +142,43 @@ async function ensureArchivablePath(targetPath: string): Promise<"file" | "dir" 
   throw new Error(`Refusing to archive non-file artifact: ${targetPath}`);
 }
 
+async function assertSafeRepairArtifactParent(
+  workspaceDir: string,
+  targetPath: string,
+): Promise<void> {
+  await assertNoSymlinkParents({
+    rootDir: workspaceDir,
+    targetPath: path.dirname(targetPath),
+    requireDirectories: true,
+  });
+}
+
+async function ensureSafeArchiveDirectory(workspaceDir: string, archiveDir: string): Promise<void> {
+  await assertNoSymlinkParents({
+    rootDir: workspaceDir,
+    targetPath: archiveDir,
+    requireDirectories: true,
+  });
+  await fs.mkdir(archiveDir, { recursive: true });
+  await assertNoSymlinkParents({
+    rootDir: workspaceDir,
+    targetPath: archiveDir,
+    allowMissing: false,
+    requireDirectories: true,
+  });
+}
+
 async function moveToArchive(params: {
+  workspaceDir: string;
   targetPath: string;
   archiveDir: string;
 }): Promise<string | null> {
+  await assertSafeRepairArtifactParent(params.workspaceDir, params.targetPath);
   const kind = await ensureArchivablePath(params.targetPath);
   if (!kind) {
     return null;
   }
-  await fs.mkdir(params.archiveDir, { recursive: true });
+  await ensureSafeArchiveDirectory(params.workspaceDir, params.archiveDir);
   const baseName = path.basename(params.targetPath);
   const destination = path.join(params.archiveDir, `${baseName}.${randomUUID()}`);
   await fs.rename(params.targetPath, destination);
@@ -315,7 +344,11 @@ export async function repairDreamingArtifacts(params: {
 
   const archivePathIfPresent = async (targetPath: string): Promise<string | null> => {
     try {
-      return await moveToArchive({ targetPath, archiveDir: ensureArchiveDir() });
+      return await moveToArchive({
+        workspaceDir,
+        targetPath,
+        archiveDir: ensureArchiveDir(),
+      });
     } catch (err) {
       warnings.push(err instanceof Error ? err.message : String(err));
       return null;

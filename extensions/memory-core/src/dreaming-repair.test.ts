@@ -269,6 +269,49 @@ describe("dreaming artifact repair", () => {
     });
   });
 
+  it("refuses to archive agent artifacts through a symlinked parent", async () => {
+    const workspaceDir = await createWorkspace();
+    const dreamsDir = path.join(workspaceDir, "memory", ".dreams");
+    const outsideDir = path.join(workspaceDir, "outside");
+    const sessionCorpusDir = path.join(outsideDir, "agents", "writer", "session-corpus");
+    await fs.rm(dreamsDir, { recursive: true, force: true });
+    await fs.mkdir(sessionCorpusDir, { recursive: true });
+    await fs.writeFile(path.join(sessionCorpusDir, "2026-04-11.txt"), "corpus\n", "utf-8");
+    await fs.symlink(outsideDir, dreamsDir);
+
+    const repair = await repairDreamingArtifacts({ workspaceDir, agentId: "writer" });
+
+    expect(repair.changed).toBe(false);
+    expect(repair.archivedSessionCorpus).toBe(false);
+    expect(repair.warnings).toContainEqual(
+      expect.stringContaining("must not traverse symlinked directory"),
+    );
+    await expect(fs.readFile(path.join(sessionCorpusDir, "2026-04-11.txt"), "utf-8")).resolves.toBe(
+      "corpus\n",
+    );
+  });
+
+  it("refuses to archive dreaming artifacts through a symlinked archive parent", async () => {
+    const workspaceDir = await createWorkspace();
+    const sessionCorpusDir = path.join(workspaceDir, "memory", ".dreams", "session-corpus");
+    const outsideDir = path.join(workspaceDir, "outside");
+    await fs.mkdir(sessionCorpusDir, { recursive: true });
+    await fs.writeFile(path.join(sessionCorpusDir, "2026-04-11.txt"), "corpus\n", "utf-8");
+    await fs.mkdir(outsideDir);
+    await fs.symlink(outsideDir, path.join(workspaceDir, ".openclaw-repair"));
+
+    const repair = await repairDreamingArtifacts({ workspaceDir });
+
+    expect(repair.changed).toBe(false);
+    expect(repair.archivedSessionCorpus).toBe(false);
+    expect(repair.warnings).toContainEqual(
+      expect.stringContaining("must not traverse symlinked directory"),
+    );
+    await expect(fs.readFile(path.join(sessionCorpusDir, "2026-04-11.txt"), "utf-8")).resolves.toBe(
+      "corpus\n",
+    );
+  });
+
   it("reports ingestion state present from SQLite when legacy JSON is absent", async () => {
     const workspaceDir = await createWorkspace();
     // Write SQLite ingestion entries but NO legacy session-ingestion.json
