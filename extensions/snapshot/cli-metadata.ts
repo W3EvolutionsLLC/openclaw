@@ -1,6 +1,5 @@
-// Snapshot plugin entrypoint keeps the provider packaged for opt-in use.
+// Snapshot plugin CLI metadata entrypoint.
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
-import { registerSnapshotCli } from "./src/cli.js";
 
 export default definePluginEntry({
   id: "snapshot",
@@ -9,6 +8,7 @@ export default definePluginEntry({
   register(api) {
     api.registerCli(
       async ({ program }) => {
+        const { registerSnapshotCli } = await import("./src/cli.js");
         registerSnapshotCli(program);
       },
       {

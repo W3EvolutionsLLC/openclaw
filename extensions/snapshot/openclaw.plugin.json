@@ -3,8 +3,15 @@
   "name": "Snapshot",
   "description": "Creates and verifies SQLite-safe OpenClaw state snapshots.",
   "activation": {
-    "onStartup": false
+    "onStartup": false,
+    "onCommands": ["snapshot"]
   },
+  "commandAliases": [
+    {
+      "name": "snapshot",
+      "kind": "cli"
+    }
+  ],
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
