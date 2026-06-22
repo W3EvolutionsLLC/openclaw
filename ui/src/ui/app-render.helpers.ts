@@ -19,6 +19,7 @@ import {
   switchChatSession,
   switchChatSessionAndWait,
 } from "../pages/chat/session-switch.ts";
+import { createSessionAndRefresh } from "../pages/sessions/data.ts";
 import type { AppViewState } from "./app-view-state.ts";
 import {
   renderChatSessionSelect as renderChatSessionSelectBase,
@@ -27,7 +28,6 @@ import {
   resolveSessionOptionGroups,
 } from "./chat/session-controls.ts";
 import { resolveControlUiAuthToken } from "./control-ui-auth.ts";
-import { createSessionAndRefresh } from "./controllers/sessions.ts";
 import { icons } from "./icons.ts";
 import { isCronSessionKey, parseSessionKey, resolveSessionDisplayName } from "./session-display.ts";
 import {

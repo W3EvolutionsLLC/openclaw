@@ -23,7 +23,6 @@ import {
 } from "../ui/controllers/dreaming.ts";
 import { loadModelAuthStatusState } from "../ui/controllers/model-auth-status.ts";
 import { loadPresence } from "../ui/controllers/presence.ts";
-import { loadSessions } from "../ui/controllers/sessions.ts";
 import { loadSkills, reconcileSkillsAgentId } from "../ui/controllers/skills.ts";
 import { loadUsage } from "../ui/controllers/usage.ts";
 import { resolveCronJobLastRunStatus } from "../ui/cron-status.ts";
@@ -31,6 +30,7 @@ import { isMonitoredAuthProvider } from "../ui/model-auth-helpers.ts";
 import { normalizeAgentId, parseAgentSessionKey } from "../ui/session-key.ts";
 import { refreshChat } from "./chat/data.ts";
 import { loadConfig, loadConfigSchema } from "./config/data.ts";
+import { loadSessions } from "./sessions/data.ts";
 
 export async function loadSettingsPage(host: SettingsHost, app: SettingsAppHost) {
   const primaryRefresh = loadConfig(app);

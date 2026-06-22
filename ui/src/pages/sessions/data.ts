@@ -3,8 +3,12 @@ import {
   reconcileChatRunFromCurrentSessionRow,
   reconcileChatRunFromSessionRow,
   type ChatRunUiStatus,
-} from "../chat/run-lifecycle.ts";
-import type { GatewayBrowserClient, GatewayHelloOk } from "../gateway.ts";
+} from "../../ui/chat/run-lifecycle.ts";
+import {
+  formatMissingOperatorReadScopeMessage,
+  isMissingOperatorReadScopeError,
+} from "../../ui/controllers/scope-errors.ts";
+import type { GatewayBrowserClient, GatewayHelloOk } from "../../ui/gateway.ts";
 import {
   areUiSessionKeysEquivalent,
   isUiGlobalSessionKey,
@@ -14,8 +18,8 @@ import {
   resolveUiDefaultAgentId,
   resolveUiGlobalAliasAgentId,
   resolveUiSelectedGlobalAgentId,
-} from "../session-key.ts";
-import { isSessionRunActive } from "../session-run-state.ts";
+} from "../../ui/session-key.ts";
+import { isSessionRunActive } from "../../ui/session-run-state.ts";
 import type {
   FastMode,
   GatewaySessionRow,
@@ -24,11 +28,7 @@ import type {
   SessionsCompactionListResult,
   SessionsCompactionRestoreResult,
   SessionsListResult,
-} from "../types.ts";
-import {
-  formatMissingOperatorReadScopeMessage,
-  isMissingOperatorReadScopeError,
-} from "./scope-errors.ts";
+} from "../../ui/types.ts";
 
 type SessionsChatRunState = {
   sessionKey?: string;
