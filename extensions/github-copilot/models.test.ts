@@ -31,6 +31,16 @@ vi.mock("openclaw/plugin-sdk/state-paths", () => ({
 import type { ProviderResolveDynamicModelContext } from "openclaw/plugin-sdk/core";
 import { fetchCopilotModelCatalog, resolveCopilotForwardCompatModel } from "./models.js";
 
+function jsonResponse(payload: unknown): Response {
+  const bytes = new TextEncoder().encode(JSON.stringify(payload));
+  return {
+    ok: true,
+    status: 200,
+    json: async () => payload,
+    arrayBuffer: async () => bytes.slice().buffer,
+  } as Response;
+}
+
 function createMockCtx(
   modelId: string,
   registryModels: Record<string, Record<string, unknown>> = {},
@@ -464,11 +474,7 @@ describe("fetchCopilotModelCatalog", () => {
   };
 
   it("maps Copilot /models entries to ModelDefinitionConfig with real context windows", async () => {
-    const fetchImpl = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => sampleApiResponse,
-    });
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(sampleApiResponse));
 
     const out = await fetchCopilotModelCatalog({
       copilotApiToken: "tid=test",
@@ -539,11 +545,7 @@ describe("fetchCopilotModelCatalog", () => {
   });
 
   it("strips trailing slash from baseUrl when building the /models URL", async () => {
-    const fetchImpl = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => ({ data: [] }),
-    });
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ data: [] }));
 
     await fetchCopilotModelCatalog({
       copilotApiToken: "tid=test",
@@ -555,10 +557,8 @@ describe("fetchCopilotModelCatalog", () => {
   });
 
   it("dedupes by id when API returns duplicates", async () => {
-    const fetchImpl = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => ({
+    const fetchImpl = vi.fn().mockResolvedValue(
+      jsonResponse({
         data: [
           {
             id: "gpt-5.5",
@@ -580,7 +580,7 @@ describe("fetchCopilotModelCatalog", () => {
           },
         ],
       }),
-    });
+    );
 
     const out = await fetchCopilotModelCatalog({
       copilotApiToken: "tid=test",
@@ -593,10 +593,8 @@ describe("fetchCopilotModelCatalog", () => {
   });
 
   it("falls back from malformed live token limits", async () => {
-    const fetchImpl = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => ({
+    const fetchImpl = vi.fn().mockResolvedValue(
+      jsonResponse({
         data: [
           {
             id: "gpt-bad-window",
@@ -624,7 +622,7 @@ describe("fetchCopilotModelCatalog", () => {
           },
         ],
       }),
-    });
+    );
 
     const out = await fetchCopilotModelCatalog({
       copilotApiToken: "tid=test",
@@ -663,11 +661,7 @@ describe("fetchCopilotModelCatalog", () => {
 
   it("throws provider-owned errors for malformed successful /models payloads", async () => {
     for (const payload of [[], { data: {} }, { data: [null] }]) {
-      const fetchImpl = vi.fn().mockResolvedValue({
-        ok: true,
-        status: 200,
-        json: async () => payload,
-      });
+      const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(payload));
 
       await expect(
         fetchCopilotModelCatalog({

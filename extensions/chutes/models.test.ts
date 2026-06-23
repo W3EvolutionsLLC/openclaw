@@ -15,6 +15,16 @@ function restoreEnvVar(name: string, value: string | undefined): void {
   }
 }
 
+function jsonResponse(payload: unknown, init?: { ok?: boolean; status?: number }): Response {
+  const body = new TextEncoder().encode(JSON.stringify(payload));
+  return {
+    ok: init?.ok ?? true,
+    status: init?.status ?? 200,
+    json: async () => payload,
+    arrayBuffer: async () => body.slice().buffer,
+  } as Response;
+}
+
 async function withLiveChutesDiscovery<T>(
   fetchMock: ReturnType<typeof vi.fn>,
   run: () => Promise<T>,
@@ -45,12 +55,11 @@ async function withLiveChutesDiscovery<T>(
 function createAuthEchoFetchMock() {
   return vi.fn().mockImplementation((_url, init?: { headers?: HeadersInit }) => {
     const auth = readAuthorizationHeader(init);
-    return Promise.resolve({
-      ok: true,
-      json: async () => ({
+    return Promise.resolve(
+      jsonResponse({
         data: [{ id: auth ? `${auth}-model` : "public-model" }],
       }),
-    });
+    );
   });
 }
 
@@ -124,9 +133,8 @@ describe("chutes-models", () => {
   });
 
   it("discoverChutesModels correctly maps API response when not in test env", async () => {
-    const mockFetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
+    const mockFetch = vi.fn().mockResolvedValue(
+      jsonResponse({
         data: [
           { id: "zai-org/GLM-4.7-TEE" },
           {
@@ -140,7 +148,7 @@ describe("chutes-models", () => {
           { id: "new-provider/simple-model" },
         ],
       }),
-    });
+    );
     await withLiveChutesDiscovery(mockFetch, async () => {
       const models = await discoverChutesModels("test-token-real-fetch");
       expect(models.length).toBeGreaterThan(0);
@@ -158,9 +166,8 @@ describe("chutes-models", () => {
   });
 
   it("falls back from malformed live token metadata", async () => {
-    const mockFetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
+    const mockFetch = vi.fn().mockResolvedValue(
+      jsonResponse({
         data: [
           {
             id: "provider/bad-window",
@@ -174,7 +181,7 @@ describe("chutes-models", () => {
           },
         ],
       }),
-    });
+    );
 
     await withLiveChutesDiscovery(mockFetch, async () => {
       const models = await discoverChutesModels("malformed-token-metadata");
@@ -200,9 +207,8 @@ describe("chutes-models", () => {
           status: 401,
         });
       }
-      return Promise.resolve({
-        ok: true,
-        json: async () => ({
+      return Promise.resolve(
+        jsonResponse({
           data: [
             {
               id: "Qwen/Qwen3-32B",
@@ -232,7 +238,7 @@ describe("chutes-models", () => {
             },
           ],
         }),
-      });
+      );
     });
     await withLiveChutesDiscovery(mockFetch, async () => {
       const models = await discoverChutesModels("test-token-error");
@@ -260,27 +266,24 @@ describe("chutes-models", () => {
     const mockFetch = vi.fn().mockImplementation((_url, init?: { headers?: HeadersInit }) => {
       const auth = readAuthorizationHeader(init);
       if (auth === "Bearer chutes-token-a") {
-        return Promise.resolve({
-          ok: true,
-          json: async () => ({
+        return Promise.resolve(
+          jsonResponse({
             data: [{ id: "private/model-a" }],
           }),
-        });
+        );
       }
       if (auth === "Bearer chutes-token-b") {
-        return Promise.resolve({
-          ok: true,
-          json: async () => ({
+        return Promise.resolve(
+          jsonResponse({
             data: [{ id: "private/model-b" }],
           }),
-        });
+        );
       }
-      return Promise.resolve({
-        ok: true,
-        json: async () => ({
+      return Promise.resolve(
+        jsonResponse({
           data: [{ id: "public/model" }],
         }),
-      });
+      );
     });
     await withLiveChutesDiscovery(mockFetch, async () => {
       const modelsA = await discoverChutesModels("chutes-token-a");
@@ -330,12 +333,11 @@ describe("chutes-models", () => {
           status: 401,
         });
       }
-      return Promise.resolve({
-        ok: true,
-        json: async () => ({
+      return Promise.resolve(
+        jsonResponse({
           data: [{ id: "public/model" }],
         }),
-      });
+      );
     });
     await withLiveChutesDiscovery(mockFetch, async () => {
       await discoverChutesModels("failed-token");

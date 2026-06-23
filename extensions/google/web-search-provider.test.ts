@@ -9,20 +9,21 @@ type TestModelProviderConfig = NonNullable<
 >[string];
 
 function installGeminiFetch() {
+  const payload = {
+    candidates: [
+      {
+        content: { parts: [{ text: "Grounded answer" }] },
+        groundingMetadata: {
+          groundingChunks: [{ web: { uri: "https://example.com", title: "Example" } }],
+        },
+      },
+    ],
+  };
   const mockFetch = vi.fn((_input?: RequestInfo | URL, _init?: RequestInit) =>
     Promise.resolve({
       ok: true,
-      json: () =>
-        Promise.resolve({
-          candidates: [
-            {
-              content: { parts: [{ text: "Grounded answer" }] },
-              groundingMetadata: {
-                groundingChunks: [{ web: { uri: "https://example.com", title: "Example" } }],
-              },
-            },
-          ],
-        }),
+      json: async () => payload,
+      arrayBuffer: async () => new TextEncoder().encode(JSON.stringify(payload)).buffer,
     } as Response),
   );
   vi.stubGlobal("fetch", withFetchPreconnect(mockFetch));

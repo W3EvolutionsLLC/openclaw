@@ -84,22 +84,33 @@ const {
 } = testing;
 
 function installXaiWebSearchFetch() {
+  const payload = {
+    output: [
+      {
+        type: "message",
+        content: [{ type: "output_text", text: "Grounded Grok answer" }],
+      },
+    ],
+  };
   const mockFetch = vi.fn((_input?: unknown, _init?: unknown) =>
     Promise.resolve({
       ok: true,
-      json: () =>
-        Promise.resolve({
-          output: [
-            {
-              type: "message",
-              content: [{ type: "output_text", text: "Grounded Grok answer" }],
-            },
-          ],
-        }),
+      json: async () => payload,
+      arrayBuffer: async () => new TextEncoder().encode(JSON.stringify(payload)).buffer,
     } as Response),
   );
   global.fetch = withFetchPreconnect(mockFetch);
   return mockFetch;
+}
+
+function jsonResponse(payload: unknown, body = JSON.stringify(payload)): Response {
+  const bytes = new TextEncoder().encode(body);
+  return {
+    ok: true,
+    status: 200,
+    json: async () => payload,
+    arrayBuffer: async () => bytes.slice().buffer,
+  } as Response;
 }
 
 function firstFetchUrl(mockFetch: ReturnType<typeof installXaiWebSearchFetch>) {
@@ -370,18 +381,16 @@ describe("xai web search config resolution", () => {
         statusText: "Unauthorized",
         text: () => Promise.resolve("expired"),
       } as Response)
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () =>
-          Promise.resolve({
-            output: [
-              {
-                type: "message",
-                content: [{ type: "output_text", text: "Fresh OAuth Grok answer" }],
-              },
-            ],
-          }),
-      } as Response);
+      .mockResolvedValueOnce(
+        jsonResponse({
+          output: [
+            {
+              type: "message",
+              content: [{ type: "output_text", text: "Fresh OAuth Grok answer" }],
+            },
+          ],
+        }),
+      );
     global.fetch = withFetchPreconnect(mockFetch);
     const provider = createXaiWebSearchProvider();
     const tool = provider.createTool({
@@ -446,18 +455,16 @@ describe("xai web search config resolution", () => {
         statusText: "Unauthorized",
         text: () => Promise.resolve("revoked"),
       } as Response)
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () =>
-          Promise.resolve({
-            output: [
-              {
-                type: "message",
-                content: [{ type: "output_text", text: "API key fallback Grok answer" }],
-              },
-            ],
-          }),
-      } as Response);
+      .mockResolvedValueOnce(
+        jsonResponse({
+          output: [
+            {
+              type: "message",
+              content: [{ type: "output_text", text: "API key fallback Grok answer" }],
+            },
+          ],
+        }),
+      );
     global.fetch = withFetchPreconnect(mockFetch);
     const provider = createXaiWebSearchProvider();
     const tool = provider.createTool({
@@ -548,18 +555,16 @@ describe("xai web search config resolution", () => {
         statusText: "Unauthorized",
         text: () => Promise.resolve("revoked"),
       } as Response)
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () =>
-          Promise.resolve({
-            output: [
-              {
-                type: "message",
-                content: [{ type: "output_text", text: "Profile API key Grok answer" }],
-              },
-            ],
-          }),
-      } as Response);
+      .mockResolvedValueOnce(
+        jsonResponse({
+          output: [
+            {
+              type: "message",
+              content: [{ type: "output_text", text: "Profile API key Grok answer" }],
+            },
+          ],
+        }),
+      );
     global.fetch = withFetchPreconnect(mockFetch);
     const provider = createXaiWebSearchProvider();
     const tool = provider.createTool({
@@ -616,18 +621,16 @@ describe("xai web search config resolution", () => {
         statusText: "Unauthorized",
         text: () => Promise.resolve("stale api key"),
       } as Response)
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () =>
-          Promise.resolve({
-            output: [
-              {
-                type: "message",
-                content: [{ type: "output_text", text: "Env fallback Grok answer" }],
-              },
-            ],
-          }),
-      } as Response);
+      .mockResolvedValueOnce(
+        jsonResponse({
+          output: [
+            {
+              type: "message",
+              content: [{ type: "output_text", text: "Env fallback Grok answer" }],
+            },
+          ],
+        }),
+      );
     global.fetch = withFetchPreconnect(mockFetch);
     const provider = createXaiWebSearchProvider();
     const tool = provider.createTool({
@@ -848,10 +851,7 @@ describe("xai web search config resolution", () => {
 
   it("reports malformed xAI web search JSON as a provider error", async () => {
     const mockFetch = vi.fn((_input?: unknown, _init?: unknown) =>
-      Promise.resolve({
-        ok: true,
-        json: () => Promise.reject(new SyntaxError("Unexpected token")),
-      } as Response),
+      Promise.resolve(jsonResponse(undefined, "{ nope")),
     );
     global.fetch = withFetchPreconnect(mockFetch);
     const provider = createXaiWebSearchProvider();
@@ -881,10 +881,7 @@ describe("xai web search config resolution", () => {
 
   it("rejects xAI web search success JSON without answer text", async () => {
     const mockFetch = vi.fn((_input?: unknown, _init?: unknown) =>
-      Promise.resolve({
-        ok: true,
-        json: () => Promise.resolve({ output: [] }),
-      } as Response),
+      Promise.resolve(jsonResponse({ output: [] })),
     );
     global.fetch = withFetchPreconnect(mockFetch);
     const provider = createXaiWebSearchProvider();
