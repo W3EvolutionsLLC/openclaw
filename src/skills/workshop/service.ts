@@ -77,7 +77,7 @@ const MAX_PROPOSAL_DRAFT_BYTES = 1024 * 1024;
 const MAX_PROPOSAL_DIRECTORY_ENTRIES = MAX_PROPOSAL_SUPPORT_FILES * 4;
 const MAX_SKILL_PROPOSAL_DESCRIPTION_BYTES = 160;
 const WORKSPACE_SKILL_PATH_REFERENCE_PATTERN =
-  /(?:^|[^A-Za-z0-9._-])(?:\.\/)?skills\/([^/\\\s"'`<>]+)(?=\/|[\s"'`<>),.;:\]]|$)/g;
+  /(?:^|[^A-Za-z0-9._-])(?:\.\/)?skills\/([^/\\\s"'`<>]+)\//g;
 
 /** Lists skill workshop proposals, optionally scoped to a workspace. */
 export async function listSkillProposals(
@@ -254,9 +254,8 @@ export async function proposeCreateSkill(
   if ((await readWorkspaceSkillFile(target.skillFile)) !== null) {
     throw new Error(`Skill already exists at ${target.skillFile}.`);
   }
-  assertCreateProposalDoesNotReferenceExistingWorkspaceSkills({
+  await assertCreateProposalDoesNotReferenceExistingWorkspaceSkills({
     workspaceDir: input.workspaceDir,
-    config: input.config,
     content: input.content,
   });
 
@@ -769,18 +768,22 @@ function assertProposalContentWithinLimit(content: string, maxSkillBytes: number
   }
 }
 
-function assertCreateProposalDoesNotReferenceExistingWorkspaceSkills(params: {
+async function assertCreateProposalDoesNotReferenceExistingWorkspaceSkills(params: {
   workspaceDir: string;
-  config?: OpenClawConfig;
   content: string;
-}): void {
-  const existingSkillKeys = collectWritableWorkspaceSkillPathKeys(params);
+}): Promise<void> {
   const referencedExistingKeys = new Set<string>();
   for (const match of params.content.matchAll(WORKSPACE_SKILL_PATH_REFERENCE_PATTERN)) {
     const referencedKey = normalizeSkillIndexName(match[1] ?? "");
-    const existingKey = existingSkillKeys.get(referencedKey);
-    if (existingKey) {
-      referencedExistingKeys.add(existingKey);
+    if (!referencedKey) {
+      continue;
+    }
+    const target = resolveSkillProposalTarget({
+      workspaceDir: params.workspaceDir,
+      skillName: referencedKey,
+    });
+    if ((await readWorkspaceSkillFile(target.skillFile)) !== null) {
+      referencedExistingKeys.add(target.skillKey);
     }
   }
   if (referencedExistingKeys.size === 0) {
@@ -793,41 +796,6 @@ function assertCreateProposalDoesNotReferenceExistingWorkspaceSkills(params: {
       ", ",
     )}. action=create always creates a new sibling skill; use action=update or propose-update separately for existing skills.`,
   );
-}
-
-function collectWritableWorkspaceSkillPathKeys(params: {
-  workspaceDir: string;
-  config?: OpenClawConfig;
-}): Map<string, string> {
-  const status = buildWorkspaceSkillStatus(params.workspaceDir, { config: params.config });
-  const keys = new Map<string, string>();
-  for (const skill of status.skills) {
-    if (!isWritableWorkspaceSkillPath(params.workspaceDir, skill)) {
-      continue;
-    }
-    const canonicalKey = normalizeSkillIndexName(skill.skillKey || skill.name);
-    if (!canonicalKey) {
-      continue;
-    }
-    keys.set(canonicalKey, canonicalKey);
-    const normalizedName = normalizeSkillIndexName(skill.name);
-    if (normalizedName) {
-      keys.set(normalizedName, canonicalKey);
-    }
-  }
-  return keys;
-}
-
-function isWritableWorkspaceSkillPath(workspaceDir: string, skill: SkillStatusEntry): boolean {
-  if (!WRITABLE_WORKSPACE_SOURCES.has(skill.source)) {
-    return false;
-  }
-  try {
-    assertWritableSkillTarget(workspaceDir, skill);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 async function buildSupportFileMetadata(

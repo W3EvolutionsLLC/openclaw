@@ -395,6 +395,25 @@ describe("skill workshop proposals", () => {
     });
   });
 
+  it("allows create proposals whose markdown heading matches an existing skill name", async () => {
+    const workspaceDir = await makeWorkspace();
+    await writeSkill({
+      dir: path.join(workspaceDir, "skills", "first"),
+      name: "first",
+      description: "Existing first skill",
+      body: "# First\n\nOld first body.\n",
+    });
+
+    const proposal = await proposeCreateSkill({
+      workspaceDir,
+      name: "First Aid",
+      description: "New first aid skill",
+      content: "# First\n\nThis is a new skill, not a skills/first path reference.\n",
+    });
+
+    expect(proposal.record.target.skillKey).toBe("first-aid");
+  });
+
   it("revises pending proposals in place before approval", async () => {
     const workspaceDir = await makeWorkspace();
     const proposal = await proposeCreateSkill({
