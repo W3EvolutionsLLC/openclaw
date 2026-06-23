@@ -76,6 +76,8 @@ const WRITABLE_WORKSPACE_SOURCES = new Set(["openclaw-workspace", "agents-skills
 const MAX_PROPOSAL_DRAFT_BYTES = 1024 * 1024;
 const MAX_PROPOSAL_DIRECTORY_ENTRIES = MAX_PROPOSAL_SUPPORT_FILES * 4;
 const MAX_SKILL_PROPOSAL_DESCRIPTION_BYTES = 160;
+const WORKSPACE_SKILL_PATH_REFERENCE_PATTERN =
+  /(?:^|[^A-Za-z0-9._-])(?:\.\/)?skills\/([^/\\\s"'`<>]+)(?=\/|[\s"'`<>),.;:\]]|$)/g;
 
 /** Lists skill workshop proposals, optionally scoped to a workspace. */
 export async function listSkillProposals(
@@ -252,6 +254,11 @@ export async function proposeCreateSkill(
   if ((await readWorkspaceSkillFile(target.skillFile)) !== null) {
     throw new Error(`Skill already exists at ${target.skillFile}.`);
   }
+  assertCreateProposalDoesNotReferenceExistingWorkspaceSkills({
+    workspaceDir: input.workspaceDir,
+    config: input.config,
+    content: input.content,
+  });
 
   const supportFiles = prepareSkillProposalSupportFiles(input.supportFiles);
   const now = new Date().toISOString();
@@ -759,6 +766,67 @@ function assertProposalContentWithinLimit(content: string, maxSkillBytes: number
     throw new Error(
       `Skill proposal content is too large (${sizeBytes} bytes, max ${maxSkillBytes}).`,
     );
+  }
+}
+
+function assertCreateProposalDoesNotReferenceExistingWorkspaceSkills(params: {
+  workspaceDir: string;
+  config?: OpenClawConfig;
+  content: string;
+}): void {
+  const existingSkillKeys = collectWritableWorkspaceSkillPathKeys(params);
+  const referencedExistingKeys = new Set<string>();
+  for (const match of params.content.matchAll(WORKSPACE_SKILL_PATH_REFERENCE_PATTERN)) {
+    const referencedKey = normalizeSkillIndexName(match[1] ?? "");
+    const existingKey = existingSkillKeys.get(referencedKey);
+    if (existingKey) {
+      referencedExistingKeys.add(existingKey);
+    }
+  }
+  if (referencedExistingKeys.size === 0) {
+    return;
+  }
+
+  const references = [...referencedExistingKeys].toSorted().map((key) => `skills/${key}`);
+  throw new Error(
+    `Create proposal content references existing workspace skill paths: ${references.join(
+      ", ",
+    )}. action=create always creates a new sibling skill; use action=update or propose-update separately for existing skills.`,
+  );
+}
+
+function collectWritableWorkspaceSkillPathKeys(params: {
+  workspaceDir: string;
+  config?: OpenClawConfig;
+}): Map<string, string> {
+  const status = buildWorkspaceSkillStatus(params.workspaceDir, { config: params.config });
+  const keys = new Map<string, string>();
+  for (const skill of status.skills) {
+    if (!isWritableWorkspaceSkillPath(params.workspaceDir, skill)) {
+      continue;
+    }
+    const canonicalKey = normalizeSkillIndexName(skill.skillKey || skill.name);
+    if (!canonicalKey) {
+      continue;
+    }
+    keys.set(canonicalKey, canonicalKey);
+    const normalizedName = normalizeSkillIndexName(skill.name);
+    if (normalizedName) {
+      keys.set(normalizedName, canonicalKey);
+    }
+  }
+  return keys;
+}
+
+function isWritableWorkspaceSkillPath(workspaceDir: string, skill: SkillStatusEntry): boolean {
+  if (!WRITABLE_WORKSPACE_SOURCES.has(skill.source)) {
+    return false;
+  }
+  try {
+    assertWritableSkillTarget(workspaceDir, skill);
+    return true;
+  } catch {
+    return false;
   }
 }
 

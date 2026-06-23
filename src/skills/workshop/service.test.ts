@@ -362,6 +362,39 @@ describe("skill workshop proposals", () => {
     ).rejects.toThrow("Skill already exists");
   });
 
+  it("rejects create proposals that reference existing workspace skill paths", async () => {
+    const workspaceDir = await makeWorkspace();
+    await writeSkill({
+      dir: path.join(workspaceDir, "skills", "foo"),
+      name: "foo",
+      description: "Existing foo skill",
+      body: "# Foo\n\nOld foo body.\n",
+    });
+    await writeSkill({
+      dir: path.join(workspaceDir, "skills", "bar"),
+      name: "bar",
+      description: "Existing bar skill",
+      body: "# Bar\n\nOld bar body.\n",
+    });
+
+    await expect(
+      proposeCreateSkill({
+        workspaceDir,
+        name: "Foo Hardening",
+        description: "Patch existing skills",
+        content:
+          "# Intended patch\n\n- Update skills/foo/SKILL.md.\n- Add notes under ./skills/bar/references/bar.md.\n",
+        supportFiles: [{ path: "scripts/new-helper.js", content: "export const helper = true;\n" }],
+      }),
+    ).rejects.toThrow(
+      "Create proposal content references existing workspace skill paths: skills/bar, skills/foo",
+    );
+
+    await expect(listSkillProposals({ workspaceDir })).resolves.toMatchObject({
+      proposals: [],
+    });
+  });
+
   it("revises pending proposals in place before approval", async () => {
     const workspaceDir = await makeWorkspace();
     const proposal = await proposeCreateSkill({
