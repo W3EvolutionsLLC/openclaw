@@ -1,5 +1,12 @@
 // Control UI controller manages chat gateway state.
 import type { CommandsListResult } from "../../../../packages/gateway-protocol/src/index.js";
+import {
+  GatewayRequestError,
+  type GatewayBrowserClient,
+  type GatewayHelloOk,
+} from "../../api/gateway.ts";
+
+export { GatewayRequestError };
 import type {
   AgentsListResult,
   GatewaySessionRow,
@@ -25,11 +32,6 @@ import {
   formatMissingOperatorReadScopeMessage,
   isMissingOperatorReadScopeError,
 } from "../../ui/controllers/scope-errors.ts";
-import {
-  GatewayRequestError,
-  type GatewayBrowserClient,
-  type GatewayHelloOk,
-} from "../../ui/gateway.ts";
 import { getChatAttachmentDataUrl } from "./attachment-payload-store.ts";
 import {
   isAssistantHeartbeatAckForDisplay,
