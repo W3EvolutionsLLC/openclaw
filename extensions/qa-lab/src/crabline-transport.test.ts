@@ -114,16 +114,65 @@ describe("crabline transport", () => {
   );
 
   it.runIf(supportsCrablineFakeProvider("whatsapp"))(
-    "reports WhatsApp unavailable until the channel plugin can consume it normally",
+    "configures OpenClaw's WhatsApp plugin against a Crabline fake provider server",
     async () => {
       await withTempDir("qa-crabline-transport-", async (outputDir) => {
-        await expect(
-          createQaCrablineTransportAdapter({
-            outputDir,
-            selection: createSelection("whatsapp"),
-            state: createQaBusState(),
-          }),
-        ).rejects.toThrow(/does not yet wire the whatsapp fake provider/u);
+        const transport = await createQaCrablineTransportAdapter({
+          outputDir,
+          selection: createSelection("whatsapp"),
+          state: createQaBusState(),
+        });
+
+        try {
+          expect(transport.requiredPluginIds).toEqual(["whatsapp"]);
+          expect(transport.createGatewayConfig({ baseUrl: "http://127.0.0.1:1" })).toMatchObject({
+            channels: {
+              whatsapp: {
+                accounts: {
+                  default: {
+                    authDir: expect.stringMatching(/whatsapp-auth$/u),
+                    enabled: true,
+                  },
+                },
+                allowFrom: ["*"],
+                dmPolicy: "open",
+                enabled: true,
+                groupAllowFrom: ["*"],
+                groupPolicy: "open",
+              },
+            },
+          });
+          expect(transport.createRuntimeEnvPatch?.()).toMatchObject({
+            NODE_OPTIONS: expect.stringContaining("--import=file://"),
+            OPENCLAW_WHATSAPP_FAKE_PROVIDER_ACCESS_TOKEN: "crabline-whatsapp-access-token",
+            OPENCLAW_WHATSAPP_FAKE_PROVIDER_ACCOUNT_ID: "default",
+            OPENCLAW_WHATSAPP_FAKE_PROVIDER_API_ROOT: expect.stringMatching(
+              /^http:\/\/127\.0\.0\.1:\d+\/crabline\/whatsapp$/u,
+            ),
+            OPENCLAW_WHATSAPP_FAKE_PROVIDER_SELF_JID: "15550000000@s.whatsapp.net",
+          });
+          await expect(
+            fs.readFile(
+              path.join(outputDir, "artifacts", "crabline", "whatsapp-auth", "creds.json"),
+              "utf8",
+            ),
+          ).resolves.toContain("15550000000@s.whatsapp.net");
+          await expect(
+            fs.readFile(
+              path.join(outputDir, "artifacts", "crabline", "whatsapp-preload.mjs"),
+              "utf8",
+            ),
+          ).resolves.toContain("createWhatsAppBaileysMockSocket");
+
+          const manifest = JSON.parse(
+            await fs.readFile(path.join(outputDir, OPENCLAW_CRABLINE_MANIFEST_PATH), "utf8"),
+          ) as {
+            provider?: string;
+          };
+          expect(manifest.provider).toBe("whatsapp");
+        } finally {
+          await transport.cleanup?.();
+        }
       });
     },
   );
