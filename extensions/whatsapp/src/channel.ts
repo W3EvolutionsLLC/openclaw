@@ -19,10 +19,6 @@ import { whatsappChannelOutbound, whatsappMessageAdapter } from "./channel-outbo
 import { whatsappCommandPolicy } from "./command-policy.js";
 import { formatWhatsAppConfigAllowFromEntries } from "./config-accessors.js";
 import {
-  registerWhatsAppConnectionController,
-  unregisterWhatsAppConnectionController,
-} from "./connection-controller-registry.js";
-import {
   resolveWhatsAppGroupIntroHint,
   resolveWhatsAppMentionStripRegexes,
 } from "./group-intro.js";
@@ -31,10 +27,6 @@ import {
   resolveWhatsAppGroupToolPolicy,
 } from "./group-policy.js";
 import { checkWhatsAppHeartbeatReady } from "./heartbeat.js";
-import {
-  createWhatsAppHttpApiConnectionController,
-  resolveWhatsAppHttpApiConfig,
-} from "./http-api-listener.js";
 import {
   isWhatsAppGroupJid,
   isWhatsAppNewsletterJid,
@@ -98,9 +90,6 @@ export const whatsappPlugin: ChannelPlugin<ResolvedWhatsAppAccount> =
         setupWizard: whatsappSetupWizardProxy,
         setup: whatsappSetupAdapter,
         isConfigured: async (account) => {
-          if (resolveWhatsAppHttpApiConfig()) {
-            return true;
-          }
           const channelRuntime = await loadWhatsAppChannelRuntime();
           return (await channelRuntime.readWebAuthState(account.authDir)) === "linked";
         },
@@ -335,37 +324,6 @@ export const whatsappPlugin: ChannelPlugin<ResolvedWhatsAppAccount> =
       gateway: {
         startAccount: async (ctx) => {
           const account = ctx.account;
-          const httpApiConfig = resolveWhatsAppHttpApiConfig();
-          if (httpApiConfig) {
-            const controller = createWhatsAppHttpApiConnectionController(httpApiConfig);
-            registerWhatsAppConnectionController(account.accountId, controller);
-            const now = Date.now();
-            ctx.setStatus({
-              accountId: account.accountId,
-              connected: true,
-              healthState: "healthy",
-              lastConnectedAt: now,
-              lastEventAt: now,
-              linked: true,
-              reconnectAttempts: 0,
-              running: true,
-            });
-            ctx.log?.info(
-              `[${account.accountId}] starting HTTP API listener (${httpApiConfig.apiRoot})`,
-            );
-            try {
-              await new Promise<void>((resolve) => {
-                if (ctx.abortSignal.aborted) {
-                  resolve();
-                  return;
-                }
-                ctx.abortSignal.addEventListener("abort", () => resolve(), { once: true });
-              });
-            } finally {
-              unregisterWhatsAppConnectionController(account.accountId, controller);
-            }
-            return;
-          }
           const { e164, jid } = (await loadWhatsAppChannelRuntime()).readWebSelfId(account.authDir);
           const identity = e164 ? e164 : jid ? `jid ${jid}` : "unknown";
           ctx.log?.info(`[${account.accountId}] starting provider (${identity})`);

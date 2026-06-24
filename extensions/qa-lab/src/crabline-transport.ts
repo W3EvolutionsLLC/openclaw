@@ -30,6 +30,7 @@ import type {
 
 const CRABLINE_TRANSPORT_ID = "crabline";
 const RECORDER_SYNC_INTERVAL_MS = 50;
+const OPENCLAW_CRABLINE_TRANSPORT_CHANNELS = new Set(["slack", "telegram"]);
 
 export type QaCrablineProviderChannel = "slack" | "telegram" | "whatsapp";
 
@@ -42,13 +43,14 @@ export type QaCrablineChannelDriverSelection = {
 
 type QaCrablineManifest = {
   accessToken?: string;
-  adminToken: string;
+  adminToken?: string;
   endpoints: {
     adminInboundUrl: string;
     apiRoot: string;
   };
   provider: string;
   recorderPath: string;
+  selfJid?: string;
 };
 
 type QaStartedOpenClawCrablineAdapter = Omit<
@@ -79,7 +81,13 @@ function supportedCrablineFakeProviderChannels() {
 function assertCrablineFakeProviderChannelAvailable(channel: QaCrablineProviderChannel) {
   const supportedChannels = supportedCrablineFakeProviderChannels();
   if (supportedChannels.has(channel)) {
-    return;
+    if (OPENCLAW_CRABLINE_TRANSPORT_CHANNELS.has(channel)) {
+      return;
+    }
+    throw new QaSuiteInfraError(
+      "transport_unavailable",
+      `OpenClaw does not yet wire the ${channel} fake provider into its ${channel} channel plugin.`,
+    );
   }
   throw new QaSuiteInfraError(
     "transport_unavailable",
@@ -157,7 +165,9 @@ async function postCrablineInbound(params: {
     init: {
       body: JSON.stringify(params.providerBody),
       headers: {
-        authorization: `Bearer ${params.adapter.manifest.adminToken}`,
+        ...(params.adapter.manifest.adminToken
+          ? { authorization: `Bearer ${params.adapter.manifest.adminToken}` }
+          : {}),
         "content-type": "application/json",
       },
       method: "POST",
@@ -200,16 +210,15 @@ function toQaTransportGatewayConfig(value: unknown): QaTransportGatewayConfig {
 function createCrablineRuntimeEnvPatch(
   adapter: QaStartedOpenClawCrablineAdapter,
 ): NodeJS.ProcessEnv {
-  if (adapter.manifest.provider === "whatsapp") {
-    if (!adapter.manifest.accessToken) {
-      throw new Error("Crabline WhatsApp manifest is missing an access token.");
-    }
+  const env = adapter.createChannelDriverSmokeEnv({});
+  if (adapter.manifest.provider === "slack" && env.SLACK_API_URL) {
+    const { SLACK_API_URL, ...rest } = env;
     return {
-      WHATSAPP_ACCESS_TOKEN: adapter.manifest.accessToken,
-      WHATSAPP_API_ROOT: adapter.manifest.endpoints.apiRoot,
+      ...rest,
+      OPENCLAW_SLACK_API_URL: SLACK_API_URL,
     };
   }
-  return adapter.createChannelDriverSmokeEnv({});
+  return env;
 }
 
 function createCrablineState(params: {

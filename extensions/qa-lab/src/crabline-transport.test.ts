@@ -95,7 +95,7 @@ describe("crabline transport", () => {
             },
           });
           expect(transport.createRuntimeEnvPatch?.()).toMatchObject({
-            SLACK_API_URL: expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+\/api\/$/u),
+            OPENCLAW_SLACK_API_URL: expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+\/api\/$/u),
             SLACK_BOT_TOKEN: "xoxb-crabline-slack-token",
             SLACK_SIGNING_SECRET: "crabline-slack-signing-secret",
           });
@@ -114,26 +114,16 @@ describe("crabline transport", () => {
   );
 
   it.runIf(supportsCrablineFakeProvider("whatsapp"))(
-    "passes Crabline WhatsApp API env to the gateway runtime",
+    "reports WhatsApp unavailable until the channel plugin can consume it normally",
     async () => {
       await withTempDir("qa-crabline-transport-", async (outputDir) => {
-        const transport = await createQaCrablineTransportAdapter({
-          outputDir,
-          selection: createSelection("whatsapp"),
-          state: createQaBusState(),
-        });
-
-        try {
-          expect(transport.requiredPluginIds).toEqual(["whatsapp"]);
-          expect(transport.createRuntimeEnvPatch?.()).toMatchObject({
-            WHATSAPP_ACCESS_TOKEN: "crabline-whatsapp-access-token",
-            WHATSAPP_API_ROOT: expect.stringMatching(
-              /^http:\/\/127\.0\.0\.1:\d+\/crabline\/whatsapp$/u,
-            ),
-          });
-        } finally {
-          await transport.cleanup?.();
-        }
+        await expect(
+          createQaCrablineTransportAdapter({
+            outputDir,
+            selection: createSelection("whatsapp"),
+            state: createQaBusState(),
+          }),
+        ).rejects.toThrow(/does not yet wire the whatsapp fake provider/u);
       });
     },
   );
