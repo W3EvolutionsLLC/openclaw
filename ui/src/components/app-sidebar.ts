@@ -63,6 +63,7 @@ export class AppSidebar extends LitElement {
   @state() private sessionsLoading = false;
 
   private stopSessionsSubscription: (() => void) | undefined;
+  private stopAgentSelectionSubscription: (() => void) | undefined;
   private stopGatewaySubscription: (() => void) | undefined;
 
   override connectedCallback() {
@@ -74,6 +75,8 @@ export class AppSidebar extends LitElement {
   override disconnectedCallback() {
     this.stopSessionsSubscription?.();
     this.stopSessionsSubscription = undefined;
+    this.stopAgentSelectionSubscription?.();
+    this.stopAgentSelectionSubscription = undefined;
     this.stopGatewaySubscription?.();
     this.stopGatewaySubscription = undefined;
     super.disconnectedCallback();
@@ -81,12 +84,20 @@ export class AppSidebar extends LitElement {
 
   private startSubscriptions() {
     const context = this.context;
-    if (!context || this.stopSessionsSubscription || this.stopGatewaySubscription) {
+    if (
+      !context ||
+      this.stopSessionsSubscription ||
+      this.stopAgentSelectionSubscription ||
+      this.stopGatewaySubscription
+    ) {
       return;
     }
-    this.updateSessions(context.sessions.snapshot);
-    this.stopSessionsSubscription = context.sessions.subscribe((snapshot) => {
-      this.updateSessions(snapshot);
+    this.updateSessions(context.sessions.state);
+    this.stopSessionsSubscription = context.sessions.subscribe((state) => {
+      this.updateSessions(state);
+    });
+    this.stopAgentSelectionSubscription = context.agentSelection.subscribe(() => {
+      this.requestUpdate();
     });
     this.stopGatewaySubscription = context.gateway.subscribe(() => {
       this.requestUpdate();
@@ -122,7 +133,8 @@ export class AppSidebar extends LitElement {
     const navigation = resolveSessionNavigation({
       result: this.sessionsResult,
       sessionKey: routeSessionKey,
-      assistantAgentId: context?.gateway.snapshot.assistantAgentId,
+      assistantAgentId:
+        context?.agentSelection.state.selectedId ?? context?.gateway.snapshot.assistantAgentId,
       hello: context?.gateway.snapshot.hello,
     });
     const recentSessions = navigation.recentSessions.map((row) => ({
