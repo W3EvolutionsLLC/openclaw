@@ -3183,7 +3183,7 @@ packages:
     os: [win32]
 
   '@openclaw/crabline@0.1.2':
-    resolution: {integrity: sha512-FqPi1KxTJKl9jPyYhHvh65SPw/EQ8NuL1ubL4jtIcCoINxz1p95e+9b796/Kd+wWuaVADDrGp0GJ8X2cvSYcTQ==}
+    resolution: {integrity: sha512-TZq5JmCexXMfK+fib3aaQsFQAF6JIu7kz/lTLtkNzIhQG0/lorL1cFXLmrv9FNh+hW5zev9d+zonJQn4FfExWw==}
     engines: {node: '>=22'}
     hasBin: true
 
