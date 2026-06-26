@@ -8,7 +8,7 @@ import {
   setWhatsAppMonitorRuntimeOptions,
 } from "@openclaw/whatsapp/qa-runtime-api.js";
 import { beforeEach, describe, expect, it } from "vitest";
-import { QA_LAB_SLACK_API_URL_ENV } from "./crabline-provider-runtimes/env.js";
+import { QA_LAB_SLACK_API_URL_ENV } from "./crabline-provider-runtimes/slack.js";
 import { installFakeProviderRuntimeHooks } from "./fake-provider-runtime-hooks.js";
 
 describe("installFakeProviderRuntimeHooks", () => {
