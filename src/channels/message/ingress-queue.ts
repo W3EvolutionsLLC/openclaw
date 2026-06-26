@@ -181,6 +181,13 @@ export type CreateChannelIngressQueueOptions = {
 type ChannelIngressDatabase = Pick<OpenClawStateKyselyDatabase, "channel_ingress_events">;
 type ChannelIngressRow = Selectable<ChannelIngressEvents>;
 
+export type RecoverAllStaleChannelIngressClaimsOptions = {
+  stateDir?: string;
+  staleMs?: number;
+  now?: number;
+  lastError?: string;
+};
+
 function normalizePart(value: string | undefined, fallback: string): string {
   const normalized = value?.trim();
   return normalized ? normalized : fallback;
@@ -852,4 +859,55 @@ export function createChannelIngressQueue<
     recoverStaleClaims,
     prune,
   };
+}
+
+export async function recoverAllStaleChannelIngressClaims(
+  options: RecoverAllStaleChannelIngressClaimsOptions = {},
+): Promise<number> {
+  const staleMs = Math.max(0, Math.floor(options.staleMs ?? 60_000));
+  const recoveredAt = options.now ?? Date.now();
+  const cutoff = recoveredAt - staleMs;
+  const database = openStateDatabase(options.stateDir);
+  const rows = executeSqliteQuerySync(
+    database.db,
+    getChannelIngressKysely(database.db)
+      .selectFrom("channel_ingress_events")
+      .select(["queue_name", "event_id", "claim_token"])
+      .where("status", "=", "claimed")
+      .where("claimed_at", "<=", cutoff)
+      .orderBy("claimed_at", "asc")
+      .orderBy("received_at", "asc")
+      .orderBy("event_id", "asc"),
+  ).rows;
+
+  let recovered = 0;
+  for (const row of rows) {
+    recovered += runOpenClawStateWriteTransaction(
+      (tx) => {
+        const baseUpdate = getChannelIngressKysely(tx.db)
+          .updateTable("channel_ingress_events")
+          .set((eb) => ({
+            status: "pending",
+            claim_token: null,
+            claim_owner: null,
+            claimed_at: null,
+            attempts: eb("attempts", "+", 1),
+            last_attempt_at: recoveredAt,
+            last_error:
+              options.lastError ?? "recovered stale channel ingress claim during gateway startup",
+            updated_at: recoveredAt,
+          }))
+          .where("queue_name", "=", row.queue_name)
+          .where("event_id", "=", row.event_id)
+          .where("status", "=", "claimed");
+        const update =
+          row.claim_token === null
+            ? baseUpdate.where("claim_token", "is", null)
+            : baseUpdate.where("claim_token", "=", row.claim_token);
+        return affectedRows(executeSqliteQuerySync(tx.db, update));
+      },
+      { path: database.path },
+    );
+  }
+  return recovered;
 }

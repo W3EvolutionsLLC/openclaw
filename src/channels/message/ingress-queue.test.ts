@@ -9,7 +9,11 @@ import {
   closeOpenClawStateDatabaseForTest,
   openOpenClawStateDatabase,
 } from "../../state/openclaw-state-db.js";
-import { createChannelIngressQueue, createStateDirEnv } from "./ingress-queue.js";
+import {
+  createChannelIngressQueue,
+  createStateDirEnv,
+  recoverAllStaleChannelIngressClaims,
+} from "./ingress-queue.js";
 
 type ChannelIngressTestDatabase = Pick<OpenClawStateKyselyDatabase, "channel_ingress_events">;
 
@@ -349,6 +353,62 @@ describe("channel ingress queue", () => {
       expect(await queue.prune({ completedTtlMs: 10, failedTtlMs: 10, now: 40 })).toBe(3);
       expect(await queue.listPending()).toEqual([]);
       expect(await queue.listClaims()).toEqual([]);
+    });
+  });
+
+  it("recovers old claimed rows across queues at startup", async () => {
+    await withTempState(async (stateDir) => {
+      const telegram = createChannelIngressQueue<{ text: string }>({
+        channelId: "telegram",
+        accountId: "default",
+        stateDir,
+        now: () => 100,
+      });
+      const whatsapp = createChannelIngressQueue<{ text: string }>({
+        channelId: "whatsapp",
+        accountId: "default",
+        stateDir,
+        now: () => 100,
+      });
+      const fresh = createChannelIngressQueue<{ text: string }>({
+        channelId: "telegram",
+        accountId: "fresh",
+        stateDir,
+        now: () => 1_000,
+      });
+
+      await telegram.enqueue("tg-old", { text: "old" });
+      await whatsapp.enqueue("wa-old", { text: "old" });
+      await fresh.enqueue("tg-fresh", { text: "fresh" });
+
+      const oldTelegram = await telegram.claim("tg-old", {
+        ownerId: `${process.pid}:previous-gateway`,
+      });
+      const oldWhatsapp = await whatsapp.claim("wa-old", { ownerId: "999999999" });
+      const freshTelegram = await fresh.claim("tg-fresh", { ownerId: "999999999" });
+      if (!oldTelegram || !oldWhatsapp || !freshTelegram) {
+        throw new Error("expected all ingress events to be claimed");
+      }
+
+      expect(
+        await recoverAllStaleChannelIngressClaims({
+          stateDir,
+          staleMs: 500,
+          now: 1_000,
+        }),
+      ).toBe(2);
+
+      expect((await telegram.listPending()).map((record) => record.id)).toEqual(["tg-old"]);
+      expect((await whatsapp.listPending()).map((record) => record.id)).toEqual(["wa-old"]);
+      expect((await fresh.listPending()).map((record) => record.id)).toEqual([]);
+      expect((await fresh.listClaims()).map((record) => record.id)).toEqual(["tg-fresh"]);
+
+      const recovered = await telegram.listPending();
+      expect(recovered[0]).toMatchObject({
+        attempts: 1,
+        lastAttemptAt: 1_000,
+        lastError: "recovered stale channel ingress claim during gateway startup",
+      });
     });
   });
 });

@@ -104,6 +104,7 @@ const resolveOpenClawPackageRootSync = vi.hoisted(() => vi.fn((_params: unknown)
 const runChannelPluginStartupMaintenance = vi.hoisted(() =>
   vi.fn(async (_params: unknown) => undefined),
 );
+const runStartupIngressClaimSweep = vi.hoisted(() => vi.fn(async (_params: unknown) => undefined));
 const runStartupSessionMigration = vi.hoisted(() => vi.fn(async (_params: unknown) => undefined));
 vi.mock("../agents/agent-scope.js", () => ({
   resolveAgentWorkspaceDir: () => "/workspace",
@@ -158,6 +159,10 @@ vi.mock("./server-plugin-bootstrap.js", () => ({
 
 vi.mock("./server-startup-session-migration.js", () => ({
   runStartupSessionMigration: (params: unknown) => runStartupSessionMigration(params),
+}));
+
+vi.mock("./server-startup-ingress-sweep.js", () => ({
+  runStartupIngressClaimSweep: (params: unknown) => runStartupIngressClaimSweep(params),
 }));
 
 function createLog() {
@@ -251,6 +256,7 @@ describe("prepareGatewayPluginBootstrap startup plugins", () => {
     });
     resolveOpenClawPackageRootSync.mockClear().mockReturnValue("/package");
     runChannelPluginStartupMaintenance.mockClear();
+    runStartupIngressClaimSweep.mockClear();
     runStartupSessionMigration.mockClear();
   });
   it("derives startup activation from source config instead of runtime plugin defaults", async () => {
@@ -367,6 +373,10 @@ describe("prepareGatewayPluginBootstrap startup plugins", () => {
     expect(startupInput.cfg?.plugins?.entries?.["memory-core"]?.config).toEqual({
       dreaming: { enabled: false },
     });
+    expect(runStartupIngressClaimSweep).toHaveBeenCalledOnce();
+    expect(runStartupIngressClaimSweep.mock.invocationCallOrder[0]).toBeLessThan(
+      runChannelPluginStartupMaintenance.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+    );
   });
 
   it("loads only deferred setup-runtime plugins during pre-bind bootstrap", async () => {
