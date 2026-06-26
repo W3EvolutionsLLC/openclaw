@@ -62,14 +62,6 @@ export async function prepareGatewayPluginBootstrap(params: {
   const shouldRunStartupMaintenance =
     !params.minimalTestGateway || startupMaintenanceConfig.channels !== undefined;
   if (shouldRunStartupMaintenance) {
-    if (!params.minimalTestGateway) {
-      const { runStartupIngressClaimSweep } = await import("./server-startup-ingress-sweep.js");
-      await runStartupIngressClaimSweep({
-        cfg: params.cfgAtStart,
-        env: process.env,
-        log: params.log,
-      });
-    }
     const { runChannelPluginStartupMaintenance } =
       await import("../channels/plugins/lifecycle-startup.js");
     const startupTasks = [

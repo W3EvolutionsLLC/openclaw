@@ -137,6 +137,9 @@ export type ChannelIngressQueue<TPayload, TMetadata = unknown, TCompletedMetadat
     ownerId?: string;
     blockedLaneKeys?: Iterable<string>;
     staleMs?: number;
+    orderBy?: "received" | "id";
+    scanLimit?: number;
+    deriveLaneKey?: (record: ChannelIngressQueueRecord<TPayload, TMetadata>) => string | undefined;
   }): Promise<ChannelIngressQueueClaim<TPayload, TMetadata> | null>;
   claim(
     id: string,
@@ -180,13 +183,6 @@ export type CreateChannelIngressQueueOptions = {
 
 type ChannelIngressDatabase = Pick<OpenClawStateKyselyDatabase, "channel_ingress_events">;
 type ChannelIngressRow = Selectable<ChannelIngressEvents>;
-
-export type RecoverAllStaleChannelIngressClaimsOptions = {
-  stateDir?: string;
-  staleMs?: number;
-  now?: number;
-  lastError?: string;
-};
 
 function normalizePart(value: string | undefined, fallback: string): string {
   const normalized = value?.trim();
@@ -323,6 +319,10 @@ function rowToEnqueueResult<TPayload, TMetadata, TCompletedMetadata>(
 
 function normalizeLimit(limit: number | "all" | undefined): number {
   return limit === "all" ? Number.MAX_SAFE_INTEGER : Math.max(1, Math.floor(limit ?? 100));
+}
+
+function normalizeScanLimit(limit: number | undefined): number {
+  return Math.max(1, Math.floor(limit ?? 100));
 }
 
 function normalizeMaxEntries(value: number | undefined): number | null {
@@ -484,22 +484,33 @@ export function createChannelIngressQueue<
         const kysely = getChannelIngressKysely(tx.db);
         const baseSelect = kysely
           .selectFrom("channel_ingress_events")
-          .select(["event_id", "lane_key"])
+          .selectAll()
           .where("queue_name", "=", queueName)
           .where("status", "=", "pending");
-        const select =
-          blocked.size === 0
-            ? baseSelect
-            : baseSelect.where((eb) =>
-                eb.or([eb("lane_key", "is", null), eb("lane_key", "not in", [...blocked])]),
-              );
-        const selected = executeSqliteQueryTakeFirstSync(
-          tx.db,
-          select.orderBy("received_at", "asc").orderBy("event_id", "asc").limit(1),
-        );
+        let select = baseSelect;
+        if (blocked.size > 0 && !claimOptions?.deriveLaneKey) {
+          select = select.where((eb) =>
+            eb.or([eb("lane_key", "is", null), eb("lane_key", "not in", [...blocked])]),
+          );
+        }
+        let orderedSelect =
+          claimOptions?.orderBy === "id"
+            ? select.orderBy("event_id", "asc")
+            : select.orderBy("received_at", "asc").orderBy("event_id", "asc");
+        orderedSelect =
+          claimOptions?.deriveLaneKey === undefined
+            ? orderedSelect.limit(1)
+            : orderedSelect.limit(normalizeScanLimit(claimOptions.scanLimit));
+        const rows = executeSqliteQuerySync(tx.db, orderedSelect).rows;
+        const selected = rows.find((row) => {
+          const laneKey = row.lane_key ?? claimOptions?.deriveLaneKey?.(baseRecord(row));
+          return !laneKey || !blocked.has(laneKey);
+        });
         if (!selected) {
           return null;
         }
+        const derivedLaneKey =
+          selected.lane_key ?? claimOptions?.deriveLaneKey?.(baseRecord(selected));
         const token = randomUUID();
         const claimedAt = now();
         const ownerId = normalizePart(claimOptions?.ownerId, `${process.pid}`);
@@ -512,6 +523,7 @@ export function createChannelIngressQueue<
               claim_token: token,
               claim_owner: ownerId,
               claimed_at: claimedAt,
+              ...(derivedLaneKey ? { lane_key: derivedLaneKey } : {}),
               updated_at: claimedAt,
             })
             .where("queue_name", "=", queueName)
@@ -859,55 +871,4 @@ export function createChannelIngressQueue<
     recoverStaleClaims,
     prune,
   };
-}
-
-export async function recoverAllStaleChannelIngressClaims(
-  options: RecoverAllStaleChannelIngressClaimsOptions = {},
-): Promise<number> {
-  const staleMs = Math.max(0, Math.floor(options.staleMs ?? 60_000));
-  const recoveredAt = options.now ?? Date.now();
-  const cutoff = recoveredAt - staleMs;
-  const database = openStateDatabase(options.stateDir);
-  const rows = executeSqliteQuerySync(
-    database.db,
-    getChannelIngressKysely(database.db)
-      .selectFrom("channel_ingress_events")
-      .select(["queue_name", "event_id", "claim_token"])
-      .where("status", "=", "claimed")
-      .where("claimed_at", "<=", cutoff)
-      .orderBy("claimed_at", "asc")
-      .orderBy("received_at", "asc")
-      .orderBy("event_id", "asc"),
-  ).rows;
-
-  let recovered = 0;
-  for (const row of rows) {
-    recovered += runOpenClawStateWriteTransaction(
-      (tx) => {
-        const baseUpdate = getChannelIngressKysely(tx.db)
-          .updateTable("channel_ingress_events")
-          .set((eb) => ({
-            status: "pending",
-            claim_token: null,
-            claim_owner: null,
-            claimed_at: null,
-            attempts: eb("attempts", "+", 1),
-            last_attempt_at: recoveredAt,
-            last_error:
-              options.lastError ?? "recovered stale channel ingress claim during gateway startup",
-            updated_at: recoveredAt,
-          }))
-          .where("queue_name", "=", row.queue_name)
-          .where("event_id", "=", row.event_id)
-          .where("status", "=", "claimed");
-        const update =
-          row.claim_token === null
-            ? baseUpdate.where("claim_token", "is", null)
-            : baseUpdate.where("claim_token", "=", row.claim_token);
-        return affectedRows(executeSqliteQuerySync(tx.db, update));
-      },
-      { path: database.path },
-    );
-  }
-  return recovered;
 }
