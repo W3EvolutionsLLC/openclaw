@@ -70,10 +70,3 @@ export {
   type WhatsAppQaDriverObservedMessage,
   type WhatsAppQaDriverSession,
 } from "./src/qa-driver.runtime.js";
-export {
-  getRegisteredWhatsAppConnectionController,
-  registerWhatsAppConnectionController,
-  unregisterWhatsAppConnectionController,
-  type WhatsAppConnectionControllerHandle,
-} from "./src/connection-controller-registry.js";
-export { OPENCLAW_WHATSAPP_SOCKET_FACTORY_MODULE_ENV } from "./src/socket-factory-module.js";

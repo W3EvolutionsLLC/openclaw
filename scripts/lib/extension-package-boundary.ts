@@ -84,7 +84,11 @@ export const EXTENSION_PACKAGE_BOUNDARY_BASE_PATHS = {
   "@openclaw/qa-channel/api.js": ["../dist/plugin-sdk/extensions/qa-channel/api.d.ts"],
   "@openclaw/discord/api.js": ["../dist/plugin-sdk/extensions/discord/api.d.ts"],
   "@openclaw/slack/api.js": ["../dist/plugin-sdk/extensions/slack/api.d.ts"],
+  "@openclaw/slack/qa-runtime-api.js": ["../dist/plugin-sdk/extensions/slack/qa-runtime-api.d.ts"],
   "@openclaw/whatsapp/api.js": ["../dist/plugin-sdk/extensions/whatsapp/api.d.ts"],
+  "@openclaw/whatsapp/qa-runtime-api.js": [
+    "../dist/plugin-sdk/extensions/whatsapp/qa-runtime-api.d.ts",
+  ],
   "@openclaw/llm-core": ["../dist/plugin-sdk/packages/llm-core/src/index.d.ts"],
   "@openclaw/llm-core/diagnostics": [
     "../dist/plugin-sdk/packages/llm-core/src/utils/diagnostics.d.ts",
@@ -256,7 +260,9 @@ export const EXTENSION_PACKAGE_BOUNDARY_XAI_PATHS = {
       "openclaw/plugin-sdk/channel-secret-tts-runtime": _omitTts,
       "@openclaw/discord/api.js": _omitDiscord,
       "@openclaw/slack/api.js": _omitSlack,
+      "@openclaw/slack/qa-runtime-api.js": _omitSlackQaRuntime,
       "@openclaw/whatsapp/api.js": _omitWhatsApp,
+      "@openclaw/whatsapp/qa-runtime-api.js": _omitWhatsAppQaRuntime,
       ...rest
     }) => rest)(EXTENSION_PACKAGE_BOUNDARY_BASE_PATHS),
     "../",

@@ -252,15 +252,19 @@ function createBundledPluginPackagePublicSurfaceAliasFixture() {
   );
   const sourceApiPath = path.join(extensionRoot, "api.ts");
   const sourceRuntimeApiPath = path.join(extensionRoot, "runtime-api.ts");
+  const sourceQaRuntimeApiPath = path.join(extensionRoot, "qa-runtime-api.ts");
   const sourceTestApiPath = path.join(extensionRoot, "test-api.ts");
   const distApiPath = path.join(distExtensionRoot, "api.js");
   const distRuntimeApiPath = path.join(distExtensionRoot, "runtime-api.js");
+  const distQaRuntimeApiPath = path.join(distExtensionRoot, "qa-runtime-api.js");
   const distTestApiPath = path.join(distExtensionRoot, "test-api.js");
   fs.writeFileSync(sourceApiPath, "export const slackApi = 'source';\n", "utf-8");
   fs.writeFileSync(sourceRuntimeApiPath, "export const slackRuntimeApi = 'source';\n", "utf-8");
+  fs.writeFileSync(sourceQaRuntimeApiPath, "export const slackQaRuntimeApi = 'source';\n", "utf-8");
   fs.writeFileSync(sourceTestApiPath, "export const slackTestApi = 'source';\n", "utf-8");
   fs.writeFileSync(distApiPath, "export const slackApi = 'dist';\n", "utf-8");
   fs.writeFileSync(distRuntimeApiPath, "export const slackRuntimeApi = 'dist';\n", "utf-8");
+  fs.writeFileSync(distQaRuntimeApiPath, "export const slackQaRuntimeApi = 'dist';\n", "utf-8");
   fs.writeFileSync(distTestApiPath, "export const slackTestApi = 'dist';\n", "utf-8");
   fs.writeFileSync(
     path.join(extensionRoot, "internal.ts"),
@@ -270,9 +274,11 @@ function createBundledPluginPackagePublicSurfaceAliasFixture() {
   return {
     ...fixture,
     distApiPath,
+    distQaRuntimeApiPath,
     distRuntimeApiPath,
     distTestApiPath,
     sourceApiPath,
+    sourceQaRuntimeApiPath,
     sourceRuntimeApiPath,
     sourceTestApiPath,
   };
@@ -1777,7 +1783,7 @@ describe("plugin sdk alias helpers", () => {
   });
 
   it("aliases bundled plugin package public surfaces for source plugin transforms", () => {
-    const { fixture, sourceApiPath, sourceRuntimeApiPath } =
+    const { fixture, sourceApiPath, sourceQaRuntimeApiPath, sourceRuntimeApiPath } =
       createBundledPluginPackagePublicSurfaceAliasFixture();
     const sourcePluginEntry = writePluginEntry(
       fixture.root,
@@ -1793,6 +1799,9 @@ describe("plugin sdk alias helpers", () => {
     );
     expect(fs.realpathSync(aliases["@openclaw/slack/runtime-api.js"] ?? "")).toBe(
       fs.realpathSync(sourceRuntimeApiPath),
+    );
+    expect(fs.realpathSync(aliases["@openclaw/slack/qa-runtime-api.js"] ?? "")).toBe(
+      fs.realpathSync(sourceQaRuntimeApiPath),
     );
     expect(aliases["@openclaw/slack/test-api.js"]).toBeUndefined();
     expect(aliases["@openclaw/slack/internal.js"]).toBeUndefined();
@@ -1815,7 +1824,7 @@ describe("plugin sdk alias helpers", () => {
   });
 
   it("aliases bundled plugin package public surfaces to dist when dist resolution is requested", () => {
-    const { fixture, distApiPath, distRuntimeApiPath } =
+    const { fixture, distApiPath, distQaRuntimeApiPath, distRuntimeApiPath } =
       createBundledPluginPackagePublicSurfaceAliasFixture();
     const sourcePluginEntry = writePluginEntry(
       fixture.root,
@@ -1831,6 +1840,9 @@ describe("plugin sdk alias helpers", () => {
     );
     expect(fs.realpathSync(aliases["@openclaw/slack/runtime-api.js"] ?? "")).toBe(
       fs.realpathSync(distRuntimeApiPath),
+    );
+    expect(fs.realpathSync(aliases["@openclaw/slack/qa-runtime-api.js"] ?? "")).toBe(
+      fs.realpathSync(distQaRuntimeApiPath),
     );
   });
 

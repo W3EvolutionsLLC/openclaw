@@ -1,10 +1,7 @@
 // Qa Lab plugin module implements WhatsApp-specific fake-provider runtime setup.
 import fs from "node:fs/promises";
 import path from "node:path";
-import { OPENCLAW_WHATSAPP_SOCKET_FACTORY_MODULE_ENV } from "@openclaw/whatsapp/api.js";
 import type { QaCrablineProviderRuntime, QaStartedOpenClawCrablineAdapter } from "./types.js";
-
-const WHATSAPP_SOCKET_FACTORY_MODULE = "@openclaw/crabline/whatsapp-socket-factory";
 
 async function stageWhatsAppAuthDir(params: {
   adapter: QaStartedOpenClawCrablineAdapter;
@@ -55,10 +52,7 @@ export const WHATSAPP_FAKE_PROVIDER_RUNTIME: QaCrablineProviderRuntime = {
       createRuntimeEnvPatch() {
         const { CRABLINE_WHATSAPP_ADMIN_TOKEN: _adminToken, ...env } =
           adapter.createChannelDriverSmokeEnv({});
-        return {
-          ...env,
-          [OPENCLAW_WHATSAPP_SOCKET_FACTORY_MODULE_ENV]: WHATSAPP_SOCKET_FACTORY_MODULE,
-        };
+        return env;
       },
     };
   },

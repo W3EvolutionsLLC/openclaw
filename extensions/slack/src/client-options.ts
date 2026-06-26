@@ -2,8 +2,12 @@
 import type { Agent } from "node:http";
 import type { RetryOptions, WebClientOptions } from "@slack/web-api";
 import { createNodeProxyAgent } from "openclaw/plugin-sdk/fetch-runtime";
+import {
+  getSlackRuntimeClientOptions,
+  type SlackRuntimeClientOptions,
+} from "./runtime-client-options.js";
 
-export type SlackApiUrlClientOptions = Pick<WebClientOptions, "slackApiUrl">;
+export type SlackApiUrlClientOptions = SlackRuntimeClientOptions;
 
 export const SLACK_DEFAULT_RETRY_OPTIONS: RetryOptions = {
   retries: 2,
@@ -44,21 +48,15 @@ function resolveSlackProxyAgent(targetUrl: string): Agent | undefined {
   }
 }
 
-function resolveSlackApiUrl(): string | undefined {
-  const envValue = process.env.OPENCLAW_SLACK_API_URL?.trim();
-  return envValue || undefined;
-}
-
 function resolveSlackApiUrlFromOptions(
   options: Pick<WebClientOptions, "slackApiUrl">,
 ): string | undefined {
   const explicit = options.slackApiUrl?.trim();
-  return explicit || resolveSlackApiUrl();
+  return explicit || getSlackRuntimeClientOptions().slackApiUrl?.trim() || undefined;
 }
 
 export function createSlackApiUrlClientOptions(): SlackApiUrlClientOptions {
-  const slackApiUrl = resolveSlackApiUrl();
-  return slackApiUrl ? { slackApiUrl } : {};
+  return getSlackRuntimeClientOptions();
 }
 
 export function resolveSlackWebClientOptions(options: WebClientOptions = {}): WebClientOptions {

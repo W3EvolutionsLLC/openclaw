@@ -43,7 +43,6 @@ import {
   sleepWithAbort,
 } from "../reconnect.js";
 import { formatError, getWebAuthAgeMs, readWebSelfId } from "../session.js";
-import { loadWhatsAppSocketFactoryFromEnv } from "../socket-factory-module.js";
 import { resolveWhatsAppSocketTiming } from "../socket-timing.js";
 import { getRuntimeConfig, getRuntimeConfigSourceSnapshot } from "./config.runtime.js";
 import { whatsappHeartbeatLog, whatsappLog } from "./loggers.js";
@@ -226,7 +225,6 @@ export async function monitorWebChannel(
   const transportTimeoutMs = tuning.transportTimeoutMs ?? DEFAULT_TRANSPORT_TIMEOUT_MS;
   const messageTimeoutMs = tuning.messageTimeoutMs ?? 30 * 60 * 1000;
   const watchdogCheckMs = tuning.watchdogCheckMs ?? 60 * 1000;
-  const createSocket = tuning.createSocket ?? (await loadWhatsAppSocketFactoryFromEnv());
   const controller = new WhatsAppConnectionController({
     accountId: account.accountId,
     authDir: account.authDir,
@@ -240,7 +238,7 @@ export async function monitorWebChannel(
     socketTiming,
     abortSignal,
     sleep,
-    ...(createSocket ? { createSocket } : {}),
+    ...(tuning.createSocket ? { createSocket: tuning.createSocket } : {}),
     isNonRetryableStatus: isNonRetryableWebCloseStatus,
   });
   const statusController = createWebChannelStatusController(tuning.statusSink);

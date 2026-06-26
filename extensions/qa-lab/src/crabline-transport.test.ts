@@ -96,11 +96,14 @@ describe("crabline transport", () => {
           });
           const runtimeEnvPatch = transport.createRuntimeEnvPatch?.() ?? {};
           expect(runtimeEnvPatch).toMatchObject({
-            OPENCLAW_SLACK_API_URL: expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+\/api\/$/u),
+            OPENCLAW_QA_LAB_SLACK_API_URL: expect.stringMatching(
+              /^http:\/\/127\.0\.0\.1:\d+\/api\/$/u,
+            ),
             SLACK_BOT_TOKEN: "xoxb-crabline-slack-token",
             SLACK_SIGNING_SECRET: "crabline-slack-signing-secret",
           });
           expect(runtimeEnvPatch).not.toHaveProperty("SLACK_API_URL");
+          expect(runtimeEnvPatch).not.toHaveProperty("OPENCLAW_SLACK_API_URL");
 
           const manifest = JSON.parse(
             await fs.readFile(path.join(outputDir, OPENCLAW_CRABLINE_MANIFEST_PATH), "utf8"),
@@ -154,10 +157,10 @@ describe("crabline transport", () => {
               /whatsapp-fake-provider\.jsonl$/u,
             ),
             CRABLINE_WHATSAPP_SELF_JID: "15550000000@s.whatsapp.net",
-            OPENCLAW_WHATSAPP_SOCKET_FACTORY_MODULE: "@openclaw/crabline/whatsapp-socket-factory",
           });
           expect(runtimeEnvPatch).not.toHaveProperty("CRABLINE_WHATSAPP_ADMIN_TOKEN");
           expect(runtimeEnvPatch).not.toHaveProperty("OPENCLAW_WHATSAPP_FAKE_PROVIDER_API_ROOT");
+          expect(runtimeEnvPatch).not.toHaveProperty("OPENCLAW_WHATSAPP_SOCKET_FACTORY_MODULE");
           expect(runtimeEnvPatch).not.toHaveProperty("NODE_OPTIONS");
           await expect(
             fs.readFile(
