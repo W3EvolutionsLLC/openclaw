@@ -226,16 +226,12 @@ const DISCORD_DTS_STAMP = "dist/plugin-sdk/extensions/discord/.boundary-dts.stam
 const DISCORD_DTS_REQUIRED_OUTPUTS = ["dist/plugin-sdk/extensions/discord/api.d.ts"];
 const SLACK_DTS_INPUTS = [
   "extensions/slack/api.ts",
-  "extensions/slack/qa-runtime-api.ts",
   "extensions/slack/src/client.ts",
   "extensions/slack/src/runtime-client-options.ts",
   "extensions/slack/tsconfig.json",
 ];
 const SLACK_DTS_STAMP = "dist/plugin-sdk/extensions/slack/.boundary-dts.stamp";
-const SLACK_DTS_REQUIRED_OUTPUTS = [
-  "dist/plugin-sdk/extensions/slack/api.d.ts",
-  "dist/plugin-sdk/extensions/slack/qa-runtime-api.d.ts",
-];
+const SLACK_DTS_REQUIRED_OUTPUTS = ["dist/plugin-sdk/extensions/slack/api.d.ts"];
 const WHATSAPP_DTS_INPUTS = [
   "extensions/whatsapp/api.ts",
   "extensions/whatsapp/qa-runtime-api.ts",

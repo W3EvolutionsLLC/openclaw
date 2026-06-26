@@ -1,8 +1,5 @@
 // QA Lab tests cover fake-provider runtime hook installation.
-import {
-  getSlackRuntimeClientOptions,
-  setSlackRuntimeClientOptions,
-} from "@openclaw/slack/qa-runtime-api.js";
+import { resolveSlackWebClientOptions, setSlackRuntimeClientOptions } from "@openclaw/slack/api.js";
 import {
   getWhatsAppMonitorRuntimeOptions,
   setWhatsAppMonitorRuntimeOptions,
@@ -23,9 +20,7 @@ describe("installFakeProviderRuntimeHooks", () => {
       OPENCLAW_SLACK_API_URL: "http://127.0.0.1:49153/api/",
     });
 
-    expect(getSlackRuntimeClientOptions()).toEqual({
-      slackApiUrl: "http://127.0.0.1:49152/api/",
-    });
+    expect(resolveSlackWebClientOptions().slackApiUrl).toBe("http://127.0.0.1:49152/api/");
   });
 
   it("registers the WhatsApp fake-provider socket when the fake provider env is present", () => {

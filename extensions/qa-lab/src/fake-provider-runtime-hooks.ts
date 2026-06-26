@@ -3,7 +3,7 @@ import {
   createWhatsAppSocket,
   type WhatsAppSocketFactoryOptions,
 } from "@openclaw/crabline/whatsapp-socket-factory";
-import { setSlackRuntimeClientOptions } from "@openclaw/slack/qa-runtime-api.js";
+import { setSlackRuntimeClientOptions } from "@openclaw/slack/api.js";
 import {
   setWhatsAppMonitorRuntimeOptions,
   type WhatsAppCreateSocket,

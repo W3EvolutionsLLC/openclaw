@@ -113,9 +113,6 @@
       "@openclaw/slack/api.js": [
         "../dist/plugin-sdk/extensions/slack/api.d.ts"
       ],
-      "@openclaw/slack/qa-runtime-api.js": [
-        "../dist/plugin-sdk/extensions/slack/qa-runtime-api.d.ts"
-      ],
       "@openclaw/whatsapp/api.js": [
         "../dist/plugin-sdk/extensions/whatsapp/api.d.ts"
       ],
