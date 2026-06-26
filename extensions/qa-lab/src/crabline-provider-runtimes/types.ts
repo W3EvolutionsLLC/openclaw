@@ -1,6 +1,5 @@
 // Qa Lab plugin module defines fake-provider runtime extension points.
 import type { StartedOpenClawCrablineAdapter } from "@openclaw/crabline";
-import type { QaTransportGatewayConfig } from "../qa-transport.js";
 
 export type QaCrablineChannelDriverSelection = {
   capabilityMatrixPath: "crabline-fake-provider-capabilities.json";
@@ -26,7 +25,7 @@ export type QaStartedOpenClawCrablineAdapter = Omit<StartedOpenClawCrablineAdapt
 };
 
 export type QaCrablineProviderRuntimeSetup = {
-  augmentGatewayConfig(config: QaTransportGatewayConfig): QaTransportGatewayConfig;
+  createGatewayConfigInput?(): Record<string, unknown>;
   createRuntimeEnvPatch(): NodeJS.ProcessEnv;
 };
 

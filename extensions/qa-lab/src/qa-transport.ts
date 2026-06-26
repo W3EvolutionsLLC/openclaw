@@ -35,7 +35,7 @@ export type QaTransportReportParams = {
   isolatedWorkers?: boolean;
 };
 
-export type QaTransportGatewayConfig = Pick<OpenClawConfig, "channels" | "messages">;
+export type QaTransportGatewayConfig = Partial<Pick<OpenClawConfig, "channels" | "messages">>;
 
 export type QaTransportState = {
   reset: () => void | Promise<void>;

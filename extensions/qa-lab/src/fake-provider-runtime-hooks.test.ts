@@ -3,7 +3,7 @@ import { resolveSlackWebClientOptions, setSlackRuntimeClientOptions } from "@ope
 import {
   getWhatsAppMonitorRuntimeOptions,
   setWhatsAppMonitorRuntimeOptions,
-} from "@openclaw/whatsapp/qa-runtime-api.js";
+} from "@openclaw/whatsapp/api.js";
 import { beforeEach, describe, expect, it } from "vitest";
 import { QA_LAB_SLACK_API_URL_ENV } from "./crabline-provider-runtimes/slack.js";
 import { installFakeProviderRuntimeHooks } from "./fake-provider-runtime-hooks.js";

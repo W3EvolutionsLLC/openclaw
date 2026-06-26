@@ -4,8 +4,10 @@ import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import {
   CRABLINE_FAKE_PROVIDER_CHANNELS,
+  isCrablineFakeProviderChannel,
   OPENCLAW_CRABLINE_MANIFEST_PATH,
   startOpenClawCrablineAdapter,
+  type CrablineFakeProviderChannel,
 } from "@openclaw/crabline";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
@@ -44,18 +46,10 @@ type CrablineInboundRequest = {
   providerUrl?: string | undefined;
 };
 
-type StartQaCrablineAdapter = (params: {
-  channel: (typeof CRABLINE_FAKE_PROVIDER_CHANNELS)[number];
-  openclawConfig?: Record<string, unknown> | undefined;
-  recorderPath?: string | undefined;
-}) => Promise<QaStartedOpenClawCrablineAdapter>;
-
 type QaCrablineTransportState = QaTransportState & {
   cleanup: () => Promise<void>;
   rememberProviderTarget: (providerTargetKey: string, qaTarget: string) => void;
 };
-
-const startQaCrablineAdapter = startOpenClawCrablineAdapter as unknown as StartQaCrablineAdapter;
 
 function supportedCrablineFakeProviderChannels() {
   return new Set<string>(CRABLINE_FAKE_PROVIDER_CHANNELS as readonly string[]);
@@ -63,11 +57,11 @@ function supportedCrablineFakeProviderChannels() {
 
 function assertCrablineFakeProviderChannelAvailable(
   channel: string,
-): asserts channel is (typeof CRABLINE_FAKE_PROVIDER_CHANNELS)[number] {
-  const supportedChannels = supportedCrablineFakeProviderChannels();
-  if (supportedChannels.has(channel)) {
+): asserts channel is CrablineFakeProviderChannel {
+  if (isCrablineFakeProviderChannel(channel)) {
     return;
   }
+  const supportedChannels = supportedCrablineFakeProviderChannels();
   throw new QaSuiteInfraError(
     "transport_unavailable",
     [
@@ -170,27 +164,6 @@ function createCrablineInboundHeaders(
       : {}),
     "content-type": "application/json",
   };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === "object" && !Array.isArray(value));
-}
-
-function isQaTransportGatewayConfig(value: unknown): value is QaTransportGatewayConfig {
-  if (!isRecord(value)) {
-    return false;
-  }
-  return (
-    (value.channels === undefined || isRecord(value.channels)) &&
-    (value.messages === undefined || isRecord(value.messages))
-  );
-}
-
-function toQaTransportGatewayConfig(value: unknown): QaTransportGatewayConfig {
-  if (!isQaTransportGatewayConfig(value)) {
-    throw new Error("Crabline returned an invalid OpenClaw gateway config.");
-  }
-  return value;
 }
 
 function createCrablineState(params: {
@@ -311,9 +284,10 @@ class QaCrablineTransport extends QaStateBackedTransportAdapter {
     this.#state = params.state;
   }
 
-  createGatewayConfig = (params: { baseUrl: string }): QaTransportGatewayConfig => {
-    const config = toQaTransportGatewayConfig(this.#adapter.createGatewayConfig(params));
-    return this.#providerRuntime.augmentGatewayConfig(config);
+  createGatewayConfig = (_params: { baseUrl: string }): QaTransportGatewayConfig => {
+    return this.#adapter.createGatewayConfig(
+      this.#providerRuntime.createGatewayConfigInput?.(),
+    ) as QaTransportGatewayConfig;
   };
 
   waitReady = (params: {
@@ -369,9 +343,8 @@ export async function createQaCrablineTransportAdapter(params: {
     `${channel}-fake-provider.jsonl`,
   );
   await fs.mkdir(path.dirname(recorderPath), { recursive: true });
-  const adapter = await startQaCrablineAdapter({
+  const adapter: QaStartedOpenClawCrablineAdapter = await startOpenClawCrablineAdapter({
     channel,
-    openclawConfig: {},
     recorderPath,
   });
   const providerRuntime = await providerRuntimeDefinition.setup({

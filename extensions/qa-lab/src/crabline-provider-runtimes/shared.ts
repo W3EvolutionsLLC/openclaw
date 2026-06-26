@@ -12,7 +12,6 @@ export function createDefaultFakeProviderRuntimeSetup(
   options?: { mapRuntimeEnv?: RuntimeEnvMapper },
 ): QaCrablineProviderRuntimeSetup {
   return {
-    augmentGatewayConfig: (config) => config,
     createRuntimeEnvPatch: () =>
       options?.mapRuntimeEnv?.(adapter.createChannelDriverSmokeEnv({})) ??
       adapter.createChannelDriverSmokeEnv({}),

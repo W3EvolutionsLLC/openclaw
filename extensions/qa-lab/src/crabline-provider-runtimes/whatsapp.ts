@@ -26,21 +26,12 @@ export const WHATSAPP_FAKE_PROVIDER_RUNTIME: QaCrablineProviderRuntime = {
   async setup({ adapter, outputDir }) {
     const authDir = await stageWhatsAppAuthDir({ adapter, outputDir });
     return {
-      augmentGatewayConfig(config) {
-        const channels = config.channels ?? {};
-        const whatsapp = channels.whatsapp ?? {};
-        const accounts = whatsapp.accounts ?? {};
-        const accountConfig = accounts[adapter.accountId] ?? {};
+      createGatewayConfigInput() {
         return {
-          ...config,
           channels: {
-            ...channels,
             whatsapp: {
-              ...whatsapp,
               accounts: {
-                ...accounts,
                 [adapter.accountId]: {
-                  ...accountConfig,
                   authDir,
                   enabled: true,
                 },
