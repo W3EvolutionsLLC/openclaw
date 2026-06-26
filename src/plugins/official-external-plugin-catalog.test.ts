@@ -14,6 +14,7 @@ import {
   resolveOfficialExternalWebProviderContractPluginIdsForEnv,
   resolveOfficialExternalPluginId,
   resolveOfficialExternalPluginInstall,
+  resolveOfficialExternalPluginLabel,
 } from "./official-external-plugin-catalog.js";
 
 function expectCatalogEntry(id: string): OfficialExternalPluginCatalogEntry {
@@ -57,7 +58,7 @@ describe("official external plugin catalog", () => {
     ).toBe(false);
     expect(
       isOfficialExternalPluginCatalogFeed({
-        schemaVersion: 2,
+        schemaVersion: 3,
         id: "openclaw-official-external-plugins",
         generatedAt: "2026-06-22T00:00:00.000Z",
         sequence: 1,
@@ -66,10 +67,59 @@ describe("official external plugin catalog", () => {
     ).toBe(false);
   });
 
+  it("accepts the live ClawHub feed schema version", () => {
+    expect(
+      isOfficialExternalPluginCatalogFeed({
+        schemaVersion: 2,
+        id: "clawhub-official",
+        generatedAt: "2026-06-25T01:19:39.629Z",
+        sequence: 11,
+        entries: [],
+      }),
+    ).toBe(true);
+  });
+
+  it("normalizes live ClawHub marketplace entries into installable catalog entries", () => {
+    const [entry] = parseOfficialExternalPluginCatalogEntries({
+      schemaVersion: 2,
+      id: "clawhub-official",
+      generatedAt: "2026-06-25T01:19:39.629Z",
+      sequence: 11,
+      entries: [
+        {
+          type: "plugin",
+          id: "@expediagroup/expedia-openclaw",
+          title: "Expedia Travel",
+          version: "1.0.4",
+          state: "available",
+          install: {
+            candidates: [
+              {
+                sourceRef: "public-clawhub",
+                package: "@expediagroup/expedia-openclaw",
+                version: "1.0.4",
+                integrity:
+                  "sha256:b355dda04403becaab8bbab069fd1e7b0578262e7459e598cc5b19615b5bdab9",
+              },
+            ],
+          },
+        },
+      ],
+    });
+
+    expect(resolveOfficialExternalPluginId(entry!)).toBe("@expediagroup/expedia-openclaw");
+    expect(resolveOfficialExternalPluginLabel(entry!)).toBe("Expedia Travel");
+    expect(resolveOfficialExternalPluginInstall(entry!)).toEqual({
+      npmSpec: "@expediagroup/expedia-openclaw@1.0.4",
+      defaultChoice: "npm",
+      expectedIntegrity: "sha256:b355dda04403becaab8bbab069fd1e7b0578262e7459e598cc5b19615b5bdab9",
+    });
+  });
+
   it("keeps unsupported versioned feed wrappers out of legacy catalog parsing", () => {
     expect(
       parseOfficialExternalPluginCatalogEntries({
-        schemaVersion: 2,
+        schemaVersion: 3,
         id: "future-feed",
         generatedAt: "2026-06-22T00:00:00.000Z",
         sequence: 1,
@@ -146,7 +196,7 @@ describe("official external plugin catalog", () => {
     expect(result.source).toBe("bundled-fallback");
     expect(result.entries.length).toBe(listOfficialExternalPluginCatalogEntries().length);
     if (result.source === "bundled-fallback") {
-      expect(result.error).toContain("schema version 1");
+      expect(result.error).toContain("supported schema version");
       expect(result.metadata?.checksum).toMatch(/^sha256:[0-9a-f]{64}$/);
     }
   });
