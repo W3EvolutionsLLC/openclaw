@@ -9,15 +9,13 @@ import { fetchWithSsrFGuard } from "openclaw/plugin-sdk/ssrf-runtime";
 import { withTempDir } from "openclaw/plugin-sdk/test-env";
 import { describe, expect, it } from "vitest";
 import { createQaBusState } from "./bus-state.js";
+import { getQaCrablineProviderRuntime } from "./crabline-provider-runtimes/index.js";
 import {
   createQaCrablineTransportAdapter,
   type QaCrablineChannelDriverSelection,
-  type QaCrablineProviderChannel,
 } from "./crabline-transport.js";
 
-function createSelection(
-  channel: QaCrablineProviderChannel = "telegram",
-): QaCrablineChannelDriverSelection {
+function createSelection(channel = "telegram"): QaCrablineChannelDriverSelection {
   return {
     capabilityMatrixPath: "crabline-fake-provider-capabilities.json",
     channel,
@@ -26,11 +24,17 @@ function createSelection(
   } as const;
 }
 
-function supportsCrablineFakeProvider(channel: QaCrablineProviderChannel) {
+function supportsCrablineFakeProvider(channel: string) {
   return (CRABLINE_FAKE_PROVIDER_CHANNELS as readonly string[]).includes(channel);
 }
 
 describe("crabline transport", () => {
+  it("rejects fake-provider channels without a QA Lab runtime", () => {
+    expect(() => getQaCrablineProviderRuntime("not-a-qa-runtime")).toThrow(
+      /QA Lab does not support Crabline fake-provider channel "not-a-qa-runtime"/u,
+    );
+  });
+
   it("configures OpenClaw's Telegram plugin against a Crabline fake provider server", async () => {
     await withTempDir("qa-crabline-transport-", async (outputDir) => {
       const transport = await createQaCrablineTransportAdapter({
@@ -183,17 +187,14 @@ describe("crabline transport", () => {
   );
 
   it("reports unavailable fake-provider channels from the installed Crabline package", async () => {
-    if (supportsCrablineFakeProvider("slack")) {
-      return;
-    }
     await withTempDir("qa-crabline-transport-", async (outputDir) => {
       await expect(
         createQaCrablineTransportAdapter({
           outputDir,
-          selection: createSelection("slack"),
+          selection: createSelection("not-a-crabline-channel"),
           state: createQaBusState(),
         }),
-      ).rejects.toThrow(/does not provide a slack fake provider server/u);
+      ).rejects.toThrow(/does not provide a not-a-crabline-channel fake provider server/u);
     });
   });
 

@@ -1,6 +1,5 @@
 // Qa Lab plugin module implements shared fake-provider runtime helpers.
 import type {
-  QaCrablineProviderChannel,
   QaCrablineProviderRuntime,
   QaCrablineProviderRuntimeSetup,
   QaStartedOpenClawCrablineAdapter,
@@ -21,7 +20,7 @@ export function createDefaultFakeProviderRuntimeSetup(
 }
 
 export function createDefaultFakeProviderRuntime(
-  channel: QaCrablineProviderChannel,
+  channel: string,
   options?: { mapRuntimeEnv?: RuntimeEnvMapper },
 ): QaCrablineProviderRuntime {
   return {

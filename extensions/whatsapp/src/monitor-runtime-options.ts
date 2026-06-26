@@ -1,6 +1,8 @@
 // WhatsApp plugin module stores process-local monitor runtime overrides.
 import type { WhatsAppCreateSocket } from "./connection-controller.js";
 
+export type { WhatsAppCreateSocket, WhatsAppSocket } from "./connection-controller.js";
+
 export type WhatsAppMonitorRuntimeOptions = {
   createSocket?: WhatsAppCreateSocket;
 };

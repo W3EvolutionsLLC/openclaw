@@ -14,7 +14,6 @@ import { createQaBusState, type QaBusState } from "./bus-state.js";
 import {
   getQaCrablineProviderRuntime,
   type QaCrablineChannelDriverSelection,
-  type QaCrablineProviderChannel,
   type QaCrablineProviderRuntimeSetup,
   type QaStartedOpenClawCrablineAdapter,
 } from "./crabline-provider-runtimes/index.js";
@@ -34,10 +33,7 @@ import type {
   QaBusWaitForInput,
 } from "./runtime-api.js";
 
-export type {
-  QaCrablineChannelDriverSelection,
-  QaCrablineProviderChannel,
-} from "./crabline-provider-runtimes/index.js";
+export type { QaCrablineChannelDriverSelection } from "./crabline-provider-runtimes/index.js";
 
 const CRABLINE_TRANSPORT_ID = "crabline";
 const RECORDER_SYNC_INTERVAL_MS = 50;
@@ -49,7 +45,7 @@ type CrablineInboundRequest = {
 };
 
 type StartQaCrablineAdapter = (params: {
-  channel: QaCrablineProviderChannel;
+  channel: (typeof CRABLINE_FAKE_PROVIDER_CHANNELS)[number];
   openclawConfig?: Record<string, unknown> | undefined;
   recorderPath?: string | undefined;
 }) => Promise<QaStartedOpenClawCrablineAdapter>;
@@ -65,7 +61,9 @@ function supportedCrablineFakeProviderChannels() {
   return new Set<string>(CRABLINE_FAKE_PROVIDER_CHANNELS as readonly string[]);
 }
 
-function assertCrablineFakeProviderChannelAvailable(channel: QaCrablineProviderChannel) {
+function assertCrablineFakeProviderChannelAvailable(
+  channel: string,
+): asserts channel is (typeof CRABLINE_FAKE_PROVIDER_CHANNELS)[number] {
   const supportedChannels = supportedCrablineFakeProviderChannels();
   if (supportedChannels.has(channel)) {
     return;
@@ -361,20 +359,22 @@ export async function createQaCrablineTransportAdapter(params: {
   selection: QaCrablineChannelDriverSelection;
   state?: QaBusState;
 }) {
-  assertCrablineFakeProviderChannelAvailable(params.selection.channel);
+  const channel = params.selection.channel;
+  assertCrablineFakeProviderChannelAvailable(channel);
+  const providerRuntimeDefinition = getQaCrablineProviderRuntime(channel);
   const recorderPath = path.join(
     params.outputDir,
     "artifacts",
     "crabline",
-    `${params.selection.channel}-fake-provider.jsonl`,
+    `${channel}-fake-provider.jsonl`,
   );
   await fs.mkdir(path.dirname(recorderPath), { recursive: true });
   const adapter = await startQaCrablineAdapter({
-    channel: params.selection.channel,
+    channel,
     openclawConfig: {},
     recorderPath,
   });
-  const providerRuntime = await getQaCrablineProviderRuntime(adapter.channel).setup({
+  const providerRuntime = await providerRuntimeDefinition.setup({
     adapter,
     outputDir: params.outputDir,
   });

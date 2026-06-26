@@ -16,6 +16,7 @@ import {
   logoutWeb,
   readWebAuthExistsForDecision,
   waitForWaConnection,
+  type WhatsAppConnectionWaitOptions,
   WhatsAppAuthUnstableError,
 } from "./session.js";
 import {
@@ -43,9 +44,26 @@ export const WHATSAPP_LOGGED_OUT_QR_MESSAGE =
 export const WHATSAPP_WATCHDOG_TIMEOUT_ERROR = "watchdog-timeout";
 
 type TimerHandle = ReturnType<typeof setInterval>;
-type WaSocket = Awaited<ReturnType<typeof createWaSocket>>;
-export type WhatsAppCreateSocket = typeof createWaSocket;
-export type WhatsAppWaitForConnection = typeof waitForWaConnection;
+export type WhatsAppSocket = WASocket;
+type WaSocket = WhatsAppSocket;
+
+export type WhatsAppCreateSocketOptions = {
+  authDir?: string;
+  onQr?: (qr: string) => void;
+  getMessage?: (key: WAMessageKey) => Promise<proto.IMessage | undefined>;
+  cachedGroupMetadata?: (jid: string) => Promise<GroupMetadata | undefined>;
+} & WhatsAppSocketTimingOptions;
+
+export type WhatsAppCreateSocket = (
+  printQr: boolean,
+  verbose: boolean,
+  opts?: WhatsAppCreateSocketOptions,
+) => Promise<WaSocket>;
+
+export type WhatsAppWaitForConnection = (
+  sock: WaSocket,
+  options?: WhatsAppConnectionWaitOptions,
+) => Promise<void>;
 
 export type ManagedWhatsAppListener = ActiveWebListener & {
   close?: () => Promise<void>;
@@ -229,8 +247,8 @@ export async function waitForWhatsAppLoginResult(params: {
   isLegacyAuthDir: boolean;
   verbose: boolean;
   runtime: RuntimeEnv;
-  waitForConnection?: typeof waitForWaConnection;
-  createSocket?: typeof createWaSocket;
+  waitForConnection?: WhatsAppWaitForConnection;
+  createSocket?: WhatsAppCreateSocket;
   socketTiming?: WhatsAppSocketTimingOptions;
   onQr?: (qr: string) => void;
   onSocketReplaced?: (sock: WaSocket) => void;

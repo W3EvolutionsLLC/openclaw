@@ -2,11 +2,9 @@
 import type { StartedOpenClawCrablineAdapter } from "@openclaw/crabline";
 import type { QaTransportGatewayConfig } from "../qa-transport.js";
 
-export type QaCrablineProviderChannel = "slack" | "telegram" | "whatsapp";
-
 export type QaCrablineChannelDriverSelection = {
   capabilityMatrixPath: "crabline-fake-provider-capabilities.json";
-  channel: QaCrablineProviderChannel;
+  channel: string;
   channelDriver: "crabline";
   smokeArtifactPath: "crabline-fake-provider-smoke.json";
 };
@@ -23,11 +21,7 @@ export type QaCrablineManifest = {
   selfJid?: string;
 };
 
-export type QaStartedOpenClawCrablineAdapter = Omit<
-  StartedOpenClawCrablineAdapter,
-  "channel" | "manifest"
-> & {
-  channel: QaCrablineProviderChannel;
+export type QaStartedOpenClawCrablineAdapter = Omit<StartedOpenClawCrablineAdapter, "manifest"> & {
   manifest: QaCrablineManifest;
 };
 
@@ -37,7 +31,7 @@ export type QaCrablineProviderRuntimeSetup = {
 };
 
 export type QaCrablineProviderRuntime = {
-  channel: QaCrablineProviderChannel;
+  channel: string;
   setup(params: {
     adapter: QaStartedOpenClawCrablineAdapter;
     outputDir: string;
