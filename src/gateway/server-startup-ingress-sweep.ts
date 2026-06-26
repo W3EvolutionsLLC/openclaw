@@ -1,14 +1,17 @@
 import { recoverAllStaleChannelIngressClaims } from "../channels/message/ingress-queue.js";
+import type { RecoverAllStaleChannelIngressClaimsOptions } from "../channels/message/ingress-queue.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { formatErrorMessage } from "../infra/errors.js";
+import type { SubsystemLogger } from "../logging/subsystem.js";
 
-type StartupIngressSweepLog = {
-  info: (message: string) => void;
-  warn: (message: string) => void;
-};
+type StartupIngressSweepLog = Pick<SubsystemLogger, "info" | "warn">;
+
+type RecoverAllStaleChannelIngressClaims = (
+  options?: RecoverAllStaleChannelIngressClaimsOptions,
+) => Promise<number>;
 
 type StartupIngressSweepDeps = {
-  recoverAllStaleChannelIngressClaims: typeof recoverAllStaleChannelIngressClaims;
+  recoverAllStaleChannelIngressClaims: RecoverAllStaleChannelIngressClaims;
 };
 
 export async function runStartupIngressClaimSweep(params: {
