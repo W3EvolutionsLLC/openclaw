@@ -63,10 +63,6 @@ export {
   SLACK_WRITE_RETRY_OPTIONS,
 } from "./src/client.js";
 export {
-  setSlackRuntimeClientOptions,
-  type SlackRuntimeClientOptions,
-} from "./src/runtime-client-options.js";
-export {
   listSlackDirectoryGroupsFromConfig,
   listSlackDirectoryPeersFromConfig,
 } from "./src/directory-config.js";

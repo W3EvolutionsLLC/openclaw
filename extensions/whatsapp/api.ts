@@ -70,10 +70,3 @@ export {
   type WhatsAppQaDriverObservedMessage,
   type WhatsAppQaDriverSession,
 } from "./src/qa-driver.runtime.js";
-export {
-  getWhatsAppMonitorRuntimeOptions,
-  setWhatsAppMonitorRuntimeOptions,
-  type WhatsAppCreateSocket,
-  type WhatsAppMonitorRuntimeOptions,
-  type WhatsAppSocket,
-} from "./src/monitor-runtime-options.js";

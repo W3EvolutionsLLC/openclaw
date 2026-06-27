@@ -100,13 +100,10 @@ describe("crabline transport", () => {
           });
           const runtimeEnvPatch = transport.createRuntimeEnvPatch?.() ?? {};
           expect(runtimeEnvPatch).toMatchObject({
-            OPENCLAW_QA_LAB_SLACK_API_URL: expect.stringMatching(
-              /^http:\/\/127\.0\.0\.1:\d+\/api\/$/u,
-            ),
+            SLACK_API_URL: expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+\/api\/$/u),
             SLACK_BOT_TOKEN: "xoxb-crabline-slack-token",
             SLACK_SIGNING_SECRET: "crabline-slack-signing-secret",
           });
-          expect(runtimeEnvPatch).not.toHaveProperty("SLACK_API_URL");
           expect(runtimeEnvPatch).not.toHaveProperty("OPENCLAW_SLACK_API_URL");
 
           const manifest = JSON.parse(
