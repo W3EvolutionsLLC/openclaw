@@ -25,11 +25,6 @@ import {
 import { normalizeLowercaseStringOrEmpty, normalizeOptionalString } from "../lib/string-coerce.ts";
 import { refreshChat } from "../pages/chat/data.ts";
 import { createChatSessionsLoadOverrides } from "../pages/chat/session-scope.ts";
-import {
-  resetChatStateForSessionSwitch,
-  switchChatSession,
-  switchChatSessionAndWait,
-} from "../pages/chat/session-switch.ts";
 import type { AppViewState } from "./app-view-state.ts";
 import {
   renderChatSessionSelect as renderChatSessionSelectBase,
@@ -40,7 +35,6 @@ import {
 import { resolveControlUiAuthToken } from "./control-ui-auth.ts";
 
 export { isCronSessionKey, parseSessionKey, resolveSessionDisplayName, resolveSessionOptionGroups };
-export { switchChatSession, switchChatSessionAndWait };
 
 type SessionDefaultsSnapshot = {
   mainSessionKey?: string;
@@ -185,7 +179,11 @@ export function renderRouteNavItem(
         if (routeId === "chat") {
           if (!state.sessionKey) {
             const mainSessionKey = resolveSidebarChatSessionKey(state);
-            resetChatStateForSessionSwitch(state, mainSessionKey);
+            state.applySettings({
+              ...state.settings,
+              sessionKey: mainSessionKey,
+              lastActiveSessionKey: mainSessionKey,
+            });
           }
           if (activeRouteId !== undefined && activeRouteId !== "chat") {
             void state.loadAssistantIdentity();
@@ -243,8 +241,11 @@ function renderCronFilterIcon(hiddenCount: number) {
   `;
 }
 
-export function renderChatSessionSelect(state: AppViewState) {
-  return renderChatSessionSelectBase(state, switchChatSession, { surface: "desktop" });
+export function renderChatSessionSelect(
+  state: AppViewState,
+  onSwitchSession: Parameters<typeof renderChatSessionSelectBase>[1] = () => undefined,
+) {
+  return renderChatSessionSelectBase(state, onSwitchSession, { surface: "desktop" });
 }
 
 function chatAutoScrollLabel(mode: ChatAutoScrollMode) {
@@ -471,7 +472,10 @@ export function renderChatControls(state: AppViewState, onNavigate?: (routeId: R
  * Rendered in the topbar so it doesn't consume content-header space.
  * Hidden on desktop via CSS.
  */
-export function renderChatMobileToggle(state: AppViewState) {
+export function renderChatMobileToggle(
+  state: AppViewState,
+  onSwitchSession: Parameters<typeof renderChatSessionSelectBase>[1] = () => undefined,
+) {
   const controlsDropdownId = "chat-mobile-controls-dropdown";
   const mobileControlsOpen = state.chatMobileControlsOpen;
   const disableThinkingToggle = state.onboarding;
@@ -536,7 +540,7 @@ export function renderChatMobileToggle(state: AppViewState) {
         }}
       >
         <div class="chat-controls">
-          ${renderChatSessionSelectBase(state, switchChatSession, { surface: "mobile" })}
+          ${renderChatSessionSelectBase(state, onSwitchSession, { surface: "mobile" })}
           <div class="chat-controls__thinking">
             ${renderChatAutoScrollToggle(state)}
             <openclaw-tooltip .content=${t("chat.thinkingToggle")}>
