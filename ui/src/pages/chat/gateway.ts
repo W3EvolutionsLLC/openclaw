@@ -400,6 +400,7 @@ export type ChatState = {
   chatMessages: unknown[];
   chatMessagesBySession?: ChatMessageCache;
   chatThinkingLevel: string | null;
+  chatVerboseLevel: string | null;
   chatSending: boolean;
   chatMessage: string;
   chatAttachments: ChatAttachment[];

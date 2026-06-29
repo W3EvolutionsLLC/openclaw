@@ -958,6 +958,7 @@ function createPageState(
     chatMessages: [] as unknown[],
     chatToolMessages: [] as Record<string, unknown>[],
     chatThinkingLevel: null,
+    chatVerboseLevel: null,
     chatAttachments: [] as ChatAttachment[],
     chatRunId: null,
     chatStream: null,
@@ -1745,6 +1746,7 @@ export class ChatPage extends LitElement {
         });
       },
       thinkingLevel: state.chatThinkingLevel,
+      autoExpandToolCalls: state.chatVerboseLevel === "full",
       showThinking: state.settings.chatShowThinking,
       showToolCalls: state.settings.chatShowToolCalls,
       loading: state.chatLoading,
