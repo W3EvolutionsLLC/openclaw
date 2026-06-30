@@ -134,6 +134,12 @@ import UIKit
         }
     }
 
+    @Test func chatReturnLabelsNameTheControlDetailSource() {
+        #expect(RootTabs.chatReturnTitle(for: .sessions) == "Back to Sessions")
+        #expect(RootTabs.chatReturnTitle(for: .overview) == "Back to Overview")
+        #expect(RootTabs.chatReturnTitle(for: .workboard) == "Back to Workboard")
+    }
+
     @Test func legacyInitialTabsMapToMatchingSidebarDestinations() {
         #expect(RootTabs.defaultSidebarDestination(for: .control) == .overview)
         #expect(RootTabs.defaultSidebarDestination(for: .chat) == .chat)
