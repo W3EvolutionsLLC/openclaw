@@ -438,10 +438,14 @@ function routineDeliveryHasStableTarget(owner: RoutineOwner, delivery: CronDeliv
 
 function normalizeRoutineDelivery(
   owner: RoutineOwner,
+  sessionTarget: CronSessionTarget,
   delivery: CronDelivery | undefined,
 ): CronDelivery | undefined {
+  const isMainTarget = sessionTarget === "main";
   if (!delivery) {
-    return owner.sessionKey ? { mode: "announce", channel: "last" } : { mode: "none" };
+    return owner.sessionKey && !isMainTarget
+      ? { mode: "announce", channel: "last" }
+      : { mode: "none" };
   }
   const mode = delivery.mode ?? "announce";
   if (mode === "announce" && !routineDeliveryHasStableTarget(owner, delivery)) {
@@ -449,7 +453,7 @@ function normalizeRoutineDelivery(
       "routine announce delivery requires owner.sessionKey or delivery.to",
     );
   }
-  if (mode === "announce" && owner.sessionKey && delivery.channel === undefined) {
+  if (mode === "announce" && owner.sessionKey && delivery.channel === undefined && !isMainTarget) {
     return { ...delivery, mode: "announce", channel: "last" };
   }
   return delivery;
@@ -462,7 +466,7 @@ function normalizeRoutineCreateInput(input: RoutineCreateInput): NormalizedRouti
     input.target?.sessionTarget ?? inferSessionTarget(input.action),
   );
   const owner = normalizeRoutineOwner(input, sessionTarget);
-  const delivery = normalizeRoutineDelivery(owner, input.target?.delivery);
+  const delivery = normalizeRoutineDelivery(owner, sessionTarget, input.target?.delivery);
   const wakeMode = input.target?.wakeMode ?? "now";
   const cronInput = normalizeCronJobCreate(
     {

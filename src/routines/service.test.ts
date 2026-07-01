@@ -269,6 +269,32 @@ describe("routine service", () => {
     });
   });
 
+  it("defaults session-owned main routines to no completion delivery", async () => {
+    await withOpenClawTestState({ prefix: "routine-delivery-main-none-" }, async () => {
+      const cron = createFakeCronService();
+      const created = await createRoutine(
+        createRoutineInput({
+          owner: { sessionKey: "session-1" },
+          target: {
+            sessionTarget: "main",
+            wakeMode: "now",
+          },
+          action: {
+            kind: "systemEvent",
+            text: "Check team status",
+          },
+        }),
+        { cron },
+      );
+
+      expect(cron.add.mock.calls[0]?.[0]).toMatchObject({
+        sessionTarget: "main",
+        delivery: { mode: "none" },
+      });
+      expect(created.routine.target.delivery).toEqual({ mode: "none" });
+    });
+  });
+
   it("defaults keyless routines without delivery to no delivery", async () => {
     await withOpenClawTestState({ prefix: "routine-keyless-none-" }, async () => {
       const cron = createFakeCronService();
