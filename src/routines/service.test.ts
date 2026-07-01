@@ -165,6 +165,8 @@ describe("routine service", () => {
       expect(created.idempotent).toBe(false);
       const cronJobId = created.routine.trigger.cronJobId;
       expect(cronJobId).toMatch(/^routine-cron-/);
+      expect(created.routine.trigger).not.toHaveProperty("cronStoreKey");
+      expect(readStoredRoutineJson()?.trigger).toHaveProperty("cronStoreKey");
       expect(cron.add).toHaveBeenCalledTimes(1);
       expect(cron.add.mock.calls[0]?.[0]).toMatchObject({
         id: cronJobId,
@@ -205,6 +207,42 @@ describe("routine service", () => {
       expect(replay.created).toBe(false);
       expect(replay.idempotent).toBe(true);
       expect(replay.routine.trigger.cronJobId).toMatch(/^routine-cron-/);
+      expect(cron.add).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("canonicalizes schedule fields before deriving routine intent", async () => {
+    await withOpenClawTestState({ prefix: "routine-schedule-canonical-" }, async () => {
+      const cron = createFakeCronService();
+      const input = createRoutineInput({
+        id: undefined,
+        trigger: {
+          kind: "schedule",
+          schedule: { kind: "cron", expr: " 0 9 * * * ", tz: " UTC " },
+        },
+      });
+      const created = await createRoutine(input, { cron });
+
+      expect(created.routine.trigger.schedule).toMatchObject({
+        kind: "cron",
+        expr: "0 9 * * *",
+        tz: "UTC",
+      });
+
+      const replay = await createRoutine(
+        {
+          ...input,
+          trigger: {
+            kind: "schedule",
+            schedule: { kind: "cron", expr: "0 9 * * *", tz: "UTC" },
+          },
+        },
+        { cron },
+      );
+
+      expect(replay.created).toBe(false);
+      expect(replay.idempotent).toBe(true);
+      expect(replay.routine.id).toBe(created.routine.id);
       expect(cron.add).toHaveBeenCalledTimes(1);
     });
   });

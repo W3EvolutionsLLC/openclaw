@@ -242,18 +242,16 @@ async function createRoutineFromCli(
   messageArg: string | undefined,
   opts: RoutineCliOpts,
 ) {
-  const hasScheduleFlag =
-    typeof opts.at === "string" || typeof opts.cron === "string" || typeof opts.every === "string";
   rejectRelativeRoutineOneShotSchedule({
     at: opts.at,
-    positionalSchedule: hasScheduleFlag ? undefined : scheduleArg,
+    positionalSchedule: scheduleArg,
   });
   const schedule = resolveCronCreateScheduleFromArgs({
     at: opts.at,
     cron: opts.cron,
     every: opts.every,
     exact: opts.exact,
-    positionalSchedule: hasScheduleFlag ? undefined : scheduleArg,
+    positionalSchedule: scheduleArg,
     stagger: opts.stagger,
     tz: opts.tz,
   });

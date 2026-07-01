@@ -814,7 +814,14 @@ function toPublicRoutineRecord(record: RoutineStoredRecord): RoutineRecord {
     disableStage: _disableStage,
     ...publicRecord
   } = record;
-  return publicRecord;
+  return {
+    ...publicRecord,
+    trigger: {
+      kind: publicRecord.trigger.kind,
+      schedule: publicRecord.trigger.schedule,
+      cronJobId: publicRecord.trigger.cronJobId,
+    },
+  };
 }
 
 function createRoutineRecordFromCronJob(record: RoutineRecord, cronJob: CronJob): RoutineRecord {
@@ -837,7 +844,6 @@ function createRoutineRecordFromCronJob(record: RoutineRecord, cronJob: CronJob)
       kind: "schedule",
       schedule: routineLinkedScheduleForView(record.trigger.schedule, cronJob.schedule),
       cronJobId: cronJob.id,
-      ...(record.trigger.cronStoreKey ? { cronStoreKey: record.trigger.cronStoreKey } : {}),
     },
     action: cronJob.payload,
     createdAtMs: record.createdAtMs,

@@ -78,7 +78,6 @@ const RoutineScheduleTriggerSchema = Type.Object(
     kind: Type.Literal("schedule"),
     schedule: RoutineScheduleSchema,
     cronJobId: NonBlankString,
-    cronStoreKey: Type.Optional(NonBlankString),
   },
   { additionalProperties: false },
 );

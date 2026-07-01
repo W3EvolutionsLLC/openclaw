@@ -65,7 +65,6 @@ describe("routines protocol schemas", () => {
         kind: "schedule",
         schedule: { kind: "cron", expr: "0 9 * * 1-5" },
         cronJobId: "cron-1",
-        cronStoreKey: "/tmp/openclaw/state.sqlite",
       },
       action: {
         kind: "agentTurn",

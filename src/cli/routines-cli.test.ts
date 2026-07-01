@@ -116,6 +116,29 @@ describe("registerRoutinesCli", () => {
     }
   });
 
+  it("rejects positional schedules when a schedule flag is also present", async () => {
+    await expect(
+      runRoutinesCommand([
+        "routines",
+        "create",
+        "0 9 * * *",
+        "--every",
+        "1h",
+        "--name",
+        "Conflicting schedule",
+        "--message",
+        "check status",
+      ]),
+    ).rejects.toThrow("__exit__:1");
+
+    expect(callGatewayFromCli.mock.calls.some((call) => call[0] === "routines.create")).toBe(
+      false,
+    );
+    expect(defaultRuntime.error.mock.calls[0]?.[0]).toContain(
+      "Choose a positional schedule or one of --at, --every, --cron",
+    );
+  });
+
   it("defaults session-key message routines to last-channel announce delivery", async () => {
     await runRoutinesCommand([
       "routines",
