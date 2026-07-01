@@ -1,4 +1,3 @@
-import crypto from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CronServiceContract } from "../cron/service-contract.js";
 import type { CronJob, CronJobCreate, CronJobPatch } from "../cron/types.js";
@@ -45,6 +44,10 @@ function createRoutineInput(overrides: Partial<RoutineCreateInput> = {}): Routin
 }
 
 function createCronJob(input: CronJobCreate, id: string, now: number): CronJob {
+  const schedule =
+    input.schedule.kind === "every" && input.schedule.anchorMs === undefined
+      ? { ...input.schedule, anchorMs: now }
+      : input.schedule;
   return {
     ...input,
     id,
@@ -55,12 +58,8 @@ function createCronJob(input: CronJobCreate, id: string, now: number): CronJob {
       ...input.state,
       nextRunAtMs: 1_700_000_000_000 + now,
     },
+    schedule,
   };
-}
-
-function createRoutineCronJobIdForTest(routineId: string): string {
-  const digest = crypto.createHash("sha256").update(routineId).digest("hex").slice(0, 32);
-  return `routine-cron-${digest}`;
 }
 
 function createFakeCronService(): FakeCronService {
@@ -100,16 +99,27 @@ function createFakeCronService(): FakeCronService {
       if (!current) {
         throw new Error(`missing cron job: ${id}`);
       }
+      const nextUpdatedAtMs = current.updatedAtMs + 1;
+      const nextState = {
+        ...current.state,
+        ...patch.state,
+      };
+      if (typeof patch.enabled === "boolean" && patch.enabled !== current.enabled) {
+        if (patch.enabled) {
+          nextState.nextRunAtMs ??= 1_700_000_000_000 + nextUpdatedAtMs;
+        } else {
+          nextState.nextRunAtMs = undefined;
+          nextState.runningAtMs = undefined;
+        }
+      }
       const updated: CronJob = {
         ...current,
         enabled: typeof patch.enabled === "boolean" ? patch.enabled : current.enabled,
         name: patch.name ?? current.name,
         description: patch.description ?? current.description,
-        state: {
-          ...current.state,
-          ...patch.state,
-        },
-        updatedAtMs: current.updatedAtMs + 1,
+        schedule: patch.schedule ?? current.schedule,
+        state: nextState,
+        updatedAtMs: nextUpdatedAtMs,
       };
       jobs.set(id, updated);
       return updated;
@@ -184,6 +194,35 @@ describe("routine service", () => {
       expect(replay.created).toBe(false);
       expect(replay.idempotent).toBe(true);
       expect(replay.routine.trigger.cronJobId).toMatch(/^routine-cron-/);
+      expect(cron.add).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("treats announce delivery with implicit last channel as idempotent", async () => {
+    await withOpenClawTestState({ prefix: "routine-delivery-last-idempotent-" }, async () => {
+      const cron = createFakeCronService();
+      const input = createRoutineInput({
+        target: {
+          sessionTarget: "isolated",
+          wakeMode: "now",
+          delivery: { mode: "announce" },
+        },
+      });
+      await createRoutine(input, { cron });
+
+      const replay = await createRoutine(
+        createRoutineInput({
+          target: {
+            sessionTarget: "isolated",
+            wakeMode: "now",
+            delivery: { mode: "announce", channel: "last" },
+          },
+        }),
+        { cron },
+      );
+
+      expect(replay.created).toBe(false);
+      expect(replay.idempotent).toBe(true);
       expect(cron.add).toHaveBeenCalledTimes(1);
     });
   });
@@ -296,127 +335,6 @@ describe("routine service", () => {
     });
   });
 
-  it("links a backing cron job when creation commits but the response is lost", async () => {
-    await withOpenClawTestState({ prefix: "routine-lost-cron-response-" }, async () => {
-      const cron = createFakeCronService();
-      cron.add.mockImplementationOnce(async (input: CronJobCreate) => {
-        const job = createCronJob(input, input.id ?? "lost-response", 1);
-        cron.jobs.set(job.id, job);
-        throw new Error("lost cron response");
-      });
-
-      const created = await createRoutine(createRoutineInput(), { cron });
-
-      expect(created.created).toBe(true);
-      expect(created.routine.status.backing).toBe("linked");
-      expect(cron.jobs.size).toBe(1);
-    });
-  });
-
-  it("links an orphaned deterministic cron job after an interrupted create", async () => {
-    await withOpenClawTestState({ prefix: "routine-orphan-cron-" }, async () => {
-      const cron = createFakeCronService();
-      const input = createRoutineInput();
-      const cronJobId = createRoutineCronJobIdForTest(input.id ?? "daily-ops");
-      cron.jobs.set(
-        cronJobId,
-        createCronJob(
-          {
-            id: cronJobId,
-            name: "Daily ops",
-            enabled: true,
-            deleteAfterRun: false,
-            agentId: "ops",
-            schedule: { kind: "every", everyMs: 60_000 },
-            sessionTarget: "isolated",
-            wakeMode: "now",
-            payload: { kind: "agentTurn", message: "Summarize open work" },
-            delivery: { mode: "announce" },
-          },
-          cronJobId,
-          1,
-        ),
-      );
-
-      const created = await createRoutine(input, { cron });
-
-      expect(created.created).toBe(true);
-      expect(created.routine.status.backing).toBe("linked");
-      expect(created.routine.trigger.cronJobId).toBe(cronJobId);
-      expect(cron.add).not.toHaveBeenCalled();
-      await expect(inspectRoutine(created.routine.id, { cron })).resolves.toMatchObject({
-        status: { backing: "linked" },
-      });
-    });
-  });
-
-  it("rejects deterministic orphan cron jobs with different intent", async () => {
-    await withOpenClawTestState({ prefix: "routine-orphan-drift-" }, async () => {
-      const cron = createFakeCronService();
-      const input = createRoutineInput();
-      const cronJobId = createRoutineCronJobIdForTest(input.id ?? "daily-ops");
-      cron.jobs.set(
-        cronJobId,
-        createCronJob(
-          {
-            id: cronJobId,
-            name: "Daily ops",
-            enabled: true,
-            deleteAfterRun: false,
-            agentId: "ops",
-            schedule: { kind: "every", everyMs: 120_000 },
-            sessionTarget: "isolated",
-            wakeMode: "now",
-            payload: { kind: "agentTurn", message: "Summarize open work" },
-            delivery: { mode: "announce" },
-          },
-          cronJobId,
-          1,
-        ),
-      );
-
-      await expect(createRoutine(input, { cron })).rejects.toThrow("different intent");
-      expect(cron.add).not.toHaveBeenCalled();
-      await expect(inspectRoutine(input.id ?? "daily-ops", { cron })).resolves.toBeUndefined();
-    });
-  });
-
-  it("recovers a matching orphan cron job without current delivery validation", async () => {
-    await withOpenClawTestState({ prefix: "routine-orphan-delivery-replay-" }, async () => {
-      const cron = createFakeCronService();
-      const input = createRoutineInput();
-      const cronJobId = createRoutineCronJobIdForTest(input.id ?? "daily-ops");
-      cron.jobs.set(
-        cronJobId,
-        createCronJob(
-          {
-            id: cronJobId,
-            name: "Daily ops",
-            enabled: true,
-            deleteAfterRun: false,
-            agentId: "ops",
-            schedule: { kind: "every", everyMs: 60_000 },
-            sessionTarget: "isolated",
-            wakeMode: "now",
-            payload: { kind: "agentTurn", message: "Summarize open work" },
-            delivery: { mode: "announce" },
-          },
-          cronJobId,
-          1,
-        ),
-      );
-      const validateCronCreate = vi.fn(async () => {
-        throw new Error("delivery unavailable");
-      });
-
-      const created = await createRoutine(input, { cron, validateCronCreate });
-
-      expect(created.routine.status.backing).toBe("linked");
-      expect(validateCronCreate).not.toHaveBeenCalled();
-      expect(cron.add).not.toHaveBeenCalled();
-    });
-  });
-
   it("rolls back a newly added cron job when routine persistence fails", async () => {
     await withOpenClawTestState({ prefix: "routine-persist-rollback-" }, async () => {
       const cron = createFakeCronService();
@@ -515,15 +433,30 @@ describe("routine service", () => {
       if (!cronJob || cronJob.schedule.kind !== "every") {
         throw new Error("expected every backing cron job");
       }
-      cron.jobs.set(cronJob.id, {
-        ...cronJob,
-        schedule: { ...cronJob.schedule, anchorMs: 1_700_000_000_000 },
-      });
+      expect(created.routine.trigger.schedule).toEqual({ kind: "every", everyMs: 60_000 });
 
       const replay = await createRoutine(createRoutineInput(), { cron });
 
       expect(replay.idempotent).toBe(true);
       expect(replay.created).toBe(false);
+    });
+  });
+
+  it("detects backing cron drift when a generated every anchor changes", async () => {
+    await withOpenClawTestState({ prefix: "routine-anchor-drift-" }, async () => {
+      const cron = createFakeCronService();
+      const input = createRoutineInput();
+      const created = await createRoutine(input, { cron });
+      const cronJob = cron.jobs.get(created.routine.trigger.cronJobId);
+      if (!cronJob || cronJob.schedule.kind !== "every") {
+        throw new Error("expected every backing cron job");
+      }
+      cron.jobs.set(cronJob.id, {
+        ...cronJob,
+        schedule: { ...cronJob.schedule, anchorMs: cronJob.createdAtMs + 60_000 },
+      });
+
+      await expect(createRoutine(input, { cron })).rejects.toThrow("generated anchor");
     });
   });
 
@@ -749,6 +682,7 @@ describe("routine service", () => {
       expect(disabled.changed).toBe(true);
       expect(disabled.routine.status.status).toBe("disabled");
       expect(disabledAgain.changed).toBe(false);
+      expect(disabledAgain.routine.updatedAtMs).toBe(disabled.routine.updatedAtMs);
 
       const deleted = await deleteRoutine(` ${created.routine.id} `, { cron });
       const deletedAgain = await deleteRoutine(` ${created.routine.id} `, { cron });
@@ -759,6 +693,72 @@ describe("routine service", () => {
       expect(cron.jobs.size).toBe(0);
     });
   });
+
+  it.each([
+    { initialEnabled: false, nextEnabled: true, label: "enable" },
+    { initialEnabled: true, nextEnabled: false, label: "disable" },
+  ])(
+    "rolls back backing cron $label when routine persistence fails",
+    async ({ initialEnabled, nextEnabled }) => {
+      await withOpenClawTestState(
+        { prefix: `routine-toggle-rollback-${initialEnabled ? "on" : "off"}-` },
+        async () => {
+          const cron = createFakeCronService();
+          const created = await createRoutine(
+            createRoutineInput({
+              id: `toggle-${initialEnabled ? "on" : "off"}`,
+              enabled: initialEnabled,
+            }),
+            { cron },
+          );
+          const cronJobId = created.routine.trigger.cronJobId;
+          const cronJob = cron.jobs.get(cronJobId);
+          if (!cronJob) {
+            throw new Error("expected backing cron job");
+          }
+          const previousState = {
+            ...cronJob.state,
+            lastRunAtMs: 1_700_000_123_000,
+            lastRunStatus: "ok" as const,
+            lastDurationMs: 42,
+          };
+          cron.jobs.set(cronJobId, {
+            ...cronJob,
+            state: previousState,
+          });
+          openOpenClawStateDatabase().db.exec(`
+            CREATE TRIGGER routine_records_force_update_fail
+            BEFORE UPDATE ON routine_records
+            BEGIN
+              SELECT RAISE(FAIL, 'forced routine update failure');
+            END;
+          `);
+
+          await expect(
+            setRoutineEnabled(created.routine.id, nextEnabled, { cron }),
+          ).rejects.toThrow("failed to persist routine: forced routine update failure");
+
+          expect(cron.update).toHaveBeenCalledWith(cronJobId, { enabled: nextEnabled });
+          expect(cron.update).toHaveBeenCalledWith(cronJobId, {
+            enabled: initialEnabled,
+            schedule: cronJob.schedule,
+          });
+          expect(cron.update).toHaveBeenCalledWith(
+            cronJobId,
+            expect.objectContaining({
+              state: expect.objectContaining(previousState),
+            }),
+          );
+          expect(cron.jobs.get(cronJobId)?.enabled).toBe(initialEnabled);
+          expect(cron.jobs.get(cronJobId)?.state).toMatchObject(previousState);
+          expect(cron.jobs.get(cronJobId)?.state.nextRunAtMs).toBe(previousState.nextRunAtMs);
+          await expect(inspectRoutine(created.routine.id, { cron })).resolves.toMatchObject({
+            enabled: initialEnabled,
+          });
+        },
+      );
+    },
+  );
 
   it("preserves the routine record when backing cron removal fails", async () => {
     await withOpenClawTestState({ prefix: "routine-delete-failure-" }, async () => {
@@ -804,6 +804,7 @@ describe("routine service", () => {
 
       const listed = await listRoutines({ includeDisabled: true }, { cron });
       const disabled = await setRoutineEnabled(created.routine.id, false, { cron });
+      const disabledAgain = await setRoutineEnabled(created.routine.id, false, { cron });
 
       expect(listed.routines[0]?.status).toMatchObject({
         status: "missing",
@@ -811,9 +812,100 @@ describe("routine service", () => {
         cronJobId: created.routine.trigger.cronJobId,
       });
       expect(disabled.routine.status.status).toBe("missing");
+      expect(disabledAgain.changed).toBe(false);
+      expect(disabledAgain.routine.updatedAtMs).toBe(disabled.routine.updatedAtMs);
       await expect(setRoutineEnabled(created.routine.id, true, { cron })).rejects.toThrow(
         "backing cron job is missing",
       );
+    });
+  });
+
+  it("reports missing status when backing cron disappears after a toggle update", async () => {
+    await withOpenClawTestState({ prefix: "routine-toggle-missing-" }, async () => {
+      const cron = createFakeCronService();
+      const created = await createRoutine(createRoutineInput(), { cron });
+      const updateImpl = cron.update.getMockImplementation();
+      if (!updateImpl) {
+        throw new Error("expected cron update implementation");
+      }
+      cron.update.mockImplementationOnce(async (id, patch) => {
+        const updated = await updateImpl(id, patch);
+        cron.jobs.delete(id);
+        return updated;
+      });
+
+      const disabled = await setRoutineEnabled(created.routine.id, false, { cron });
+
+      expect(disabled.changed).toBe(true);
+      expect(disabled.routine.status).toMatchObject({
+        status: "missing",
+        backing: "missing",
+        cronJobId: created.routine.trigger.cronJobId,
+      });
+    });
+  });
+
+  it("rejects re-enabling expired one-shot routines", async () => {
+    await withOpenClawTestState({ prefix: "routine-expired-enable-" }, async () => {
+      const cron = createFakeCronService();
+      const created = await createRoutine(
+        createRoutineInput({
+          id: "expired-one-shot",
+          enabled: false,
+          trigger: {
+            kind: "schedule",
+            schedule: { kind: "at", at: new Date(Date.now() + 3_600_000).toISOString() },
+          },
+        }),
+        { cron },
+      );
+      const job = cron.jobs.get(created.routine.trigger.cronJobId);
+      if (!job) {
+        throw new Error("expected backing cron job");
+      }
+      cron.jobs.set(job.id, {
+        ...job,
+        enabled: false,
+        schedule: { kind: "at", at: new Date(Date.now() - 30_000).toISOString() },
+        state: { ...job.state, nextRunAtMs: undefined },
+      });
+
+      await expect(setRoutineEnabled(created.routine.id, true, { cron })).rejects.toThrow(
+        "cannot enable expired one-shot routine",
+      );
+
+      expect(cron.update).not.toHaveBeenCalled();
+    });
+  });
+
+  it("keeps already-enabled expired one-shot enable idempotent", async () => {
+    await withOpenClawTestState({ prefix: "routine-expired-enable-idempotent-" }, async () => {
+      const cron = createFakeCronService();
+      const created = await createRoutine(
+        createRoutineInput({
+          id: "running-one-shot",
+          trigger: {
+            kind: "schedule",
+            schedule: { kind: "at", at: new Date(Date.now() + 3_600_000).toISOString() },
+          },
+        }),
+        { cron },
+      );
+      const job = cron.jobs.get(created.routine.trigger.cronJobId);
+      if (!job) {
+        throw new Error("expected backing cron job");
+      }
+      cron.jobs.set(job.id, {
+        ...job,
+        enabled: true,
+        schedule: { kind: "at", at: new Date(Date.now() - 30_000).toISOString() },
+      });
+
+      await expect(setRoutineEnabled(created.routine.id, true, { cron })).resolves.toMatchObject({
+        changed: false,
+      });
+
+      expect(cron.update).not.toHaveBeenCalled();
     });
   });
 });

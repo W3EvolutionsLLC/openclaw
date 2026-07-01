@@ -42,6 +42,23 @@ function createStoreTestState(storePath: string) {
   });
 }
 
+async function createBlockedQuarantineState() {
+  const { storePath } = await makeStorePath();
+  const blockedParent = `${storePath}-blocked`;
+  await fs.mkdir(path.dirname(blockedParent), { recursive: true });
+  await fs.writeFile(blockedParent, "not a directory", "utf-8");
+  const state = createStoreTestState(path.join(blockedParent, "jobs.json"));
+  state.store = { version: 1, jobs: [] };
+  state.pendingQuarantineConfigJobs = [
+    {
+      sourceIndex: 0,
+      reason: "invalid test row",
+      job: { id: "bad-job" },
+    },
+  ];
+  return state;
+}
+
 function createReloadCronJob(params?: Partial<CronJob>): CronJob {
   return {
     id: "reload-cron-expr-job",
@@ -383,22 +400,33 @@ describe("cron service store seam coverage", () => {
     expect(findJobOrThrow(state, jobId).state.nextRunAtMs).toBeUndefined();
   });
 
-  it("throws instead of acknowledging persistence when pending quarantine cannot flush", async () => {
-    const { storePath } = await makeStorePath();
-    const blockedParent = `${storePath}-blocked`;
-    await fs.mkdir(path.dirname(blockedParent), { recursive: true });
-    await fs.writeFile(blockedParent, "not a directory", "utf-8");
-    const state = createStoreTestState(path.join(blockedParent, "jobs.json"));
-    state.store = { version: 1, jobs: [] };
-    state.pendingQuarantineConfigJobs = [
-      {
-        sourceIndex: 0,
-        reason: "invalid test row",
-        job: { id: "bad-job" },
-      },
-    ];
+  it("continues best-effort state-only maintenance persistence without replacing config rows when pending quarantine cannot flush", async () => {
+    const state = await createBlockedQuarantineState();
+    state.store = { version: 1, jobs: [createReloadCronJob({ id: "valid-loaded-job" })] };
 
-    await expect(persist(state)).rejects.toThrow(
+    await expect(persist(state, { stateOnly: true })).resolves.toBeUndefined();
+    expect(state.pendingQuarantineConfigJobs).toHaveLength(1);
+    await expect(loadCronStore(state.deps.storePath)).resolves.toEqual({
+      version: 1,
+      jobs: [],
+    });
+  });
+
+  it("skips full best-effort persistence when pending quarantine cannot flush", async () => {
+    const state = await createBlockedQuarantineState();
+    state.store = { version: 1, jobs: [createReloadCronJob({ id: "valid-loaded-job" })] };
+
+    await expect(persist(state)).resolves.toBeUndefined();
+    await expect(loadCronStore(state.deps.storePath)).resolves.toEqual({
+      version: 1,
+      jobs: [],
+    });
+  });
+
+  it("throws instead of acknowledging strict persistence when pending quarantine cannot flush", async () => {
+    const state = await createBlockedQuarantineState();
+
+    await expect(persist(state, { requireQuarantineFlush: true })).rejects.toThrow(
       "cron: failed to persist pending quarantine records",
     );
   });

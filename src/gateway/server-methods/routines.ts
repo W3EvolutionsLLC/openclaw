@@ -9,18 +9,23 @@ import {
   validateRoutinesListParams,
   validateRoutinesSetEnabledParams,
 } from "../../../packages/gateway-protocol/src/index.js";
-import { assertCronDeliveryInputNonBlankFields } from "../../cron/delivery-target-validation.js";
+import {
+  assertCronDeliveryInputNonBlankFields,
+  assertValidCronCreateDelivery,
+} from "../../cron/delivery-target-validation.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import {
   createRoutine,
   deleteRoutine,
   inspectRoutine,
+  isRoutineInvalidRequestError,
   listRoutines,
   setRoutineEnabled,
   type RoutineCreateInput,
 } from "../../routines/service.js";
-import { assertValidCronCreateDelivery } from "./cron.js";
-import type { GatewayRequestHandlers, RespondFn } from "./types.js";
+import { readCronCallerScope } from "./cron-caller-scope.js";
+import { isCronInvalidRequestError } from "./cron-error-classification.js";
+import type { GatewayClient, GatewayRequestHandlers, RespondFn } from "./types.js";
 
 function respondInvalid(respond: RespondFn, method: string, message: string): void {
   respond(
@@ -28,6 +33,27 @@ function respondInvalid(respond: RespondFn, method: string, message: string): vo
     undefined,
     errorShape(ErrorCodes.INVALID_REQUEST, `invalid ${method}: ${message}`),
   );
+}
+
+function respondUnavailable(respond: RespondFn, method: string, err: unknown): void {
+  respond(
+    false,
+    undefined,
+    errorShape(ErrorCodes.UNAVAILABLE, `${method} failed: ${formatErrorMessage(err)}`),
+  );
+}
+
+function respondRoutineError(respond: RespondFn, method: string, err: unknown): void {
+  if (
+    isRoutineInvalidRequestError(err) ||
+    err instanceof TypeError ||
+    err instanceof RangeError ||
+    isCronInvalidRequestError(err)
+  ) {
+    respondInvalid(respond, method, formatErrorMessage(err));
+    return;
+  }
+  respondUnavailable(respond, method, err);
 }
 
 function respondValidationFailure(
@@ -38,10 +64,25 @@ function respondValidationFailure(
   respondInvalid(respond, method, formatValidationErrors(errors));
 }
 
+function rejectAgentRuntimeCaller(
+  client: GatewayClient | null,
+  respond: RespondFn,
+  method: string,
+): boolean {
+  if (!readCronCallerScope(client)) {
+    return false;
+  }
+  respondInvalid(respond, method, "routine registry methods are operator-scoped");
+  return true;
+}
+
 export const routinesHandlers: GatewayRequestHandlers = {
-  "routines.list": async ({ params, respond, context }) => {
+  "routines.list": async ({ params, respond, context, client }) => {
     if (!validateRoutinesListParams(params)) {
       respondValidationFailure(respond, "routines.list", validateRoutinesListParams.errors);
+      return;
+    }
+    if (rejectAgentRuntimeCaller(client, respond, "routines.list")) {
       return;
     }
     const result = await listRoutines(params, {
@@ -50,9 +91,12 @@ export const routinesHandlers: GatewayRequestHandlers = {
     });
     respond(true, result);
   },
-  "routines.get": async ({ params, respond, context }) => {
+  "routines.get": async ({ params, respond, context, client }) => {
     if (!validateRoutinesGetParams(params)) {
       respondValidationFailure(respond, "routines.get", validateRoutinesGetParams.errors);
+      return;
+    }
+    if (rejectAgentRuntimeCaller(client, respond, "routines.get")) {
       return;
     }
     const routine = await inspectRoutine(params.id, {
@@ -61,9 +105,12 @@ export const routinesHandlers: GatewayRequestHandlers = {
     });
     respond(true, { routine: routine ?? null });
   },
-  "routines.create": async ({ params, respond, context }) => {
+  "routines.create": async ({ params, respond, context, client }) => {
     if (!validateRoutinesCreateParams(params)) {
       respondValidationFailure(respond, "routines.create", validateRoutinesCreateParams.errors);
+      return;
+    }
+    if (rejectAgentRuntimeCaller(client, respond, "routines.create")) {
       return;
     }
     const input = params as RoutineCreateInput;
@@ -83,12 +130,15 @@ export const routinesHandlers: GatewayRequestHandlers = {
       });
       respond(true, result);
     } catch (err) {
-      respondInvalid(respond, "routines.create", formatErrorMessage(err));
+      respondRoutineError(respond, "routines.create", err);
     }
   },
-  "routines.enable": async ({ params, respond, context }) => {
+  "routines.enable": async ({ params, respond, context, client }) => {
     if (!validateRoutinesSetEnabledParams(params)) {
       respondValidationFailure(respond, "routines.enable", validateRoutinesSetEnabledParams.errors);
+      return;
+    }
+    if (rejectAgentRuntimeCaller(client, respond, "routines.enable")) {
       return;
     }
     try {
@@ -100,16 +150,19 @@ export const routinesHandlers: GatewayRequestHandlers = {
         }),
       );
     } catch (err) {
-      respondInvalid(respond, "routines.enable", formatErrorMessage(err));
+      respondRoutineError(respond, "routines.enable", err);
     }
   },
-  "routines.disable": async ({ params, respond, context }) => {
+  "routines.disable": async ({ params, respond, context, client }) => {
     if (!validateRoutinesSetEnabledParams(params)) {
       respondValidationFailure(
         respond,
         "routines.disable",
         validateRoutinesSetEnabledParams.errors,
       );
+      return;
+    }
+    if (rejectAgentRuntimeCaller(client, respond, "routines.disable")) {
       return;
     }
     try {
@@ -121,12 +174,15 @@ export const routinesHandlers: GatewayRequestHandlers = {
         }),
       );
     } catch (err) {
-      respondInvalid(respond, "routines.disable", formatErrorMessage(err));
+      respondRoutineError(respond, "routines.disable", err);
     }
   },
-  "routines.delete": async ({ params, respond, context }) => {
+  "routines.delete": async ({ params, respond, context, client }) => {
     if (!validateRoutinesDeleteParams(params)) {
       respondValidationFailure(respond, "routines.delete", validateRoutinesDeleteParams.errors);
+      return;
+    }
+    if (rejectAgentRuntimeCaller(client, respond, "routines.delete")) {
       return;
     }
     try {
@@ -138,7 +194,7 @@ export const routinesHandlers: GatewayRequestHandlers = {
         }),
       );
     } catch (err) {
-      respondInvalid(respond, "routines.delete", formatErrorMessage(err));
+      respondRoutineError(respond, "routines.delete", err);
     }
   },
 };

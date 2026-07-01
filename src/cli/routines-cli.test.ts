@@ -70,7 +70,7 @@ afterEach(() => {
 });
 
 describe("registerRoutinesCli", () => {
-  it("defaults isolated message routines to last-channel announce delivery", async () => {
+  it("defaults keyless isolated message routines to no delivery", async () => {
     await runRoutinesCommand([
       "routines",
       "create",
@@ -86,9 +86,52 @@ describe("registerRoutinesCli", () => {
     };
 
     expect(params?.target?.delivery).toMatchObject({
+      mode: "none",
+    });
+  });
+
+  it("defaults session-key message routines to last-channel announce delivery", async () => {
+    await runRoutinesCommand([
+      "routines",
+      "create",
+      "+1h",
+      "check status",
+      "--name",
+      "Default delivery",
+      "--session-key",
+      "agent:ops:telegram:direct:alice",
+    ]);
+
+    const createCall = callGatewayFromCli.mock.calls.find((call) => call[0] === "routines.create");
+    const params = createCall?.[2] as {
+      owner?: { sessionKey?: string };
+      target?: { delivery?: { mode?: string; channel?: string } };
+    };
+
+    expect(params?.owner?.sessionKey).toBe("agent:ops:telegram:direct:alice");
+    expect(params?.target?.delivery).toMatchObject({
       mode: "announce",
       channel: "last",
     });
+  });
+
+  it("rejects announce delivery without a stable destination", async () => {
+    await expect(
+      runRoutinesCommand([
+        "routines",
+        "create",
+        "+1h",
+        "check status",
+        "--name",
+        "Missing delivery target",
+        "--announce",
+      ]),
+    ).rejects.toThrow("__exit__:1");
+
+    expect(callGatewayFromCli.mock.calls.some((call) => call[0] === "routines.create")).toBe(false);
+    expect(defaultRuntime.error.mock.calls[0]?.[0]).toContain(
+      "Announce delivery requires --to or --session-key.",
+    );
   });
 
   it("rejects webhook delivery for main system-event routines", async () => {

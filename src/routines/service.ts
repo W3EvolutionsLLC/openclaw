@@ -7,6 +7,7 @@ import {
 } from "@openclaw/normalization-core/string-coerce";
 import type { Insertable, Selectable } from "kysely";
 import { normalizeCronJobCreate } from "../cron/normalize.js";
+import { parseAbsoluteTimeMs } from "../cron/parse.js";
 import type { CronServiceContract } from "../cron/service-contract.js";
 import { cronStoreKey } from "../cron/store/key.js";
 import type {
@@ -14,6 +15,8 @@ import type {
   CronDeliveryStatus,
   CronJob,
   CronJobCreate,
+  CronJobPatch,
+  CronJobState,
   CronPayload,
   CronRunStatus,
   CronSchedule,
@@ -23,7 +26,6 @@ import type {
 import { validateScheduleTimestamp } from "../cron/validate-timestamp.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import { executeSqliteQuerySync, getNodeSqliteKysely } from "../infra/kysely-sync.js";
-import { normalizeSqliteNumber } from "../infra/sqlite-number.js";
 import { DEFAULT_AGENT_ID, sanitizeAgentId } from "../routing/session-key.js";
 import type { DB as OpenClawStateKyselyDatabase } from "../state/openclaw-state-db.generated.js";
 import {
@@ -140,24 +142,33 @@ type NormalizedRoutineCreate = {
   target: RoutineTarget;
 };
 
+export class RoutineInvalidRequestError extends Error {
+  readonly cause: unknown;
+
+  constructor(message: string, opts?: { cause?: unknown }) {
+    super(message);
+    this.name = "RoutineInvalidRequestError";
+    this.cause = opts?.cause;
+  }
+}
+
 const ROUTINE_SELECT_COLUMNS = [
   "routine_id",
-  "name",
-  "description",
-  "owner_agent_id",
-  "owner_session_key",
-  "trigger_kind",
   "backing_cron_store_key",
-  "backing_cron_job_id",
-  "enabled",
-  "created_at_ms",
-  "updated_at_ms",
   "routine_json",
 ] as const;
 
 let cachedDatabase: RoutineRegistryDatabase | null = null;
 const routineMutationLocks = new Map<string, Promise<unknown>>();
 const DEFAULT_ROUTINE_CRON_STORE_KEY = "__default__";
+
+export function isRoutineInvalidRequestError(err: unknown): err is RoutineInvalidRequestError {
+  return err instanceof RoutineInvalidRequestError;
+}
+
+function routineInvalidRequest(message: string, cause?: unknown): RoutineInvalidRequestError {
+  return new RoutineInvalidRequestError(message, cause === undefined ? undefined : { cause });
+}
 
 function routineCronStoreKey(cronStorePath: string | undefined): string {
   return cronStorePath ? cronStoreKey(cronStorePath) : DEFAULT_ROUTINE_CRON_STORE_KEY;
@@ -211,32 +222,17 @@ function parseRoutineRecord(row: RoutineRecordRow): RoutineRecord {
   return {
     ...parsed,
     id: row.routine_id,
-    name: row.name,
-    ...(row.description ? { description: row.description } : {}),
-    enabled: row.enabled === 1,
     trigger: {
       ...parsed.trigger,
       ...(cronStoreKeyValue ? { cronStoreKey: cronStoreKeyValue } : {}),
-      cronJobId: row.backing_cron_job_id ?? parsed.trigger.cronJobId,
     },
-    createdAtMs: normalizeSqliteNumber(row.created_at_ms) ?? parsed.createdAtMs,
-    updatedAtMs: normalizeSqliteNumber(row.updated_at_ms) ?? parsed.updatedAtMs,
   };
 }
 
 function bindRoutineRecord(record: RoutineRecord): Insertable<RoutineRecordsTable> {
   return {
     routine_id: record.id,
-    name: record.name,
-    description: record.description ?? null,
-    owner_agent_id: record.owner.agentId ?? null,
-    owner_session_key: record.owner.sessionKey ?? null,
-    trigger_kind: record.trigger.kind,
     backing_cron_store_key: record.trigger.cronStoreKey ?? DEFAULT_ROUTINE_CRON_STORE_KEY,
-    backing_cron_job_id: record.trigger.cronJobId,
-    enabled: record.enabled ? 1 : 0,
-    created_at_ms: record.createdAtMs,
-    updated_at_ms: record.updatedAtMs,
     routine_json: JSON.stringify(record),
   };
 }
@@ -278,10 +274,13 @@ function listRoutineRecordsFromSqlite(storeKey: string): RoutineRecord[] {
   const query = getRoutineStoreKysely(db)
     .selectFrom("routine_records")
     .select(ROUTINE_SELECT_COLUMNS)
-    .where("backing_cron_store_key", "=", storeKey)
-    .orderBy("updated_at_ms", "desc")
-    .orderBy("routine_id", "asc");
-  return executeSqliteQuerySync(db, query).rows.map(parseRoutineRecord);
+    .where("backing_cron_store_key", "=", storeKey);
+  return executeSqliteQuerySync(db, query)
+    .rows.map(parseRoutineRecord)
+    .toSorted((left, right) => {
+      const byUpdated = right.updatedAtMs - left.updatedAtMs;
+      return byUpdated === 0 ? left.id.localeCompare(right.id) : byUpdated;
+    });
 }
 
 function upsertRoutineRecordToSqlite(record: RoutineRecord): void {
@@ -294,16 +293,6 @@ function upsertRoutineRecordToSqlite(record: RoutineRecord): void {
         .values(row)
         .onConflict((conflict) =>
           conflict.columns(["backing_cron_store_key", "routine_id"]).doUpdateSet({
-            name: (eb) => eb.ref("excluded.name"),
-            description: (eb) => eb.ref("excluded.description"),
-            owner_agent_id: (eb) => eb.ref("excluded.owner_agent_id"),
-            owner_session_key: (eb) => eb.ref("excluded.owner_session_key"),
-            trigger_kind: (eb) => eb.ref("excluded.trigger_kind"),
-            backing_cron_store_key: (eb) => eb.ref("excluded.backing_cron_store_key"),
-            backing_cron_job_id: (eb) => eb.ref("excluded.backing_cron_job_id"),
-            enabled: (eb) => eb.ref("excluded.enabled"),
-            created_at_ms: (eb) => eb.ref("excluded.created_at_ms"),
-            updated_at_ms: (eb) => eb.ref("excluded.updated_at_ms"),
             routine_json: (eb) => eb.ref("excluded.routine_json"),
           }),
         ),
@@ -337,7 +326,7 @@ function createRoutineId(): string {
 function requireNonBlankString(value: string | undefined, label: string): string {
   const normalized = normalizeOptionalString(value);
   if (!normalized) {
-    throw new Error(`${label} is required`);
+    throw routineInvalidRequest(`${label} is required`);
   }
   return normalized;
 }
@@ -352,7 +341,7 @@ function normalizeRoutineId(value: string | undefined): string {
 function normalizeExistingRoutineId(value: string): string {
   const normalized = normalizeOptionalString(value);
   if (!normalized) {
-    throw new Error("routine id must not be blank");
+    throw routineInvalidRequest("routine id must not be blank");
   }
   return normalized;
 }
@@ -380,10 +369,10 @@ function inferSessionTarget(payload: CronPayload): CronSessionTarget {
 
 function assertRoutinePayloadNonBlank(payload: CronPayload): void {
   if (payload.kind === "agentTurn" && !normalizeOptionalString(payload.message)) {
-    throw new Error("routine agent message must not be blank");
+    throw routineInvalidRequest("routine agent message must not be blank");
   }
   if (payload.kind === "systemEvent" && !normalizeOptionalString(payload.text)) {
-    throw new Error("routine system event text must not be blank");
+    throw routineInvalidRequest("routine system event text must not be blank");
   }
 }
 
@@ -392,9 +381,6 @@ function normalizeRoutineCreateInput(input: RoutineCreateInput): NormalizedRouti
   const name = requireNonBlankString(input.name, "routine name");
   const description = normalizeOptionalString(input.description);
   const owner = normalizeRoutineOwner(input);
-  if (input.trigger.kind !== "schedule") {
-    throw new Error(`unsupported routine trigger: ${input.trigger.kind}`);
-  }
   const sessionTarget = input.target?.sessionTarget ?? inferSessionTarget(input.action);
   const wakeMode = input.target?.wakeMode ?? "now";
   const cronInput = normalizeCronJobCreate(
@@ -416,12 +402,12 @@ function normalizeRoutineCreateInput(input: RoutineCreateInput): NormalizedRouti
     },
   );
   if (!cronInput) {
-    throw new Error("invalid routine schedule or action");
+    throw routineInvalidRequest("invalid routine schedule or action");
   }
   const cronInputWithId = { ...cronInput, id: createRoutineCronJobId(id) };
   assertRoutinePayloadNonBlank(cronInputWithId.payload);
   if (cronInputWithId.sessionTarget === "main" && cronInputWithId.delivery?.mode === "webhook") {
-    throw new Error("main-session routines do not support webhook delivery");
+    throw routineInvalidRequest("main-session routines do not support webhook delivery");
   }
   return {
     id,
@@ -435,10 +421,6 @@ function normalizeRoutineCreateInput(input: RoutineCreateInput): NormalizedRouti
       ...(cronInputWithId.delivery ? { delivery: cronInputWithId.delivery } : {}),
     },
   };
-}
-
-export function normalizeRoutineCronCreateInput(input: RoutineCreateInput): CronJobCreate {
-  return normalizeRoutineCreateInput(input).cronInput;
 }
 
 function hasExplicitEveryAnchor(schedule: CronSchedule): boolean {
@@ -457,7 +439,7 @@ function routineIntentSignature(
     name: record.name,
     description: record.description,
     owner: record.owner,
-    target: record.target,
+    target: routineTargetIntent(record.target),
     trigger: {
       kind: record.trigger.kind,
       schedule: routineScheduleIntent(record.trigger.schedule, opts?.includeEveryAnchor),
@@ -483,6 +465,34 @@ function routineScheduleIntent(schedule: CronSchedule, includeEveryAnchor?: bool
   };
 }
 
+function routineLinkedScheduleForView(
+  routineSchedule: CronSchedule,
+  cronSchedule: CronSchedule,
+): CronSchedule {
+  if (
+    routineSchedule.kind === "every" &&
+    cronSchedule.kind === "every" &&
+    !hasExplicitEveryAnchor(routineSchedule)
+  ) {
+    return routineScheduleIntent(cronSchedule, false);
+  }
+  return cronSchedule;
+}
+
+function routineTargetIntent(target: RoutineTarget): RoutineTarget {
+  const delivery = target.delivery;
+  if (delivery?.mode !== "announce" || delivery.channel !== undefined) {
+    return target;
+  }
+  return {
+    ...target,
+    delivery: {
+      ...delivery,
+      channel: "last",
+    },
+  };
+}
+
 function stableStringify(value: unknown): string {
   if (Array.isArray(value)) {
     return `[${value.map(stableStringify).join(",")}]`;
@@ -490,7 +500,7 @@ function stableStringify(value: unknown): string {
   if (value && typeof value === "object") {
     const entries = Object.entries(value as Record<string, unknown>)
       .filter(([, entry]) => entry !== undefined)
-      .sort(([left], [right]) => left.localeCompare(right));
+      .toSorted(([left], [right]) => left.localeCompare(right));
     return `{${entries
       .map(([key, entry]) => `${JSON.stringify(key)}:${stableStringify(entry)}`)
       .join(",")}}`;
@@ -507,7 +517,7 @@ function routineIntentSignatureFromNormalized(normalized: NormalizedRoutineCreat
       ...(cronInput.agentId ? { agentId: cronInput.agentId } : {}),
       ...(cronInput.sessionKey ? { sessionKey: cronInput.sessionKey } : {}),
     },
-    target: normalized.target,
+    target: routineTargetIntent(normalized.target),
     trigger: {
       kind: "schedule",
       schedule: routineScheduleIntent(
@@ -522,7 +532,38 @@ function routineIntentSignatureFromNormalized(normalized: NormalizedRoutineCreat
 function assertNewRoutineScheduleIsValid(schedule: CronSchedule): void {
   const timestampValidation = validateScheduleTimestamp(schedule);
   if (!timestampValidation.ok) {
-    throw new Error(timestampValidation.message);
+    throw routineInvalidRequest(timestampValidation.message);
+  }
+}
+
+function assertRoutineCanBeEnabled(cronJob: CronJob): void {
+  if (cronJob.schedule.kind !== "at") {
+    return;
+  }
+  const atMs = parseAbsoluteTimeMs(cronJob.schedule.at);
+  if (atMs === null || atMs <= Date.now()) {
+    throw routineInvalidRequest(
+      `cannot enable expired one-shot routine ${cronJob.id}; create a new routine or reschedule it`,
+    );
+  }
+}
+
+function assertGeneratedEveryAnchorMatchesBaseline(record: RoutineRecord, cronJob: CronJob): void {
+  if (
+    record.trigger.schedule.kind !== "every" ||
+    cronJob.schedule.kind !== "every" ||
+    hasExplicitEveryAnchor(record.trigger.schedule)
+  ) {
+    return;
+  }
+  const anchorMs = cronJob.schedule.anchorMs;
+  if (typeof anchorMs !== "number" || !Number.isFinite(anchorMs)) {
+    return;
+  }
+  if (anchorMs !== cronJob.createdAtMs) {
+    throw routineInvalidRequest(
+      `routine backing cron job changed generated anchor: ${record.trigger.cronJobId}`,
+    );
   }
 }
 
@@ -576,7 +617,7 @@ function createRoutineRecordFromCronJob(record: RoutineRecord, cronJob: CronJob)
     },
     trigger: {
       kind: "schedule",
-      schedule: cronJob.schedule,
+      schedule: routineLinkedScheduleForView(record.trigger.schedule, cronJob.schedule),
       cronJobId: cronJob.id,
       ...(record.trigger.cronStoreKey ? { cronStoreKey: record.trigger.cronStoreKey } : {}),
     },
@@ -671,8 +712,21 @@ function assertRoutineCronStoreActive(record: RoutineRecord, cronStorePath: stri
     record.trigger.cronStoreKey &&
     record.trigger.cronStoreKey !== routineCronStoreKey(cronStorePath)
   ) {
-    throw new Error(`routine backing cron store is not active: ${record.trigger.cronJobId}`);
+    throw routineInvalidRequest(
+      `routine backing cron store is not active: ${record.trigger.cronJobId}`,
+    );
   }
+}
+
+async function removeRoutineBackingCronJob(
+  cronJobId: string,
+  context: RoutineCronContext,
+): Promise<boolean> {
+  const result = await context.cron.remove(cronJobId);
+  if (!result.ok || !result.removed) {
+    throw new Error(`failed to remove routine backing cron job: ${cronJobId}`);
+  }
+  return true;
 }
 
 export async function listRoutines(
@@ -713,58 +767,39 @@ function assertRoutineBackingCronJobMatches(
   cronJob: CronJob,
 ): void {
   if (cronJob.deleteAfterRun !== false) {
-    throw new Error(`routine backing cron job changed deleteAfterRun: ${record.trigger.cronJobId}`);
+    throw routineInvalidRequest(
+      `routine backing cron job changed deleteAfterRun: ${record.trigger.cronJobId}`,
+    );
   }
+  assertGeneratedEveryAnchorMatchesBaseline(record, cronJob);
   const comparable = createRoutineRecordFromCronJob(record, cronJob);
   if (
     routineIntentSignature(comparable, {
       includeEveryAnchor: hasExplicitEveryAnchor(record.trigger.schedule),
     }) !== routineIntentSignatureFromNormalized(normalized)
   ) {
-    throw new Error(`routine id already exists with different intent: ${normalized.id}`);
+    throw routineInvalidRequest(
+      `routine id already exists with different intent: ${normalized.id}`,
+    );
   }
 }
 
-async function resolveRoutineBackingCronJob(params: {
+async function createRoutineBackingCronJob(params: {
   record: RoutineRecord;
   normalized: NormalizedRoutineCreate;
   context: RoutineCronContext;
-}): Promise<{ cronJob: CronJob; created: boolean }> {
+}): Promise<CronJob> {
   assertRoutineCronStoreActive(params.record, params.context.cronStorePath);
-  const existing = await params.context.cron.readJob(params.record.trigger.cronJobId);
-  if (existing) {
-    assertRoutineBackingCronJobMatches(params.record, params.normalized, existing);
-    return { cronJob: existing, created: false };
-  }
   assertNewRoutineScheduleIsValid(params.normalized.cronInput.schedule);
-  await params.context.validateCronCreate?.(params.normalized.cronInput);
-  let added: CronJob;
   try {
-    added = await params.context.cron.add({
-      ...params.normalized.cronInput,
-      id: params.record.trigger.cronJobId,
-    });
+    await params.context.validateCronCreate?.(params.normalized.cronInput);
   } catch (err) {
-    const created = await params.context.cron.readJob(params.record.trigger.cronJobId);
-    if (created) {
-      try {
-        assertRoutineBackingCronJobMatches(params.record, params.normalized, created);
-      } catch (matchErr) {
-        const rollbackError = await removeCreatedRoutineBackingCronJob({
-          context: params.context,
-          cronJobId: created.id,
-          reason: "invalid routine backing cron job",
-          cause: matchErr,
-        });
-        if (rollbackError) {
-          throw rollbackError;
-        }
-        throw matchErr;
-      }
-      return { cronJob: created, created: true };
-    }
-    throw err;
+    throw routineInvalidRequest(formatErrorMessage(err), err);
   }
+  const added = await params.context.cron.add({
+    ...params.normalized.cronInput,
+    id: params.record.trigger.cronJobId,
+  });
   try {
     assertRoutineBackingCronJobMatches(params.record, params.normalized, added);
   } catch (err) {
@@ -779,7 +814,7 @@ async function resolveRoutineBackingCronJob(params: {
     }
     throw err;
   }
-  return { cronJob: added, created: true };
+  return added;
 }
 
 async function removeCreatedRoutineBackingCronJob(params: {
@@ -823,6 +858,55 @@ async function routinePersistFailureError(params: {
   );
 }
 
+function routineCronStateRollbackPatch(state: CronJobState): Partial<CronJobState> {
+  return {
+    nextRunAtMs: state.nextRunAtMs,
+    runningAtMs: state.runningAtMs,
+    lastRunAtMs: state.lastRunAtMs,
+    lastRunStatus: state.lastRunStatus,
+    lastStatus: state.lastStatus,
+    lastError: state.lastError,
+    lastDiagnostics: structuredClone(state.lastDiagnostics),
+    lastDiagnosticSummary: state.lastDiagnosticSummary,
+    lastErrorReason: state.lastErrorReason,
+    lastDurationMs: state.lastDurationMs,
+    consecutiveErrors: state.consecutiveErrors,
+    consecutiveSkipped: state.consecutiveSkipped,
+    lastFailureAlertAtMs: state.lastFailureAlertAtMs,
+    scheduleErrorCount: state.scheduleErrorCount,
+    lastDeliveryStatus: state.lastDeliveryStatus,
+    lastDeliveryError: state.lastDeliveryError,
+    lastDelivered: state.lastDelivered,
+    lastFailureNotificationDelivered: state.lastFailureNotificationDelivered,
+    lastFailureNotificationDeliveryStatus: state.lastFailureNotificationDeliveryStatus,
+    lastFailureNotificationDeliveryError: state.lastFailureNotificationDeliveryError,
+  };
+}
+
+async function rollbackRoutineCronJobSnapshot(params: {
+  context: RoutineCronContext;
+  snapshot: CronJob;
+  cause: unknown;
+}): Promise<Error | undefined> {
+  try {
+    const specPatch: CronJobPatch = {
+      enabled: params.snapshot.enabled,
+      schedule: structuredClone(params.snapshot.schedule),
+    };
+    await params.context.cron.update(params.snapshot.id, specPatch);
+    await params.context.cron.update(params.snapshot.id, {
+      state: routineCronStateRollbackPatch(params.snapshot.state),
+    });
+    return undefined;
+  } catch (rollbackErr) {
+    return new Error(
+      `failed to persist routine: ${formatErrorMessage(params.cause)}; failed to roll back backing cron job state: ${formatErrorMessage(
+        rollbackErr,
+      )}`,
+    );
+  }
+}
+
 export async function createRoutine(
   input: RoutineCreateInput,
   context: RoutineCronContext,
@@ -843,7 +927,9 @@ export async function createRoutine(
             includeEveryAnchor: hasExplicitEveryAnchor(existing.trigger.schedule),
           }) !== routineIntentSignatureFromNormalized(normalized)
         ) {
-          throw new Error(`routine id already exists with different intent: ${normalized.id}`);
+          throw routineInvalidRequest(
+            `routine id already exists with different intent: ${normalized.id}`,
+          );
         }
         if (!existingCronJob) {
           return {
@@ -879,8 +965,7 @@ export async function createRoutine(
         updatedAtMs: nowMs,
         cronStorePath: context.cronStorePath,
       });
-      const backing = await resolveRoutineBackingCronJob({ record: draft, normalized, context });
-      const { cronJob } = backing;
+      const cronJob = await createRoutineBackingCronJob({ record: draft, normalized, context });
       const record = createRoutineRecord({
         normalized,
         enabled: cronJob.enabled,
@@ -893,14 +978,11 @@ export async function createRoutine(
       try {
         upsertRoutineRecordToSqlite(record);
       } catch (err) {
-        if (backing.created) {
-          throw await routinePersistFailureError({
-            context,
-            cronJobId: cronJob.id,
-            cause: err,
-          });
-        }
-        throw new Error(`failed to persist routine: ${formatErrorMessage(err)}`);
+        throw await routinePersistFailureError({
+          context,
+          cronJobId: cronJob.id,
+          cause: err,
+        });
       }
       return {
         routine: toRoutineView(record, cronJob),
@@ -921,13 +1003,21 @@ export async function setRoutineEnabled(
   return await withRoutineMutationLock(routineMutationLockKey(storeKey, routineId), async () => {
     const record = getRoutineRecordFromSqlite(routineId, storeKey);
     if (!record) {
-      throw new Error(`routine not found: ${routineId}`);
+      throw routineInvalidRequest(`routine not found: ${routineId}`);
     }
     assertRoutineCronStoreActive(record, context.cronStorePath);
     const cronJob = await context.cron.readJob(record.trigger.cronJobId);
     if (!cronJob) {
       if (enabled) {
-        throw new Error(`routine backing cron job is missing: ${record.trigger.cronJobId}`);
+        throw routineInvalidRequest(
+          `routine backing cron job is missing: ${record.trigger.cronJobId}`,
+        );
+      }
+      if (!record.enabled) {
+        return {
+          routine: toRoutineView(record, undefined),
+          changed: false,
+        };
       }
       const disabled = { ...record, enabled: false, updatedAtMs: Date.now() };
       upsertRoutineRecordToSqlite(disabled);
@@ -936,7 +1026,18 @@ export async function setRoutineEnabled(
         changed: record.enabled,
       };
     }
-    if (cronJob.enabled !== enabled) {
+    if (enabled && !cronJob.enabled) {
+      assertRoutineCanBeEnabled(cronJob);
+    }
+    const changed = record.enabled !== enabled || cronJob.enabled !== enabled;
+    if (!changed) {
+      return {
+        routine: toRoutineView(record, cronJob),
+        changed: false,
+      };
+    }
+    const previousCronJob = structuredClone(cronJob);
+    if (previousCronJob.enabled !== enabled) {
       await context.cron.update(cronJob.id, { enabled });
     }
     const updatedCronJob = await context.cron.readJob(cronJob.id);
@@ -945,10 +1046,24 @@ export async function setRoutineEnabled(
       enabled,
       updatedAtMs: Date.now(),
     };
-    upsertRoutineRecordToSqlite(updatedRecord);
+    try {
+      upsertRoutineRecordToSqlite(updatedRecord);
+    } catch (err) {
+      if (previousCronJob.enabled !== enabled) {
+        const rollbackError = await rollbackRoutineCronJobSnapshot({
+          context,
+          snapshot: previousCronJob,
+          cause: err,
+        });
+        if (rollbackError) {
+          throw rollbackError;
+        }
+      }
+      throw new Error(`failed to persist routine: ${formatErrorMessage(err)}`, { cause: err });
+    }
     return {
-      routine: toRoutineView(updatedRecord, updatedCronJob ?? { ...cronJob, enabled }),
-      changed: record.enabled !== enabled || cronJob.enabled !== enabled,
+      routine: toRoutineView(updatedRecord, updatedCronJob),
+      changed,
     };
   });
 }
@@ -967,10 +1082,7 @@ export async function deleteRoutine(
     assertRoutineCronStoreActive(record, context.cronStorePath);
     const cronJob = await context.cron.readJob(record.trigger.cronJobId);
     if (cronJob) {
-      const result = await context.cron.remove(record.trigger.cronJobId);
-      if (!result.ok || !result.removed) {
-        throw new Error(`failed to remove routine backing cron job: ${record.trigger.cronJobId}`);
-      }
+      await removeRoutineBackingCronJob(record.trigger.cronJobId, context);
     }
     const deleted = deleteRoutineRecordFromSqlite(record.id, storeKey);
     return { id: record.id, deleted };

@@ -161,6 +161,8 @@ function resolveDelivery(opts: RoutineCliOpts, payload: CronPayload, sessionTarg
   }
   const accountId = normalizeOptionalString(opts.account);
   const threadId = parseCronThreadIdOption(opts.threadId);
+  const sessionKey = normalizeOptionalString(opts.sessionKey);
+  const to = normalizeOptionalString(opts.to);
   const hasChatDeliveryTarget =
     typeof opts.channel === "string" ||
     typeof opts.to === "string" ||
@@ -168,6 +170,10 @@ function resolveDelivery(opts: RoutineCliOpts, payload: CronPayload, sessionTarg
     typeof threadId === "number";
   if (hasWebhook && hasChatDeliveryTarget) {
     throw new Error("--webhook cannot be combined with chat delivery options.");
+  }
+  const hasStableAnnounceRecipient = Boolean(sessionKey) || Boolean(to);
+  if ((hasAnnounce || hasChatDeliveryTarget) && !hasStableAnnounceRecipient) {
+    throw new Error("Announce delivery requires --to or --session-key.");
   }
   if (payload.kind === "systemEvent" || sessionTarget === "main") {
     if (deliveryFlagCount > 0 || hasChatDeliveryTarget) {
@@ -182,14 +188,14 @@ function resolveDelivery(opts: RoutineCliOpts, payload: CronPayload, sessionTarg
       : hasAnnounce
         ? "announce"
         : undefined;
-  const deliveryMode = mode ?? "announce";
+  const deliveryMode = mode ?? (hasStableAnnounceRecipient ? "announce" : "none");
   const channel = normalizeOptionalString(opts.channel);
   return {
     mode: deliveryMode,
     channel: hasWebhook
       ? undefined
       : (channel ?? (deliveryMode === "announce" ? "last" : undefined)),
-    to: hasWebhook ? webhookUrl : normalizeOptionalString(opts.to),
+    to: hasWebhook ? webhookUrl : to,
     threadId: hasWebhook ? undefined : threadId,
     accountId: hasWebhook ? undefined : accountId,
   };
@@ -219,6 +225,7 @@ async function createRoutineFromCli(
   const sessionTarget = resolveSessionTarget(opts, payload);
   assertPayloadMatchesTarget(sessionTarget, payload);
   const agentId = normalizeOptionalString(opts.agent);
+  const sessionKey = normalizeOptionalString(opts.sessionKey);
   const params = {
     id: normalizeRoutineIdOption(opts.id),
     name: normalizeOptionalString(opts.name),
@@ -226,9 +233,7 @@ async function createRoutineFromCli(
     enabled: opts.disabled ? false : undefined,
     owner: {
       ...(agentId ? { agentId: sanitizeAgentId(agentId) } : {}),
-      ...(normalizeOptionalString(opts.sessionKey)
-        ? { sessionKey: normalizeOptionalString(opts.sessionKey) }
-        : {}),
+      ...(sessionKey ? { sessionKey } : {}),
     },
     target: {
       sessionTarget,

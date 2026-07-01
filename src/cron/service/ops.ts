@@ -218,7 +218,7 @@ async function persistOrReloadOnFailure(
   opts?: Parameters<typeof persist>[1],
 ) {
   try {
-    await persist(state, opts);
+    await persist(state, { ...opts, requireQuarantineFlush: true });
   } catch (error) {
     state.store = null;
     state.storeLoadedAtMs = null;

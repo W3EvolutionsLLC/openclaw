@@ -738,18 +738,9 @@ export interface PluginStateEntries {
 }
 
 export interface RoutineRecords {
-  backing_cron_job_id: string | null;
   backing_cron_store_key: string;
-  created_at_ms: number;
-  description: string | null;
-  enabled: number;
-  name: string;
-  owner_agent_id: string | null;
-  owner_session_key: string | null;
   routine_id: string;
   routine_json: string;
-  trigger_kind: string;
-  updated_at_ms: number;
 }
 
 export interface SandboxRegistryEntries {
