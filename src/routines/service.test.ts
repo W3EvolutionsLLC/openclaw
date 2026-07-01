@@ -621,7 +621,7 @@ describe("routine service", () => {
     });
   });
 
-  it("arms an adopted staged backing cron job only after the registry row exists", async () => {
+  it("adopts a disabled orphan backing cron job without arming it", async () => {
     await withOpenClawTestState({ prefix: "routine-adopt-staged-orphan-" }, async () => {
       const cron = createFakeCronService();
       const input = createRoutineInput();
@@ -643,14 +643,14 @@ describe("routine service", () => {
 
       expect(replay.created).toBe(false);
       expect(replay.idempotent).toBe(true);
-      expect(replay.routine.status.status).toBe("enabled");
-      expect(cron.update).toHaveBeenCalledWith(cronJobId, { enabled: true });
+      expect(replay.routine.status.status).toBe("disabled");
+      expect(cron.update).not.toHaveBeenCalled();
       await expect(
         inspectRoutine("daily-ops", { cron, cronStorePath: "/tmp/cron.sqlite" }),
       ).resolves.toMatchObject({
         id: "daily-ops",
-        enabled: true,
-        status: { backing: "linked", enabled: true },
+        enabled: false,
+        status: { backing: "linked", enabled: false },
       });
     });
   });
@@ -1148,6 +1148,29 @@ describe("routine service", () => {
     });
   });
 
+  it("recovers a staged enable during idempotent create replay", async () => {
+    await withOpenClawTestState({ prefix: "routine-enable-stage-create-replay-" }, async () => {
+      const cron = createFakeCronService();
+      const input = createRoutineInput({ enabled: false });
+      const created = await createRoutine(input, { cron });
+      const cronJobId = created.routine.trigger.cronJobId;
+      cron.update.mockRejectedValueOnce(new Error("interrupted before enable"));
+
+      await expect(setRoutineEnabled(created.routine.id, true, { cron })).rejects.toThrow(
+        "interrupted before enable",
+      );
+      cron.update.mockClear();
+
+      const replay = await createRoutine(input, { cron });
+
+      expect(replay.created).toBe(false);
+      expect(replay.idempotent).toBe(true);
+      expect(replay.routine.status.status).toBe("enabled");
+      expect(cron.update).toHaveBeenCalledWith(cronJobId, { enabled: true });
+      expect(readStoredRoutineJson()).not.toHaveProperty("enableStage");
+    });
+  });
+
   it("persists disable intent before disarming an enabled backing cron job", async () => {
     await withOpenClawTestState({ prefix: "routine-disable-stage-" }, async () => {
       const cron = createFakeCronService();
@@ -1169,6 +1192,29 @@ describe("routine service", () => {
       const replay = await setRoutineEnabled(created.routine.id, false, { cron });
 
       expect(replay.changed).toBe(true);
+      expect(replay.routine.status.status).toBe("disabled");
+      expect(cron.update).toHaveBeenCalledWith(cronJobId, { enabled: false });
+      expect(readStoredRoutineJson()).not.toHaveProperty("disableStage");
+    });
+  });
+
+  it("recovers a staged disable during idempotent create replay", async () => {
+    await withOpenClawTestState({ prefix: "routine-disable-stage-create-replay-" }, async () => {
+      const cron = createFakeCronService();
+      const input = createRoutineInput();
+      const created = await createRoutine(input, { cron });
+      const cronJobId = created.routine.trigger.cronJobId;
+      cron.update.mockRejectedValueOnce(new Error("interrupted before disable"));
+
+      await expect(setRoutineEnabled(created.routine.id, false, { cron })).rejects.toThrow(
+        "interrupted before disable",
+      );
+      cron.update.mockClear();
+
+      const replay = await createRoutine(input, { cron });
+
+      expect(replay.created).toBe(false);
+      expect(replay.idempotent).toBe(true);
       expect(replay.routine.status.status).toBe("disabled");
       expect(cron.update).toHaveBeenCalledWith(cronJobId, { enabled: false });
       expect(readStoredRoutineJson()).not.toHaveProperty("disableStage");

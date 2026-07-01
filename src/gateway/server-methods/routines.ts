@@ -10,9 +10,9 @@ import {
   validateRoutinesSetEnabledParams,
 } from "../../../packages/gateway-protocol/src/index.js";
 import {
-  assertCronDeliveryInputNonBlankFields,
   assertValidCronCreateDelivery,
-} from "../../cron/delivery-target-validation.js";
+} from "../../cron/delivery-channel-validation.js";
+import { assertCronDeliveryInputNonBlankFields } from "../../cron/delivery-target-validation.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import {
   createRoutine,

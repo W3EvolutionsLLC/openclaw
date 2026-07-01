@@ -16,10 +16,10 @@ import {
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { resolveCronDeliveryPreviews } from "../../cron/delivery-preview.js";
 import {
-  assertCronDeliveryInputNonBlankFields,
   assertValidCronAnnounceDelivery,
   assertValidCronCreateDelivery,
-} from "../../cron/delivery-target-validation.js";
+} from "../../cron/delivery-channel-validation.js";
+import { assertCronDeliveryInputNonBlankFields } from "../../cron/delivery-target-validation.js";
 import { normalizeCronJobCreate, normalizeCronJobPatch } from "../../cron/normalize.js";
 import {
   isInvalidCronRunLogJobIdError,

@@ -1001,12 +1001,17 @@ function isTerminalOneShotCronJob(cronJob: CronJob): boolean {
   );
 }
 
-function stageRoutineRecordForToggle(record: RoutineStoredRecord, enabled: boolean): RoutineStoredRecord {
+function stageRoutineRecordForToggle(
+  record: RoutineStoredRecord,
+  enabled: boolean,
+): RoutineStoredRecord {
   return {
     ...toPublicRoutineRecord(record),
     enabled,
     updatedAtMs: Date.now(),
-    ...(enabled ? { enableStage: "enabling" as const } : { disableStage: "disabling" as const }),
+    ...(enabled
+      ? { enableStage: "enabling" as const }
+      : { disableStage: "disabling" as const }),
   };
 }
 
@@ -1016,6 +1021,38 @@ function hasRoutineInternalStage(record: RoutineStoredRecord): boolean {
     record.enableStage === "enabling" ||
     record.disableStage === "disabling"
   );
+}
+
+async function maybeApplyRoutineToggleStage(params: {
+  record: RoutineStoredRecord;
+  cronJob: CronJob;
+  context: RoutineCronContext;
+}): Promise<CronJob> {
+  const enabled =
+    params.record.enableStage === "enabling"
+      ? true
+      : params.record.disableStage === "disabling"
+        ? false
+        : undefined;
+  if (enabled === undefined || params.cronJob.enabled === enabled) {
+    return params.cronJob;
+  }
+  if (enabled) {
+    assertRoutineCanBeEnabled(params.cronJob);
+  }
+  return await params.context.cron.update(params.cronJob.id, { enabled });
+}
+
+async function maybeRecoverRoutineBackingCronJob(params: {
+  record: RoutineStoredRecord;
+  cronJob: CronJob;
+  context: RoutineCronContext;
+}): Promise<CronJob> {
+  const createRecovered = await maybeEnableRoutineBackingCronJob(params);
+  return await maybeApplyRoutineToggleStage({
+    ...params,
+    cronJob: createRecovered,
+  });
 }
 
 async function persistRoutineRecordThenMaybeArm(params: {
@@ -1132,7 +1169,7 @@ export async function createRoutine(
             idempotent: true,
           };
         }
-        const enabledCronJob = await maybeEnableRoutineBackingCronJob({
+        const recoveredCronJob = await maybeRecoverRoutineBackingCronJob({
           record: existing,
           cronJob: existingCronJob,
           context,
@@ -1140,13 +1177,13 @@ export async function createRoutine(
         const record = createRoutineRecordForCronJob({
           base: existing,
           normalized,
-          cronJob: enabledCronJob,
-          enabled: enabledCronJob.enabled,
+          cronJob: recoveredCronJob,
+          enabled: recoveredCronJob.enabled,
           cronStorePath: context.cronStorePath,
         });
         upsertRoutineRecordToSqlite(record);
         return {
-          routine: toRoutineView(record, enabledCronJob),
+          routine: toRoutineView(record, recoveredCronJob),
           created: false,
           idempotent: true,
         };
@@ -1165,21 +1202,20 @@ export async function createRoutine(
       const existingBackingCronJob = await context.cron.readJob(draft.trigger.cronJobId);
       if (existingBackingCronJob) {
         assertRoutineBackingCronJobMatches(draft, normalized, existingBackingCronJob);
-        const adopted = await persistRoutineRecordThenMaybeArm({
-          record: createRoutineRecordForCronJob({
-            base: draft,
-            normalized,
-            cronJob: existingBackingCronJob,
-            enabled: normalized.enabled,
-            cronStorePath: context.cronStorePath,
-          }),
+        const adoptedRecord = createRoutineRecordForCronJob({
+          base: draft,
           normalized,
           cronJob: existingBackingCronJob,
-          context,
+          enabled: existingBackingCronJob.enabled,
           cronStorePath: context.cronStorePath,
         });
+        try {
+          upsertRoutineRecordToSqlite(adoptedRecord);
+        } catch (err) {
+          throw new Error(`failed to persist routine: ${formatErrorMessage(err)}`, { cause: err });
+        }
         return {
-          routine: toRoutineView(adopted.record, adopted.cronJob),
+          routine: toRoutineView(adoptedRecord, existingBackingCronJob),
           created: false,
           idempotent: true,
         };
