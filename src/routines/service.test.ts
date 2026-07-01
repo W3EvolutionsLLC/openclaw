@@ -117,17 +117,13 @@ function createFakeCronService(): FakeCronService {
           nextState.runningAtMs = undefined;
         }
       }
-      const updated: CronJob = {
-        ...current,
-        enabled: typeof patch.enabled === "boolean" ? patch.enabled : current.enabled,
-        name: patch.name ?? current.name,
-        description: patch.description ?? current.description,
-        schedule: patch.schedule ?? current.schedule,
-        state: nextState,
-        updatedAtMs: nextUpdatedAtMs,
-      };
-      jobs.set(id, updated);
-      return updated;
+      current.enabled = typeof patch.enabled === "boolean" ? patch.enabled : current.enabled;
+      current.name = patch.name ?? current.name;
+      current.description = patch.description ?? current.description;
+      current.schedule = patch.schedule ?? current.schedule;
+      current.state = nextState;
+      current.updatedAtMs = nextUpdatedAtMs;
+      return current;
     }),
     remove: vi.fn(async (id: string) => {
       const removed = jobs.delete(id);
@@ -1202,13 +1198,9 @@ describe("routine service", () => {
         if (id === cronJobId) {
           readCount += 1;
           if (readCount === 2 && current) {
-            const concurrent = {
-              ...current,
-              state: concurrentState,
-              updatedAtMs: current.updatedAtMs + 1,
-            };
-            cron.jobs.set(id, concurrent);
-            return concurrent;
+            current.state = concurrentState;
+            current.updatedAtMs += 1;
+            return current;
           }
         }
         return current;
