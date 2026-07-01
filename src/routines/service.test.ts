@@ -449,6 +449,30 @@ describe("routine service", () => {
     });
   });
 
+  it("arms near-now one-shot routines through cron's missed-run grace", async () => {
+    await withOpenClawTestState({ prefix: "routine-near-now-at-" }, async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-01-01T00:00:30Z"));
+      const cron = createFakeCronService();
+      const at = new Date("2026-01-01T00:00:00Z").toISOString();
+
+      const created = await createRoutine(
+        createRoutineInput({
+          id: "near-now-routine",
+          trigger: { kind: "schedule", schedule: { kind: "at", at } },
+        }),
+        { cron },
+      );
+
+      expect(created.created).toBe(true);
+      expect(created.routine.status.status).toBe("enabled");
+      expect(cron.add.mock.calls[0]?.[0]).toMatchObject({ enabled: false });
+      expect(cron.update).toHaveBeenCalledWith(created.routine.trigger.cronJobId, {
+        enabled: true,
+      });
+    });
+  });
+
   it("serializes concurrent creates with the same id", async () => {
     await withOpenClawTestState({ prefix: "routine-concurrent-" }, async () => {
       const cron = createFakeCronService();
@@ -575,6 +599,30 @@ describe("routine service", () => {
     await withOpenClawTestState({ prefix: "routine-complete-staged-enable-" }, async () => {
       const cron = createFakeCronService();
       const input = createRoutineInput();
+      cron.update.mockRejectedValueOnce(new Error("interrupted before arm"));
+
+      await expect(
+        createRoutine(input, { cron, cronStorePath: "/tmp/cron.sqlite" }),
+      ).rejects.toThrow("interrupted before arm");
+      const cronJobId = [...cron.jobs.keys()][0];
+      if (!cronJobId) {
+        throw new Error("expected staged backing cron job");
+      }
+      cron.update.mockClear();
+
+      const replay = await createRoutine(input, { cron, cronStorePath: "/tmp/cron.sqlite" });
+
+      expect(replay.created).toBe(false);
+      expect(replay.idempotent).toBe(true);
+      expect(replay.routine.status.status).toBe("enabled");
+      expect(cron.update).toHaveBeenCalledWith(cronJobId, { enabled: true });
+    });
+  });
+
+  it("does not infer staged create from an enabled row with a disabled backing job", async () => {
+    await withOpenClawTestState({ prefix: "routine-enabled-row-disabled-cron-" }, async () => {
+      const cron = createFakeCronService();
+      const input = createRoutineInput();
       const created = await createRoutine(input, { cron, cronStorePath: "/tmp/cron.sqlite" });
       const cronJobId = created.routine.trigger.cronJobId;
       const cronJob = cron.jobs.get(cronJobId);
@@ -592,8 +640,14 @@ describe("routine service", () => {
 
       expect(replay.created).toBe(false);
       expect(replay.idempotent).toBe(true);
-      expect(replay.routine.status.status).toBe("enabled");
-      expect(cron.update).toHaveBeenCalledWith(cronJobId, { enabled: true });
+      expect(replay.routine.status.status).toBe("disabled");
+      expect(cron.update).not.toHaveBeenCalled();
+      await expect(
+        inspectRoutine("daily-ops", { cron, cronStorePath: "/tmp/cron.sqlite" }),
+      ).resolves.toMatchObject({
+        enabled: false,
+        status: { enabled: false },
+      });
     });
   });
 

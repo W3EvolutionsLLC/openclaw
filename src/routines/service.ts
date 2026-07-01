@@ -64,6 +64,10 @@ type RoutineRecord = {
   updatedAtMs: number;
 };
 
+type RoutineStoredRecord = RoutineRecord & {
+  createStage?: "creating";
+};
+
 export type RoutineCreateInput = {
   id?: string;
   name: string;
@@ -212,8 +216,8 @@ function openRoutineRegistryDatabase(): RoutineRegistryDatabase {
   return cachedDatabase;
 }
 
-function parseRoutineRecord(row: RoutineRecordRow): RoutineRecord {
-  const parsed = JSON.parse(row.routine_json) as RoutineRecord;
+function parseRoutineRecord(row: RoutineRecordRow): RoutineStoredRecord {
+  const parsed = JSON.parse(row.routine_json) as RoutineStoredRecord;
   const cronStoreKeyValue = row.backing_cron_store_key ?? parsed.trigger.cronStoreKey;
   return {
     ...parsed,
@@ -225,7 +229,7 @@ function parseRoutineRecord(row: RoutineRecordRow): RoutineRecord {
   };
 }
 
-function bindRoutineRecord(record: RoutineRecord): Insertable<RoutineRecordsTable> {
+function bindRoutineRecord(record: RoutineStoredRecord): Insertable<RoutineRecordsTable> {
   return {
     routine_id: record.id,
     backing_cron_store_key: record.trigger.cronStoreKey ?? DEFAULT_ROUTINE_CRON_STORE_KEY,
@@ -247,7 +251,7 @@ function normalizeOffset(value: number | undefined): number | undefined {
   return Math.max(0, Math.floor(value));
 }
 
-function getRoutineRecordFromSqlite(id: string, storeKey: string): RoutineRecord | undefined {
+function getRoutineRecordFromSqlite(id: string, storeKey: string): RoutineStoredRecord | undefined {
   const routineId = id.trim();
   if (!routineId) {
     return undefined;
@@ -265,7 +269,7 @@ function getRoutineRecordFromSqlite(id: string, storeKey: string): RoutineRecord
   return row ? parseRoutineRecord(row) : undefined;
 }
 
-function listRoutineRecordsFromSqlite(storeKey: string): RoutineRecord[] {
+function listRoutineRecordsFromSqlite(storeKey: string): RoutineStoredRecord[] {
   const { db } = openRoutineRegistryDatabase();
   const query = getRoutineStoreKysely(db)
     .selectFrom("routine_records")
@@ -279,7 +283,7 @@ function listRoutineRecordsFromSqlite(storeKey: string): RoutineRecord[] {
     });
 }
 
-function upsertRoutineRecordToSqlite(record: RoutineRecord): void {
+function upsertRoutineRecordToSqlite(record: RoutineStoredRecord): void {
   const row = bindRoutineRecord(record);
   runOpenClawStateWriteTransaction(({ db }) => {
     executeSqliteQuerySync(
@@ -708,6 +712,15 @@ function createRoutineRecord(params: {
   };
 }
 
+function stageRoutineRecordForCreate(record: RoutineRecord): RoutineStoredRecord {
+  return record.enabled ? { ...record, createStage: "creating" } : record;
+}
+
+function toPublicRoutineRecord(record: RoutineStoredRecord): RoutineRecord {
+  const { createStage: _createStage, ...publicRecord } = record;
+  return publicRecord;
+}
+
 function createRoutineRecordFromCronJob(record: RoutineRecord, cronJob: CronJob): RoutineRecord {
   const description = normalizeOptionalString(cronJob.description);
   return {
@@ -769,11 +782,13 @@ function routineStatus(record: RoutineRecord, cronJob: CronJob | undefined): Rou
   };
 }
 
-function toRoutineView(record: RoutineRecord, cronJob: CronJob | undefined): RoutineView {
+function toRoutineView(record: RoutineStoredRecord, cronJob: CronJob | undefined): RoutineView {
   const status = routineStatus(record, cronJob);
   // Cron is canonical for executable fields while linked. The routine row is a
   // registry snapshot used for missing-backing visibility and create recovery.
-  const source = cronJob ? createRoutineRecordFromCronJob(record, cronJob) : record;
+  const source = cronJob
+    ? createRoutineRecordFromCronJob(record, cronJob)
+    : toPublicRoutineRecord(record);
   return {
     ...source,
     enabled: status.enabled,
@@ -930,7 +945,7 @@ async function createRoutineBackingCronJob(params: {
 }
 
 function createRoutineRecordForCronJob(params: {
-  base: RoutineRecord;
+  base: RoutineStoredRecord;
   normalized: NormalizedRoutineCreate;
   cronJob: CronJob;
   enabled: boolean;
@@ -948,46 +963,59 @@ function createRoutineRecordForCronJob(params: {
 }
 
 async function maybeEnableRoutineBackingCronJob(params: {
-  record: RoutineRecord;
+  record: RoutineStoredRecord;
   cronJob: CronJob;
   context: RoutineCronContext;
 }): Promise<CronJob> {
-  if (!params.record.enabled || params.cronJob.enabled) {
+  if (
+    params.record.createStage !== "creating" ||
+    !params.record.enabled ||
+    params.cronJob.enabled
+  ) {
     return params.cronJob;
   }
-  assertRoutineCanBeEnabled(params.cronJob);
   return await params.context.cron.update(params.cronJob.id, { enabled: true });
 }
 
-async function persistAdoptedRoutineRecord(params: {
-  draft: RoutineRecord;
+async function persistRoutineRecordThenMaybeArm(params: {
+  record: RoutineRecord;
   normalized: NormalizedRoutineCreate;
   cronJob: CronJob;
   context: RoutineCronContext;
   cronStorePath?: string;
+  rollbackNewCronJobOnPersistFailure?: boolean;
 }): Promise<{ record: RoutineRecord; cronJob: CronJob }> {
-  assertRoutineBackingCronJobMatches(params.draft, params.normalized, params.cronJob);
-  const record = createRoutineRecord({
-    normalized: params.normalized,
-    enabled: params.normalized.enabled,
-    cronJobId: params.cronJob.id,
-    action: params.cronJob.payload,
-    cronStorePath: params.cronStorePath,
-    createdAtMs: params.cronJob.createdAtMs,
-    updatedAtMs: params.cronJob.updatedAtMs,
-  });
+  const stagedRecord = stageRoutineRecordForCreate(params.record);
   try {
-    upsertRoutineRecordToSqlite(record);
+    upsertRoutineRecordToSqlite(stagedRecord);
   } catch (err) {
+    if (params.rollbackNewCronJobOnPersistFailure) {
+      throw await routinePersistFailureError({
+        context: params.context,
+        cronJobId: params.cronJob.id,
+        cause: err,
+      });
+    }
     throw new Error(`failed to persist routine: ${formatErrorMessage(err)}`, { cause: err });
+  }
+  const cronJob = await maybeEnableRoutineBackingCronJob({
+    record: stagedRecord,
+    cronJob: params.cronJob,
+    context: params.context,
+  });
+  const record = createRoutineRecordForCronJob({
+    base: stagedRecord,
+    normalized: params.normalized,
+    cronJob,
+    enabled: cronJob.enabled,
+    cronStorePath: params.cronStorePath,
+  });
+  if (stagedRecord.createStage === "creating") {
+    upsertRoutineRecordToSqlite(record);
   }
   return {
     record,
-    cronJob: await maybeEnableRoutineBackingCronJob({
-      record,
-      cronJob: params.cronJob,
-      context: params.context,
-    }),
+    cronJob,
   };
 }
 
@@ -1173,8 +1201,15 @@ export async function createRoutine(
       });
       const existingBackingCronJob = await context.cron.readJob(draft.trigger.cronJobId);
       if (existingBackingCronJob) {
-        const adopted = await persistAdoptedRoutineRecord({
-          draft,
+        assertRoutineBackingCronJobMatches(draft, normalized, existingBackingCronJob);
+        const adopted = await persistRoutineRecordThenMaybeArm({
+          record: createRoutineRecordForCronJob({
+            base: draft,
+            normalized,
+            cronJob: existingBackingCronJob,
+            enabled: normalized.enabled,
+            cronStorePath: context.cronStorePath,
+          }),
           normalized,
           cronJob: existingBackingCronJob,
           context,
@@ -1187,31 +1222,22 @@ export async function createRoutine(
         };
       }
       const cronJob = await createRoutineBackingCronJob({ record: draft, normalized, context });
-      const record = createRoutineRecord({
+      const created = await persistRoutineRecordThenMaybeArm({
+        record: createRoutineRecordForCronJob({
+          base: draft,
+          normalized,
+          cronJob,
+          enabled: normalized.enabled,
+          cronStorePath: context.cronStorePath,
+        }),
         normalized,
-        enabled: normalized.enabled,
-        cronJobId: cronJob.id,
-        action: cronJob.payload,
-        cronStorePath: context.cronStorePath,
-        createdAtMs: draft.createdAtMs,
-        updatedAtMs: cronJob.updatedAtMs,
-      });
-      try {
-        upsertRoutineRecordToSqlite(record);
-      } catch (err) {
-        throw await routinePersistFailureError({
-          context,
-          cronJobId: cronJob.id,
-          cause: err,
-        });
-      }
-      const enabledCronJob = await maybeEnableRoutineBackingCronJob({
-        record,
         cronJob,
         context,
+        cronStorePath: context.cronStorePath,
+        rollbackNewCronJobOnPersistFailure: true,
       });
       return {
-        routine: toRoutineView(record, enabledCronJob),
+        routine: toRoutineView(created.record, created.cronJob),
         created: true,
         idempotent: false,
       };
@@ -1245,7 +1271,11 @@ export async function setRoutineEnabled(
           changed: false,
         };
       }
-      const disabled = { ...record, enabled: false, updatedAtMs: Date.now() };
+      const disabled = toPublicRoutineRecord({
+        ...record,
+        enabled: false,
+        updatedAtMs: Date.now(),
+      });
       upsertRoutineRecordToSqlite(disabled);
       return {
         routine: toRoutineView(disabled, undefined),
@@ -1268,11 +1298,11 @@ export async function setRoutineEnabled(
       postToggleCronJob = await context.cron.update(cronJob.id, { enabled });
     }
     const updatedCronJob = await context.cron.readJob(cronJob.id);
-    const updatedRecord = {
+    const updatedRecord = toPublicRoutineRecord({
       ...record,
       enabled,
       updatedAtMs: Date.now(),
-    };
+    });
     try {
       upsertRoutineRecordToSqlite(updatedRecord);
     } catch (err) {
