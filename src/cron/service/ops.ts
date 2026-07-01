@@ -213,6 +213,32 @@ async function ensureLoadedForRead(state: CronServiceState) {
   }
 }
 
+async function persistOrReloadOnFailure(
+  state: CronServiceState,
+  opts?: Parameters<typeof persist>[1],
+) {
+  try {
+    await persist(state, opts);
+  } catch (error) {
+    state.store = null;
+    state.storeLoadedAtMs = null;
+    try {
+      await ensureLoaded(state, { forceReload: true, skipRecompute: true });
+    } catch (reloadError) {
+      state.store = null;
+      state.storeLoadedAtMs = null;
+      state.deps.log.warn(
+        {
+          storePath: state.deps.storePath,
+          error: reloadError instanceof Error ? reloadError.message : String(reloadError),
+        },
+        "cron: failed to reload durable store after persistence failure",
+      );
+    }
+    throw error;
+  }
+}
+
 /** Starts the cron service, recovers interrupted runs, catches up missed jobs, and arms the timer. */
 export async function start(state: CronServiceState) {
   state.stopped = false;
@@ -486,7 +512,7 @@ export async function add(state: CronServiceState, input: CronJobCreate) {
 
     recomputeNextRunsForMaintenance(state);
 
-    await persist(state);
+    await persistOrReloadOnFailure(state);
     armTimer(state);
 
     state.deps.log.info(
@@ -584,7 +610,7 @@ export async function update(state: CronServiceState, id: string, patch: CronJob
       }
     }
 
-    await persist(state);
+    await persistOrReloadOnFailure(state);
     armTimer(state);
     emit(state, {
       jobId: id,
@@ -611,7 +637,7 @@ export async function remove(state: CronServiceState, id: string) {
 
     recomputeNextRunsForMaintenance(state);
 
-    await persist(state);
+    await persistOrReloadOnFailure(state);
     armTimer(state);
     if (removed) {
       emit(state, { jobId: id, action: "removed", job: removedJob });
