@@ -39,6 +39,18 @@ describe("routines protocol schemas", () => {
     ).toBe(false);
   });
 
+  it("keeps event-driven cron schedules out of routine create params", () => {
+    expect(
+      validateRoutinesCreateParams({
+        ...createRoutineParams(),
+        trigger: {
+          kind: "schedule",
+          schedule: { kind: "on-exit", command: "sleep 1" },
+        },
+      }),
+    ).toBe(false);
+  });
+
   it("rejects blank explicit routine ids", () => {
     expect(validateRoutinesCreateParams({ ...createRoutineParams(), id: "   " })).toBe(false);
   });

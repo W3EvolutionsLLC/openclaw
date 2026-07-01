@@ -5,7 +5,6 @@ import {
   CronDeliveryStatusSchema,
   CronPayloadSchema,
   CronRunStatusSchema,
-  CronScheduleSchema,
   CronSessionTargetSchema,
   CronWakeModeSchema,
 } from "./cron.js";
@@ -39,10 +38,37 @@ const RoutineCreateTargetSchema = Type.Object(
   { additionalProperties: false },
 );
 
+const RoutineScheduleSchema = Type.Union([
+  Type.Object(
+    {
+      kind: Type.Literal("at"),
+      at: NonEmptyString,
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("every"),
+      everyMs: Type.Integer({ minimum: 1 }),
+      anchorMs: Type.Optional(Type.Integer({ minimum: 0 })),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      kind: Type.Literal("cron"),
+      expr: NonEmptyString,
+      tz: Type.Optional(Type.String()),
+      staggerMs: Type.Optional(Type.Integer({ minimum: 0 })),
+    },
+    { additionalProperties: false },
+  ),
+]);
+
 const RoutineScheduleTriggerCreateSchema = Type.Object(
   {
     kind: Type.Literal("schedule"),
-    schedule: CronScheduleSchema,
+    schedule: RoutineScheduleSchema,
   },
   { additionalProperties: false },
 );
@@ -50,7 +76,7 @@ const RoutineScheduleTriggerCreateSchema = Type.Object(
 const RoutineScheduleTriggerSchema = Type.Object(
   {
     kind: Type.Literal("schedule"),
-    schedule: CronScheduleSchema,
+    schedule: RoutineScheduleSchema,
     cronJobId: NonBlankString,
     cronStoreKey: Type.Optional(NonBlankString),
   },
