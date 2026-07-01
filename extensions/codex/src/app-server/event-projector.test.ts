@@ -2136,6 +2136,30 @@ describe("CodexAppServerEventProjector", () => {
     },
   );
 
+  it("does not project status-less native web searches as successful audit actions", async () => {
+    const diagnosticEvents: DiagnosticEventPayload[] = [];
+    const unsubscribe = onInternalDiagnosticEvent((event) => diagnosticEvents.push(event));
+    const projector = await createProjector();
+    const item = {
+      id: "web-search-audit-1",
+      type: "webSearch",
+      query: "sensitive query",
+      action: { type: "search", query: "sensitive query", queries: null },
+    };
+
+    try {
+      await projector.handleNotification(forCurrentTurn("item/started", { item }));
+      await projector.handleNotification(forCurrentTurn("item/completed", { item }));
+      await flushDiagnosticEvents();
+    } finally {
+      unsubscribe();
+    }
+
+    expect(
+      diagnosticEvents.filter((event) => "toolCallId" in event && event.toolCallId === item.id),
+    ).toEqual([]);
+  });
+
   it("synthesizes native tool progress from turn completion snapshots", async () => {
     const onAgentEvent = vi.fn();
     const onToolResult = vi.fn();

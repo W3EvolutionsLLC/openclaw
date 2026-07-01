@@ -2395,7 +2395,9 @@ function itemName(item: CodexThreadItem): string | undefined {
 }
 
 function auditNativeToolName(item: CodexThreadItem): string | undefined {
-  if (item.type === "dynamicToolCall") {
+  // The app-server web-search item drops the Responses terminal status. Omit it
+  // from audit projection rather than inventing success for failed/incomplete calls.
+  if (item.type === "dynamicToolCall" || item.type === "webSearch") {
     return undefined;
   }
   const progressName = itemName(item);
