@@ -46,7 +46,7 @@ openclaw routines create "0 9 * * 1-5" \
 Schedule flags match `openclaw cron create`:
 
 ```bash
-openclaw routines create --at "+20m" \
+openclaw routines create --at "2026-08-01T17:00:00-07:00" \
   --name "Deployment follow-up" \
   --session main \
   --system-event "Check deployment status."
@@ -104,7 +104,9 @@ If the same id and same routine intent already exist, OpenClaw returns the
 existing routine and does not create another cron job. If the id exists with
 different intent, creation fails. When `--id` is omitted, OpenClaw derives a
 stable id from the normalized routine intent so retrying the same create request
-is still idempotent.
+is still idempotent. For one-shot routines, pass an absolute `--at` timestamp;
+relative `--at` durations are rejected because they resolve to a different
+timestamp on every retry.
 
 ## Inspect
 

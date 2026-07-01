@@ -16,6 +16,7 @@ import { resolveCronCreateScheduleFromArgs } from "./cron-cli/schedule-options.j
 import {
   getCronChannelOptions,
   handleCronCliError,
+  parseDurationMs,
   printCronJson,
   warnIfCronSchedulerDisabled,
 } from "./cron-cli/shared.js";
@@ -210,6 +211,29 @@ function resolveDelivery(opts: RoutineCliOpts, payload: CronPayload, sessionTarg
   };
 }
 
+function isRelativeOneShotSchedule(value: unknown): boolean {
+  const raw = normalizeOptionalString(value);
+  if (!raw) {
+    return false;
+  }
+  return parseDurationMs(raw.startsWith("+") ? raw.slice(1) : raw) !== null;
+}
+
+function rejectRelativeRoutineOneShotSchedule(params: {
+  at: unknown;
+  positionalSchedule: string | undefined;
+}) {
+  if (
+    !isRelativeOneShotSchedule(params.at) &&
+    !isRelativeOneShotSchedule(params.positionalSchedule)
+  ) {
+    return;
+  }
+  throw new Error(
+    "Relative one-shot routine schedules are not idempotent; use an absolute --at timestamp or --every for recurring intervals.",
+  );
+}
+
 async function createRoutineFromCli(
   scheduleArg: string | undefined,
   messageArg: string | undefined,
@@ -217,6 +241,10 @@ async function createRoutineFromCli(
 ) {
   const hasScheduleFlag =
     typeof opts.at === "string" || typeof opts.cron === "string" || typeof opts.every === "string";
+  rejectRelativeRoutineOneShotSchedule({
+    at: opts.at,
+    positionalSchedule: hasScheduleFlag ? undefined : scheduleArg,
+  });
   const schedule = resolveCronCreateScheduleFromArgs({
     at: opts.at,
     cron: opts.cron,
@@ -339,7 +367,7 @@ function registerRoutinesCreateCommand(routines: Command) {
       .option("--session-key <key>", "Owner session key")
       .option("--session <target>", "Target session (main|isolated|current|session:<id>)")
       .option("--wake <mode>", "Wake mode (now|next-heartbeat)", "now")
-      .option("--at <when>", "Run once at time (ISO with offset, or +duration)")
+      .option("--at <when>", "Run once at absolute time (ISO with offset)")
       .option("--every <duration>", "Run every duration (e.g. 10m, 1h)")
       .option("--cron <expr>", "Cron expression (5-field or 6-field with seconds)")
       .option("--tz <iana>", "Timezone for cron expressions", "")

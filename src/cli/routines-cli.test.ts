@@ -74,7 +74,7 @@ describe("registerRoutinesCli", () => {
     await runRoutinesCommand([
       "routines",
       "create",
-      "+1h",
+      "every 1h",
       "check status",
       "--name",
       "Default delivery",
@@ -90,11 +90,37 @@ describe("registerRoutinesCli", () => {
     });
   });
 
+  it("rejects relative one-shot schedules across retried invocations", async () => {
+    vi.useFakeTimers();
+    for (const now of ["2026-07-01T12:00:00Z", "2026-07-01T12:05:00Z"]) {
+      vi.setSystemTime(new Date(now));
+      await expect(
+        runRoutinesCommand([
+          "routines",
+          "create",
+          "--at",
+          "+20m",
+          "--name",
+          "Relative follow-up",
+          "--message",
+          "check status",
+        ]),
+      ).rejects.toThrow("__exit__:1");
+
+      expect(callGatewayFromCli.mock.calls.some((call) => call[0] === "routines.create")).toBe(
+        false,
+      );
+      expect(defaultRuntime.error.mock.calls[0]?.[0]).toContain(
+        "Relative one-shot routine schedules are not idempotent",
+      );
+    }
+  });
+
   it("defaults session-key message routines to last-channel announce delivery", async () => {
     await runRoutinesCommand([
       "routines",
       "create",
-      "+1h",
+      "every 1h",
       "check status",
       "--name",
       "Default delivery",
@@ -120,7 +146,7 @@ describe("registerRoutinesCli", () => {
       await runRoutinesCommand([
         "routines",
         "create",
-        "+1h",
+        "every 1h",
         "check status",
         "--name",
         "Session target delivery",
@@ -148,7 +174,7 @@ describe("registerRoutinesCli", () => {
     await runRoutinesCommand([
       "routines",
       "create",
-      "+1h",
+      "every 1h",
       "check status",
       "--name",
       "Destination delivery",
@@ -173,7 +199,7 @@ describe("registerRoutinesCli", () => {
       runRoutinesCommand([
         "routines",
         "create",
-        "+1h",
+        "every 1h",
         "check status",
         "--name",
         "Missing delivery target",
@@ -192,7 +218,7 @@ describe("registerRoutinesCli", () => {
       runRoutinesCommand([
         "routines",
         "create",
-        "+1h",
+        "every 1h",
         "--name",
         "Main webhook",
         "--system-event",
@@ -213,7 +239,7 @@ describe("registerRoutinesCli", () => {
       runRoutinesCommand([
         "routines",
         "create",
-        "+1h",
+        "every 1h",
         "check status",
         "--id",
         "   ",
