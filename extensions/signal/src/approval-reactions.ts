@@ -161,7 +161,9 @@ function resolveSignalApprovalRouteTarget(params: {
         cfg: params.cfg,
         accountId: params.accountId,
         input: params.to,
-      })?.to ?? normalizeSignalMessagingTarget(params.to)
+      })?.to ??
+      normalizeSignalMessagingTarget(params.to) ??
+      null
     );
   } catch {
     return null;
