@@ -511,6 +511,34 @@ function createRoutineRecord(params: {
   });
 }
 
+function createRoutineRecordFromCronJob(record: RoutineRecord, cronJob: CronJob): RoutineRecord {
+  const description = normalizeOptionalString(cronJob.description);
+  return {
+    id: record.id,
+    name: cronJob.name,
+    ...(description ? { description } : {}),
+    enabled: cronJob.enabled,
+    owner: {
+      ...(cronJob.agentId ? { agentId: cronJob.agentId } : {}),
+      ...(cronJob.sessionKey ? { sessionKey: cronJob.sessionKey } : {}),
+    },
+    target: {
+      sessionTarget: cronJob.sessionTarget,
+      wakeMode: cronJob.wakeMode,
+      ...(cronJob.delivery ? { delivery: cronJob.delivery } : {}),
+    },
+    trigger: {
+      kind: "schedule",
+      schedule: cronJob.schedule,
+      cronJobId: cronJob.id,
+      ...(record.trigger.cronStoreKey ? { cronStoreKey: record.trigger.cronStoreKey } : {}),
+    },
+    action: cronJob.payload,
+    createdAtMs: record.createdAtMs,
+    updatedAtMs: cronJob.updatedAtMs,
+  };
+}
+
 function cronJobMap(jobs: readonly CronJob[]): Map<string, CronJob> {
   return new Map(jobs.map((job) => [job.id, job]));
 }
@@ -546,8 +574,11 @@ function routineStatus(record: RoutineRecord, cronJob: CronJob | undefined): Rou
 
 function toRoutineView(record: RoutineRecord, cronJob: CronJob | undefined): RoutineView {
   const status = routineStatus(record, cronJob);
+  // Cron is canonical for executable fields while linked. The routine row is a
+  // registry snapshot used for missing-backing visibility and create recovery.
+  const source = cronJob ? createRoutineRecordFromCronJob(record, cronJob) : record;
   return {
-    ...record,
+    ...source,
     enabled: status.enabled,
     status,
   };
@@ -637,10 +668,17 @@ export async function createRoutine(
   return await withRoutineMutationLock(normalized.id, async () => {
     const existing = getRoutineRecordFromSqlite(normalized.id);
     if (existing) {
-      if (routineIntentSignature(existing) !== routineIntentSignatureFromNormalized(normalized)) {
+      assertRoutineCronStoreActive(existing, context.cronStorePath);
+      const existingCronJob = await context.cron.readJob(existing.trigger.cronJobId);
+      const comparable = existingCronJob
+        ? createRoutineRecordFromCronJob(existing, existingCronJob)
+        : existing;
+      if (routineIntentSignature(comparable) !== routineIntentSignatureFromNormalized(normalized)) {
         throw new Error(`routine id already exists with different intent: ${normalized.id}`);
       }
-      const cronJob = await ensureRoutineBackingCronJob({ record: existing, normalized, context });
+      const cronJob =
+        existingCronJob ??
+        (await ensureRoutineBackingCronJob({ record: existing, normalized, context }));
       const record = createRoutineRecord({
         normalized,
         cronJob,
@@ -657,7 +695,13 @@ export async function createRoutine(
       cronStorePath: context.cronStorePath,
     });
     upsertRoutineRecordToSqlite(pending);
-    const cronJob = await ensureRoutineBackingCronJob({ record: pending, normalized, context });
+    let cronJob: CronJob;
+    try {
+      cronJob = await ensureRoutineBackingCronJob({ record: pending, normalized, context });
+    } catch (err) {
+      deleteRoutineRecordFromSqlite(pending.id);
+      throw err;
+    }
     const record = createRoutineRecord({
       normalized,
       cronJob,

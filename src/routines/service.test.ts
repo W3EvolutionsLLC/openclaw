@@ -192,7 +192,7 @@ describe("routine service", () => {
     });
   });
 
-  it("retries a pending routine create with the reserved cron id", async () => {
+  it("removes a pending routine when cron rejects before creating a durable job", async () => {
     await withOpenClawTestState({ prefix: "routine-pending-retry-" }, async () => {
       const cron = createFakeCronService();
       cron.add.mockRejectedValueOnce(new Error("transient cron write failure"));
@@ -201,13 +201,14 @@ describe("routine service", () => {
         "transient cron write failure",
       );
 
-      const pending = await listRoutines({ includeDisabled: true }, { cron });
-      expect(pending.routines[0]?.status.status).toBe("missing");
+      await expect(listRoutines({ includeDisabled: true }, { cron })).resolves.toEqual({
+        routines: [],
+      });
 
       const replay = await createRoutine(createRoutineInput(), { cron });
 
-      expect(replay.created).toBe(false);
-      expect(replay.idempotent).toBe(true);
+      expect(replay.created).toBe(true);
+      expect(replay.idempotent).toBe(false);
       expect(cron.add).toHaveBeenCalledTimes(2);
       expect(cron.jobs.size).toBe(1);
       expect(replay.routine.trigger.cronJobId).toMatch(/^routine-cron-/);
@@ -245,6 +246,31 @@ describe("routine service", () => {
         ),
       ).rejects.toThrow("different intent");
       expect(cron.add).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("detects backing cron drift before treating create as idempotent", async () => {
+    await withOpenClawTestState({ prefix: "routine-cron-drift-" }, async () => {
+      const cron = createFakeCronService();
+      const created = await createRoutine(createRoutineInput(), { cron });
+      const cronJob = cron.jobs.get(created.routine.trigger.cronJobId);
+      if (!cronJob) {
+        throw new Error("expected backing cron job");
+      }
+      cron.jobs.set(cronJob.id, {
+        ...cronJob,
+        schedule: { kind: "every", everyMs: 120_000 },
+        updatedAtMs: cronJob.updatedAtMs + 1,
+      });
+
+      const listed = await listRoutines({ includeDisabled: true }, { cron });
+      expect(listed.routines[0]?.trigger.schedule).toEqual({
+        kind: "every",
+        everyMs: 120_000,
+      });
+      await expect(createRoutine(createRoutineInput(), { cron })).rejects.toThrow(
+        "different intent",
+      );
     });
   });
 
