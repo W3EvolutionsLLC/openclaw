@@ -178,6 +178,37 @@ describe("routine service", () => {
     });
   });
 
+  it("rejects blank explicit routine ids instead of generating a new id", async () => {
+    await withOpenClawTestState({ prefix: "routine-blank-id-" }, async () => {
+      const cron = createFakeCronService();
+
+      await expect(createRoutine(createRoutineInput({ id: "   " }), { cron })).rejects.toThrow(
+        "routine id must not be blank",
+      );
+
+      expect(cron.add).not.toHaveBeenCalled();
+    });
+  });
+
+  it("rejects new one-shot routines scheduled too far in the past", async () => {
+    await withOpenClawTestState({ prefix: "routine-past-at-" }, async () => {
+      const cron = createFakeCronService();
+      const pastAt = new Date(Date.now() - 120_000).toISOString();
+
+      await expect(
+        createRoutine(
+          createRoutineInput({
+            id: "past-routine",
+            trigger: { kind: "schedule", schedule: { kind: "at", at: pastAt } },
+          }),
+          { cron },
+        ),
+      ).rejects.toThrow("schedule.at is in the past");
+
+      expect(cron.add).not.toHaveBeenCalled();
+    });
+  });
+
   it("serializes concurrent creates with the same id", async () => {
     await withOpenClawTestState({ prefix: "routine-concurrent-" }, async () => {
       const cron = createFakeCronService();
@@ -247,6 +278,27 @@ describe("routine service", () => {
         ),
       ).rejects.toThrow("different intent");
       expect(cron.add).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("rejects idempotent replay when the backing cron job became delete-after-run", async () => {
+    await withOpenClawTestState({ prefix: "routine-delete-after-run-drift-" }, async () => {
+      const cron = createFakeCronService();
+      const input = createRoutineInput({
+        id: "one-shot-routine",
+        trigger: {
+          kind: "schedule",
+          schedule: { kind: "at", at: new Date(Date.now() + 3_600_000).toISOString() },
+        },
+      });
+      const created = await createRoutine(input, { cron });
+      const cronJob = cron.jobs.get(created.routine.trigger.cronJobId);
+      if (!cronJob) {
+        throw new Error("expected backing cron job");
+      }
+      cron.jobs.set(cronJob.id, { ...cronJob, deleteAfterRun: true });
+
+      await expect(createRoutine(input, { cron })).rejects.toThrow("deleteAfterRun");
     });
   });
 
@@ -428,7 +480,7 @@ describe("routine service", () => {
           owner: { agentId: "ops", sessionKey: "agent:ops:main" },
           trigger: {
             kind: "schedule",
-            schedule: { kind: "at", at: new Date(1_700_000_000_000).toISOString() },
+            schedule: { kind: "at", at: new Date(Date.now() + 3_600_000).toISOString() },
           },
           target: {
             sessionTarget: "current",

@@ -10,7 +10,6 @@ import {
   validateRoutinesSetEnabledParams,
 } from "../../../packages/gateway-protocol/src/index.js";
 import { assertCronDeliveryInputNonBlankFields } from "../../cron/delivery-target-validation.js";
-import { validateScheduleTimestamp } from "../../cron/validate-timestamp.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import {
   createRoutine,
@@ -38,15 +37,6 @@ function respondValidationFailure(
   errors: Parameters<typeof formatValidationErrors>[0],
 ): void {
   respondInvalid(respond, method, formatValidationErrors(errors));
-}
-
-function validateRoutineSchedule(respond: RespondFn, method: string, params: RoutineCreateInput) {
-  const timestampValidation = validateScheduleTimestamp(params.trigger.schedule);
-  if (!timestampValidation.ok) {
-    respondInvalid(respond, method, timestampValidation.message);
-    return false;
-  }
-  return true;
 }
 
 export const routinesHandlers: GatewayRequestHandlers = {
@@ -82,9 +72,6 @@ export const routinesHandlers: GatewayRequestHandlers = {
       assertCronDeliveryInputNonBlankFields(input.target?.delivery);
     } catch (err) {
       respondInvalid(respond, "routines.create", formatErrorMessage(err));
-      return;
-    }
-    if (!validateRoutineSchedule(respond, "routines.create", input)) {
       return;
     }
     try {

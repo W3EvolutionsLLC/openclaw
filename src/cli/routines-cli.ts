@@ -139,6 +139,17 @@ function assertPayloadMatchesTarget(sessionTarget: string, payload: CronPayload)
   }
 }
 
+function normalizeRoutineIdOption(value: unknown): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const id = normalizeOptionalString(value);
+  if (!id) {
+    throw new Error("--id must not be blank");
+  }
+  return id;
+}
+
 function resolveDelivery(opts: RoutineCliOpts, payload: CronPayload, sessionTarget: string) {
   const webhookUrl = normalizeOptionalString(opts.webhook);
   const hasWebhook = typeof opts.webhook === "string";
@@ -208,7 +219,7 @@ async function createRoutineFromCli(
   assertPayloadMatchesTarget(sessionTarget, payload);
   const agentId = normalizeOptionalString(opts.agent);
   const params = {
-    id: normalizeOptionalString(opts.id),
+    id: normalizeRoutineIdOption(opts.id),
     name: normalizeOptionalString(opts.name),
     description: normalizeOptionalString(opts.description),
     enabled: opts.disabled ? false : undefined,

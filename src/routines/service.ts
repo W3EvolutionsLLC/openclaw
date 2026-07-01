@@ -20,6 +20,7 @@ import type {
   CronSessionTarget,
   CronWakeMode,
 } from "../cron/types.js";
+import { validateScheduleTimestamp } from "../cron/validate-timestamp.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import { executeSqliteQuerySync, getNodeSqliteKysely } from "../infra/kysely-sync.js";
 import { normalizeSqliteNumber } from "../infra/sqlite-number.js";
@@ -321,7 +322,14 @@ function requireNonBlankString(value: string | undefined, label: string): string
 }
 
 function normalizeRoutineId(value: string | undefined): string {
-  return normalizeOptionalString(value) ?? createRoutineId();
+  if (value === undefined) {
+    return createRoutineId();
+  }
+  const normalized = normalizeOptionalString(value);
+  if (!normalized) {
+    throw new Error("routine id must not be blank");
+  }
+  return normalized;
 }
 
 function createRoutineCronJobId(routineId: string): string {
@@ -474,6 +482,13 @@ function routineIntentSignatureFromNormalized(normalized: NormalizedRoutineCreat
     },
     action: cronInput.payload,
   });
+}
+
+function assertNewRoutineScheduleIsValid(schedule: CronSchedule): void {
+  const timestampValidation = validateScheduleTimestamp(schedule);
+  if (!timestampValidation.ok) {
+    throw new Error(timestampValidation.message);
+  }
 }
 
 function createRoutineRecord(params: {
@@ -692,6 +707,11 @@ export async function createRoutine(
     if (existing) {
       assertRoutineCronStoreActive(existing, context.cronStorePath);
       const existingCronJob = await context.cron.readJob(existing.trigger.cronJobId);
+      if (existingCronJob && existingCronJob.deleteAfterRun !== false) {
+        throw new Error(
+          `routine backing cron job changed deleteAfterRun: ${existing.trigger.cronJobId}`,
+        );
+      }
       const comparable = existingCronJob
         ? createRoutineRecordFromCronJob(existing, existingCronJob)
         : existing;
@@ -726,6 +746,7 @@ export async function createRoutine(
       return { routine: toRoutineView(record, cronJob), created: false, idempotent: true };
     }
 
+    assertNewRoutineScheduleIsValid(normalized.cronInput.schedule);
     const nowMs = Date.now();
     const pending = createRoutineRecord({
       normalized,

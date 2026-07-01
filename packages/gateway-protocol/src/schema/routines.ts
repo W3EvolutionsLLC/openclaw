@@ -11,6 +11,8 @@ import {
 } from "./cron.js";
 import { NonEmptyString } from "./primitives.js";
 
+const NonBlankString = Type.String({ minLength: 1, pattern: "\\S" });
+
 const RoutineOwnerSchema = Type.Object(
   {
     agentId: Type.Optional(NonEmptyString),
@@ -49,8 +51,8 @@ const RoutineScheduleTriggerSchema = Type.Object(
   {
     kind: Type.Literal("schedule"),
     schedule: CronScheduleSchema,
-    cronJobId: NonEmptyString,
-    cronStoreKey: Type.Optional(NonEmptyString),
+    cronJobId: NonBlankString,
+    cronStoreKey: Type.Optional(NonBlankString),
   },
   { additionalProperties: false },
 );
@@ -79,7 +81,7 @@ const RoutineRuntimeStatusSchema = Type.Object(
 );
 
 const RoutineRecordFields = {
-  id: NonEmptyString,
+  id: NonBlankString,
   name: NonEmptyString,
   description: Type.Optional(Type.String()),
   enabled: Type.Boolean(),
@@ -105,7 +107,7 @@ export const RoutineViewSchema = Type.Object(
 
 export const RoutinesCreateParamsSchema = Type.Object(
   {
-    id: Type.Optional(NonEmptyString),
+    id: Type.Optional(NonBlankString),
     name: NonEmptyString,
     description: Type.Optional(Type.String()),
     enabled: Type.Optional(Type.Boolean()),
@@ -130,21 +132,21 @@ export const RoutinesListParamsSchema = Type.Object(
 
 export const RoutinesGetParamsSchema = Type.Object(
   {
-    id: NonEmptyString,
+    id: NonBlankString,
   },
   { additionalProperties: false },
 );
 
 export const RoutinesSetEnabledParamsSchema = Type.Object(
   {
-    id: NonEmptyString,
+    id: NonBlankString,
   },
   { additionalProperties: false },
 );
 
 export const RoutinesDeleteParamsSchema = Type.Object(
   {
-    id: NonEmptyString,
+    id: NonBlankString,
   },
   { additionalProperties: false },
 );
@@ -182,7 +184,7 @@ export const RoutinesSetEnabledResultSchema = Type.Object(
 
 export const RoutinesDeleteResultSchema = Type.Object(
   {
-    id: NonEmptyString,
+    id: NonBlankString,
     deleted: Type.Boolean(),
   },
   { additionalProperties: false },

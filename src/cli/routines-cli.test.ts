@@ -90,4 +90,22 @@ describe("registerRoutinesCli", () => {
       "Delivery options require a non-main message routine.",
     );
   });
+
+  it("rejects blank explicit routine ids before calling the Gateway", async () => {
+    await expect(
+      runRoutinesCommand([
+        "routines",
+        "create",
+        "+1h",
+        "check status",
+        "--id",
+        "   ",
+        "--name",
+        "Blank id",
+      ]),
+    ).rejects.toThrow("__exit__:1");
+
+    expect(callGatewayFromCli.mock.calls.some((call) => call[0] === "routines.create")).toBe(false);
+    expect(defaultRuntime.error.mock.calls[0]?.[0]).toContain("--id must not be blank");
+  });
 });

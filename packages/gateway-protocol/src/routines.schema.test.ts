@@ -39,6 +39,10 @@ describe("routines protocol schemas", () => {
     ).toBe(false);
   });
 
+  it("rejects blank explicit routine ids", () => {
+    expect(validateRoutinesCreateParams({ ...createRoutineParams(), id: "   " })).toBe(false);
+  });
+
   it("validates routine view results with status", () => {
     const validate = Compile(RoutinesCreateResultSchema);
     const routine = {
