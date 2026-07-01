@@ -892,9 +892,13 @@ describe("routine service", () => {
       });
 
       const listed = await listRoutines({ includeDisabled: true }, { cron });
-      expect(listed.routines[0]?.trigger.schedule).toEqual({
-        kind: "every",
-        everyMs: 120_000,
+      expect(listed.routines[0]).toMatchObject({
+        trigger: { schedule: created.routine.trigger.schedule },
+        status: {
+          status: "drifted",
+          backing: "drifted",
+          driftReason: expect.stringContaining("changed intent"),
+        },
       });
       await expect(createRoutine(createRoutineInput(), { cron })).rejects.toThrow(
         "different intent",
@@ -902,7 +906,7 @@ describe("routine service", () => {
     });
   });
 
-  it("keeps routine views schedule-only when backing cron drifts to event-driven", async () => {
+  it("marks routine views drifted when backing cron drifts to event-driven", async () => {
     await withOpenClawTestState({ prefix: "routine-on-exit-drift-" }, async () => {
       const cron = createFakeCronService();
       const input = createRoutineInput();
@@ -918,10 +922,21 @@ describe("routine service", () => {
       });
 
       const listed = await listRoutines({ includeDisabled: true }, { cron });
-      expect(listed.routines[0]?.trigger.schedule).toEqual(created.routine.trigger.schedule);
+      expect(listed.routines[0]).toMatchObject({
+        trigger: { schedule: created.routine.trigger.schedule },
+        status: {
+          status: "drifted",
+          backing: "drifted",
+          driftReason: expect.stringContaining("unsupported schedule"),
+        },
+      });
       await expect(inspectRoutine("daily-ops", { cron })).resolves.toMatchObject({
         trigger: { schedule: created.routine.trigger.schedule },
-        status: { backing: "linked" },
+        status: {
+          status: "drifted",
+          backing: "drifted",
+          driftReason: expect.stringContaining("unsupported schedule"),
+        },
       });
       await expect(createRoutine(input, { cron })).rejects.toThrow("unsupported schedule");
     });
@@ -1010,7 +1025,7 @@ describe("routine service", () => {
     });
   });
 
-  it("filters routine lists against canonical cron fields", async () => {
+  it("filters routine lists against stored intent when backing cron drifts", async () => {
     await withOpenClawTestState({ prefix: "routine-live-filter-canonical-" }, async () => {
       const cron = createFakeCronService();
       const created = await createRoutine(
@@ -1034,8 +1049,17 @@ describe("routine service", () => {
       await expect(listRoutines({ agentId: "default-agent" }, { cron })).resolves.toMatchObject({
         routines: [{ id: "default-owner" }],
       });
+      await expect(listRoutines({ query: "original" }, { cron })).resolves.toMatchObject({
+        routines: [
+          {
+            id: "default-owner",
+            name: "Original name",
+            status: { backing: "drifted" },
+          },
+        ],
+      });
       await expect(listRoutines({ query: "renamed live" }, { cron })).resolves.toMatchObject({
-        routines: [{ id: "default-owner", name: "Renamed live routine" }],
+        routines: [],
       });
     });
   });
@@ -1250,6 +1274,11 @@ describe("routine service", () => {
       label: "delete-after-run",
       patch: { deleteAfterRun: true },
       message: "deleteAfterRun",
+    },
+    {
+      label: "different supported intent",
+      patch: { schedule: { kind: "every" as const, everyMs: 120_000 } },
+      message: "changed intent",
     },
   ])("rejects enabling when backing cron drifts to $label", async ({ patch, message }) => {
     await withOpenClawTestState({ prefix: "routine-enable-drift-" }, async () => {

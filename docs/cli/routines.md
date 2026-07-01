@@ -20,7 +20,7 @@ message routines also use cron completion delivery.
 
 ```bash
 openclaw routines list [--all] [--agent <id>] [--query <text>] [--json]
-openclaw routines get <id> [--json]
+openclaw routines get <id>
 openclaw routines create <schedule> <message> --name <name> [options]
 openclaw routines enable <id> [--json]
 openclaw routines disable <id> [--json]
@@ -112,11 +112,11 @@ timestamp on every retry.
 
 ```bash
 openclaw routines list --all
-openclaw routines get weekday-standup --json
+openclaw routines get weekday-standup
 ```
 
 List output shows the routine status, next run, last run, schedule, and name.
-`get --json` includes the backing cron job id under `trigger.cronJobId`.
+`get` emits JSON and includes the backing cron job id under `trigger.cronJobId`.
 
 ## Enable, disable, delete
 

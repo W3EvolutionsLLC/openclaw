@@ -50,7 +50,7 @@ openclaw routines delete weekday-standup
 | `target.sessionTarget` and `target.delivery` | Where the work runs; completion delivery for message work   |
 | `trigger`                                    | Starts the routine; currently `schedule` only               |
 | `action`                                     | Cron payload to execute when the trigger fires              |
-| `status`                                     | Live backing state: enabled, disabled, running, or missing  |
+| `status`                                     | Live backing state: enabled, disabled, running, missing, or drifted |
 
 Repeated `routines.create` calls with the same `id` and same routine intent in
 the active cron store are idempotent: OpenClaw returns the existing routine
@@ -78,12 +78,13 @@ Routine list and inspect output includes live cron-derived state:
 - `disabled`: backing cron job is disabled.
 - `running`: cron is currently executing the backing job.
 - `missing`: the routine record exists, but the backing cron job is gone.
+- `drifted`: the backing cron job exists but no longer matches the routine intent.
 
 Routine JSON status also includes the backing cron job's last delivery outcome
 when a run attempted completion delivery.
 
-`missing` is visible on purpose. It lets operators repair or delete the routine
-instead of silently losing a team operation.
+`missing` and `drifted` are visible on purpose. They let operators repair or
+delete the routine instead of silently losing or changing a team operation.
 
 ## Current scope
 

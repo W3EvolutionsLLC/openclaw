@@ -342,7 +342,6 @@ function registerRoutinesGetCommand(routines: Command) {
       .alias("show")
       .description("Inspect a durable routine")
       .argument("<id>", "Routine id")
-      .option("--json", "Output JSON", false)
       .action(async (id: string, opts: RoutineCliOpts) => {
         try {
           const res = await callGatewayFromCli("routines.get", opts, { id });

@@ -95,10 +95,11 @@ export type RoutineListOptions = {
 };
 
 type RoutineRuntimeStatus = {
-  status: "enabled" | "disabled" | "running" | "missing";
-  backing: "linked" | "missing";
+  status: "enabled" | "disabled" | "running" | "missing" | "drifted";
+  backing: "linked" | "missing" | "drifted";
   enabled: boolean;
   cronJobId?: string;
+  driftReason?: string;
   nextRunAtMs?: number;
   runningAtMs?: number;
   lastRunAtMs?: number;
@@ -733,6 +734,24 @@ function assertRoutineCanBeEnabled(cronJob: CronJob): void {
   }
 }
 
+function assertRoutineBackingCronJobMatchesRecord(record: RoutineRecord, cronJob: CronJob): void {
+  assertRoutineBackingCronJobCanRemainLinked(cronJob);
+  assertGeneratedEveryAnchorMatchesBaseline(record, cronJob);
+  const comparable = createRoutineRecordFromCronJob(record, cronJob);
+  if (
+    routineIntentSignature(comparable, {
+      includeEveryAnchor: hasExplicitEveryAnchor(record.trigger.schedule),
+    }) !==
+    routineIntentSignature(record, {
+      includeEveryAnchor: hasExplicitEveryAnchor(record.trigger.schedule),
+    })
+  ) {
+    throw routineInvalidRequest(
+      `routine backing cron job changed intent: ${record.trigger.cronJobId}`,
+    );
+  }
+}
+
 function assertGeneratedEveryAnchorMatchesBaseline(record: RoutineRecord, cronJob: CronJob): void {
   if (
     record.trigger.schedule.kind !== "every" ||
@@ -826,6 +845,15 @@ function createRoutineRecordFromCronJob(record: RoutineRecord, cronJob: CronJob)
   };
 }
 
+function routineBackingDriftReason(record: RoutineRecord, cronJob: CronJob): string | undefined {
+  try {
+    assertRoutineBackingCronJobMatchesRecord(record, cronJob);
+    return undefined;
+  } catch (err) {
+    return formatErrorMessage(err);
+  }
+}
+
 async function readCronJobsById(cron: CronServiceContract): Promise<Map<string, CronJob>> {
   const jobs = await cron.list({ includeDisabled: true });
   return new Map(jobs.map((job) => [job.id, job]));
@@ -842,12 +870,8 @@ function routineStatus(record: RoutineRecord, cronJob: CronJob | undefined): Rou
   }
   const state = cronJob.state ?? {};
   const enabled = cronJob.enabled;
-  const status = state.runningAtMs ? "running" : enabled ? "enabled" : "disabled";
-  return {
-    status,
-    backing: "linked",
-    enabled,
-    cronJobId: cronJob.id,
+  const driftReason = routineBackingDriftReason(record, cronJob);
+  const liveFields = {
     ...(state.nextRunAtMs !== undefined ? { nextRunAtMs: state.nextRunAtMs } : {}),
     ...(state.runningAtMs !== undefined ? { runningAtMs: state.runningAtMs } : {}),
     ...(state.lastRunAtMs !== undefined ? { lastRunAtMs: state.lastRunAtMs } : {}),
@@ -857,13 +881,31 @@ function routineStatus(record: RoutineRecord, cronJob: CronJob | undefined): Rou
     ...(state.lastDeliveryStatus ? { lastDeliveryStatus: state.lastDeliveryStatus } : {}),
     ...(state.lastDeliveryError ? { lastDeliveryError: state.lastDeliveryError } : {}),
   };
+  if (driftReason) {
+    return {
+      status: "drifted",
+      backing: "drifted",
+      enabled,
+      cronJobId: cronJob.id,
+      driftReason,
+      ...liveFields,
+    };
+  }
+  const status = state.runningAtMs ? "running" : enabled ? "enabled" : "disabled";
+  return {
+    status,
+    backing: "linked",
+    enabled,
+    cronJobId: cronJob.id,
+    ...liveFields,
+  };
 }
 
 function toRoutineView(record: RoutineStoredRecord, cronJob: CronJob | undefined): RoutineView {
   const status = routineStatus(record, cronJob);
   // Cron is canonical for executable fields while linked. The routine row is a
   // registry snapshot used for missing-backing visibility and create recovery.
-  const source = cronJob
+  const source = cronJob && status.backing === "linked"
     ? createRoutineRecordFromCronJob(record, cronJob)
     : toPublicRoutineRecord(record);
   return {
@@ -1349,6 +1391,7 @@ export async function setRoutineEnabled(
     const changed = record.enabled !== enabled || cronJob.enabled !== enabled;
     if (enabled && changed) {
       assertRoutineCanBeEnabled(cronJob);
+      assertRoutineBackingCronJobMatchesRecord(record, cronJob);
     }
     if (!changed) {
       const cleanRecord = hasRoutineInternalStage(record)
