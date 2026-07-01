@@ -722,6 +722,43 @@ describe("routine service", () => {
     });
   });
 
+  it("persists live enabled state after adopting an enabled orphan backing cron job", async () => {
+    await withOpenClawTestState({ prefix: "routine-adopt-enabled-orphan-disabled-input-" }, async () => {
+      const cron = createFakeCronService();
+      const created = await createRoutine(createRoutineInput(), {
+        cron,
+        cronStorePath: "/tmp/cron.sqlite",
+      });
+      const cronJobId = created.routine.trigger.cronJobId;
+      const cronJob = cron.jobs.get(cronJobId);
+      if (!cronJob) {
+        throw new Error("expected backing cron job");
+      }
+      expect(cronJob.enabled).toBe(true);
+      openOpenClawStateDatabase().db.exec("DELETE FROM routine_records");
+
+      const replay = await createRoutine(createRoutineInput({ enabled: false }), {
+        cron,
+        cronStorePath: "/tmp/cron.sqlite",
+      });
+
+      expect(replay.created).toBe(false);
+      expect(replay.idempotent).toBe(true);
+      expect(replay.routine.enabled).toBe(true);
+      cron.jobs.delete(cronJobId);
+      await expect(
+        inspectRoutine("daily-ops", { cron, cronStorePath: "/tmp/cron.sqlite" }),
+      ).resolves.toMatchObject({
+        enabled: true,
+        status: {
+          status: "missing",
+          backing: "missing",
+          enabled: true,
+        },
+      });
+    });
+  });
+
   it("completes a persisted staged routine whose backing cron job was not armed", async () => {
     await withOpenClawTestState({ prefix: "routine-complete-staged-enable-" }, async () => {
       const cron = createFakeCronService();

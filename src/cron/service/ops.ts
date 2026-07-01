@@ -1,5 +1,8 @@
 /** Public cron service operations for lifecycle, CRUD, listing, and manual runs. */
-import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
+import {
+  normalizeLowercaseStringOrEmpty,
+  normalizeOptionalString,
+} from "@openclaw/normalization-core/string-coerce";
 import { enqueueCommandInLane } from "../../process/command-queue.js";
 import { CommandLane } from "../../process/lanes.js";
 import { DEFAULT_AGENT_ID } from "../../routing/session-key.js";
@@ -504,10 +507,16 @@ export async function add(state: CronServiceState, input: CronJobCreate) {
   return await locked(state, async () => {
     warnIfDisabled(state, "add");
     await ensureLoaded(state, { skipRecompute: true });
-    if (input.id && state.store?.jobs.some((job) => job.id === input.id)) {
-      throw new Error(`cron job already exists: ${input.id}`);
+    const normalizedId = normalizeOptionalString(input.id);
+    if (input.id !== undefined && normalizedId === undefined) {
+      throw new Error("cron job id must not be blank");
     }
-    const job = createJob(state, input);
+    if (normalizedId && state.store?.jobs.some((job) => job.id === normalizedId)) {
+      throw new Error(`cron job already exists: ${normalizedId}`);
+    }
+    const normalizedInput =
+      normalizedId === undefined ? input : { ...input, id: normalizedId };
+    const job = createJob(state, normalizedInput);
     state.store?.jobs.push(job);
 
     recomputeNextRunsForMaintenance(state);

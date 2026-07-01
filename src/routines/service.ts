@@ -1194,9 +1194,7 @@ async function persistRoutineRecordThenMaybeArm(params: {
     enabled: cronJob.enabled,
     cronStorePath: params.cronStorePath,
   });
-  if (stagedRecord.createStage === "creating") {
-    upsertRoutineRecordToSqlite(record);
-  }
+  upsertRoutineRecordToSqlite(record);
   return {
     record,
     cronJob,

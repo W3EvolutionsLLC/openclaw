@@ -87,6 +87,31 @@ describe("cron persistence failure rollback", () => {
     });
   });
 
+  it("rejects reserved ids that collide after normalization", async () => {
+    await withOpenClawTestState({ prefix: "cron-add-normalized-id-collision-" }, async (stateDir) => {
+      const storePath = stateDir.statePath("cron", "jobs.json");
+      const state = createState(storePath);
+
+      await add(state, createInput("durable-job"));
+      await expect(add(state, createInput(" durable-job "))).rejects.toThrow(
+        "cron job already exists: durable-job",
+      );
+      await expect(loadCronStore(storePath)).resolves.toMatchObject({
+        jobs: [{ id: "durable-job" }],
+      });
+    });
+  });
+
+  it("rejects blank reserved ids instead of generating a random id", async () => {
+    await withOpenClawTestState({ prefix: "cron-add-blank-id-" }, async (stateDir) => {
+      const storePath = stateDir.statePath("cron", "jobs.json");
+      const state = createState(storePath);
+
+      await expect(add(state, createInput("   "))).rejects.toThrow("cron job id must not be blank");
+      await expect(loadCronStore(storePath)).resolves.toMatchObject({ jobs: [] });
+    });
+  });
+
   it("retries updates against the last persisted job after persistence fails", async () => {
     await withOpenClawTestState({ prefix: "cron-update-rollback-" }, async (stateDir) => {
       const storePath = stateDir.statePath("cron", "jobs.json");
