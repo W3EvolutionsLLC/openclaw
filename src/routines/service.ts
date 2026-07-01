@@ -143,7 +143,7 @@ type NormalizedRoutineCreate = {
 };
 
 export class RoutineInvalidRequestError extends Error {
-  readonly cause: unknown;
+  override readonly cause: unknown;
 
   constructor(message: string, opts?: { cause?: unknown }) {
     super(message);
