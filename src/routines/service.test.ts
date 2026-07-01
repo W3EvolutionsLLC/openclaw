@@ -278,7 +278,7 @@ describe("routine service", () => {
       const cron = createFakeCronService();
       const created = await createRoutine(
         createRoutineInput({
-          owner: { sessionKey: "agent:ops:main" },
+          owner: { sessionKey: "AGENT:OPS:MAIN" },
         }),
         { cron },
       );
@@ -291,6 +291,30 @@ describe("routine service", () => {
         agentId: "ops",
         sessionKey: "agent:ops:main",
       });
+      const replay = await createRoutine(
+        createRoutineInput({
+          owner: { sessionKey: "agent:ops:main" },
+        }),
+        { cron },
+      );
+      expect(replay.idempotent).toBe(true);
+      expect(cron.add).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("rejects malformed agent-scoped owner session keys", async () => {
+    await withOpenClawTestState({ prefix: "routine-session-agent-malformed-" }, async () => {
+      const cron = createFakeCronService();
+
+      await expect(
+        createRoutine(
+          createRoutineInput({
+            owner: { sessionKey: "agent::main" },
+          }),
+          { cron },
+        ),
+      ).rejects.toThrow("routine owner.sessionKey is malformed");
+      expect(cron.add).not.toHaveBeenCalled();
     });
   });
 
@@ -306,6 +330,49 @@ describe("routine service", () => {
           { cron },
         ),
       ).rejects.toThrow("routine owner.agentId must match owner.sessionKey agent");
+      expect(cron.add).not.toHaveBeenCalled();
+    });
+  });
+
+  it("infers the owner agent from explicit agent-scoped session targets", async () => {
+    await withOpenClawTestState({ prefix: "routine-target-agent-" }, async () => {
+      const cron = createFakeCronService();
+      const created = await createRoutine(
+        createRoutineInput({
+          owner: undefined,
+          target: {
+            sessionTarget: "session:AGENT:OPS:MAIN",
+            wakeMode: "now",
+          },
+        }),
+        { cron },
+      );
+
+      expect(cron.add.mock.calls[0]?.[0]).toMatchObject({
+        agentId: "ops",
+        sessionTarget: "session:agent:ops:main",
+      });
+      expect(created.routine.owner).toEqual({ agentId: "ops" });
+      expect(created.routine.target.sessionTarget).toBe("session:agent:ops:main");
+    });
+  });
+
+  it("rejects routine targets that conflict with the owner agent", async () => {
+    await withOpenClawTestState({ prefix: "routine-target-agent-conflict-" }, async () => {
+      const cron = createFakeCronService();
+
+      await expect(
+        createRoutine(
+          createRoutineInput({
+            owner: { agentId: "main" },
+            target: {
+              sessionTarget: "session:agent:ops:main",
+              wakeMode: "now",
+            },
+          }),
+          { cron },
+        ),
+      ).rejects.toThrow("routine owner.agentId must match target session agent");
       expect(cron.add).not.toHaveBeenCalled();
     });
   });

@@ -347,22 +347,82 @@ function createRoutineCronJobId(routineId: string): string {
   return `routine-cron-${digest}`;
 }
 
-function normalizeRoutineOwner(input: RoutineCreateInput): {
+function canonicalAgentSessionKey(parsed: { agentId: string; rest: string }): string {
+  return `agent:${sanitizeAgentId(parsed.agentId)}:${parsed.rest}`;
+}
+
+function normalizeRoutineOwnerSessionKey(value: unknown): {
+  sessionKey?: string;
+  agentId?: string;
+} {
+  const sessionKey = normalizeOptionalString(value);
+  if (!sessionKey) {
+    return {};
+  }
+  const parsed = parseAgentSessionKey(sessionKey);
+  if (parsed) {
+    return {
+      sessionKey: canonicalAgentSessionKey(parsed),
+      agentId: sanitizeAgentId(parsed.agentId),
+    };
+  }
+  if (normalizeLowercaseStringOrEmpty(sessionKey).startsWith("agent:")) {
+    throw routineInvalidRequest("routine owner.sessionKey is malformed");
+  }
+  return { sessionKey };
+}
+
+function normalizeRoutineSessionTarget(value: CronSessionTarget): CronSessionTarget {
+  if (!value.startsWith("session:")) {
+    return value;
+  }
+  const sessionKey = normalizeOptionalString(value.slice("session:".length));
+  if (!sessionKey) {
+    throw routineInvalidRequest("routine sessionTarget session key must not be blank");
+  }
+  const parsed = parseAgentSessionKey(sessionKey);
+  if (parsed) {
+    return `session:${canonicalAgentSessionKey(parsed)}` as CronSessionTarget;
+  }
+  if (normalizeLowercaseStringOrEmpty(sessionKey).startsWith("agent:")) {
+    throw routineInvalidRequest("routine sessionTarget agent session key is malformed");
+  }
+  return `session:${sessionKey}` as CronSessionTarget;
+}
+
+function agentIdFromRoutineSessionTarget(value: CronSessionTarget): string | undefined {
+  if (!value.startsWith("session:")) {
+    return undefined;
+  }
+  const parsed = parseAgentSessionKey(value.slice("session:".length));
+  return parsed ? sanitizeAgentId(parsed.agentId) : undefined;
+}
+
+function normalizeRoutineOwner(
+  input: RoutineCreateInput,
+  sessionTarget: CronSessionTarget,
+): {
   agentId?: string;
   sessionKey?: string;
 } {
   const rawAgentId = normalizeOptionalString(input.owner?.agentId);
   const agentId = rawAgentId ? sanitizeAgentId(rawAgentId) : undefined;
-  const sessionKey = normalizeOptionalString(input.owner?.sessionKey);
-  const parsedSessionAgentId = sessionKey ? parseAgentSessionKey(sessionKey)?.agentId : undefined;
-  const sessionAgentId = parsedSessionAgentId ? sanitizeAgentId(parsedSessionAgentId) : undefined;
+  const ownerSession = normalizeRoutineOwnerSessionKey(input.owner?.sessionKey);
+  const sessionAgentId = ownerSession.agentId;
+  const targetAgentId = agentIdFromRoutineSessionTarget(sessionTarget);
   if (agentId && sessionAgentId && agentId !== sessionAgentId) {
     throw routineInvalidRequest("routine owner.agentId must match owner.sessionKey agent");
   }
-  const resolvedAgentId = agentId ?? sessionAgentId;
+  if (agentId && targetAgentId && agentId !== targetAgentId) {
+    throw routineInvalidRequest("routine owner.agentId must match target session agent");
+  }
+  if (sessionAgentId && targetAgentId && sessionAgentId !== targetAgentId) {
+    throw routineInvalidRequest("routine owner.sessionKey agent must match target session agent");
+  }
+  const resolvedAgentId = agentId ?? sessionAgentId ?? targetAgentId;
   return {
     ...(resolvedAgentId ? { agentId: resolvedAgentId } : {}),
-    ...(sessionKey ? { sessionKey } : {}),
+    ...(ownerSession.sessionKey ? { sessionKey: ownerSession.sessionKey } : {}),
   };
 }
 
@@ -405,9 +465,11 @@ function normalizeRoutineCreateInput(input: RoutineCreateInput): NormalizedRouti
   const id = normalizeRoutineId(input.id);
   const name = requireNonBlankString(input.name, "routine name");
   const description = normalizeOptionalString(input.description);
-  const owner = normalizeRoutineOwner(input);
+  const sessionTarget = normalizeRoutineSessionTarget(
+    input.target?.sessionTarget ?? inferSessionTarget(input.action),
+  );
+  const owner = normalizeRoutineOwner(input, sessionTarget);
   const delivery = normalizeRoutineDelivery(owner, input.target?.delivery);
-  const sessionTarget = input.target?.sessionTarget ?? inferSessionTarget(input.action);
   const wakeMode = input.target?.wakeMode ?? "now";
   const cronInput = normalizeCronJobCreate(
     {
