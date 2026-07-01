@@ -63,7 +63,10 @@ function formatSchedule(schedule: CronSchedule | undefined): string {
   if (schedule.kind === "every") {
     return `every ${schedule.everyMs}ms`;
   }
-  return `cron ${schedule.expr}`;
+  if (schedule.kind === "cron") {
+    return `cron ${schedule.expr}`;
+  }
+  return "-";
 }
 
 function printRoutineList(routines: RoutineView[]) {
