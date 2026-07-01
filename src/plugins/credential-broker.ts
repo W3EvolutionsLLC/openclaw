@@ -1,5 +1,6 @@
 /** Executes manifest-declared credentialed requests without exposing resolved secrets to plugins. */
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { readResponseWithLimit } from "@openclaw/media-core/read-response-with-limit";
 import type { ResolvedConversationCapabilityProfile } from "../agents/conversation-capability-profile.js";
 import { isToolAllowedByPolicies, isToolAllowedByPolicyName } from "../agents/tool-policy-match.js";
@@ -398,32 +399,32 @@ function resolveDestination(params: {
   return url.toString();
 }
 
-function parseJsonNumericSecret(secret: string): number | undefined {
+function parseJsonSecret(secret: string): { value: unknown } | undefined {
   try {
-    const value = JSON.parse(secret) as unknown;
-    return typeof value === "number" ? value : undefined;
+    return { value: JSON.parse(secret) as unknown };
   } catch {
     return undefined;
   }
 }
 
 function replaceExactSecret(value: unknown, secret: string): unknown {
-  return replaceExactSecretValue(value, secret, parseJsonNumericSecret(secret), new WeakSet());
+  return replaceExactSecretValue(value, secret, parseJsonSecret(secret), new WeakSet());
 }
 
 function replaceExactSecretValue(
   value: unknown,
   secret: string,
-  numericSecret: number | undefined,
+  jsonSecret: { value: unknown } | undefined,
   seen: WeakSet<object>,
 ): unknown {
+  if (jsonSecret && isDeepStrictEqual(value, jsonSecret.value)) {
+    return REDACTED_VALUE;
+  }
   if (typeof value === "string") {
     return value.includes(secret) ? value.replaceAll(secret, REDACTED_VALUE) : value;
   }
   const matchesScalar = (value === null || typeof value === "boolean") && String(value) === secret;
-  const matchesNumber =
-    typeof value === "number" &&
-    (String(value) === secret || (numericSecret !== undefined && Object.is(value, numericSecret)));
+  const matchesNumber = typeof value === "number" && String(value) === secret;
   if (matchesScalar || matchesNumber) {
     return REDACTED_VALUE;
   }
@@ -435,9 +436,7 @@ function replaceExactSecretValue(
   }
   seen.add(value);
   if (Array.isArray(value)) {
-    const result = value.map((entry) =>
-      replaceExactSecretValue(entry, secret, numericSecret, seen),
-    );
+    const result = value.map((entry) => replaceExactSecretValue(entry, secret, jsonSecret, seen));
     seen.delete(value);
     return result;
   }
@@ -448,7 +447,7 @@ function replaceExactSecretValue(
   const result: Record<string, unknown> = Object.create(null);
   for (const [key, entry] of Object.entries(value)) {
     const redactedKey = key.includes(secret) ? key.replaceAll(secret, REDACTED_VALUE) : key;
-    result[redactedKey] = replaceExactSecretValue(entry, secret, numericSecret, seen);
+    result[redactedKey] = replaceExactSecretValue(entry, secret, jsonSecret, seen);
   }
   seen.delete(value);
   return result;

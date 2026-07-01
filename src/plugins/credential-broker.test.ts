@@ -468,7 +468,13 @@ describe("credential broker", () => {
     { credential: "-0", responseBody: '{"echo":-0}' },
     { credential: "true", responseBody: '{"echo":true}' },
     { credential: "null", responseBody: '{"echo":null}' },
-  ])("redacts a credential echoed as a JSON scalar", async ({ credential, responseBody }) => {
+    { credential: '"json-string-secret"', responseBody: '{"echo":"json-string-secret"}' },
+    {
+      credential: '{"token":"json-object-secret"}',
+      responseBody: '{"echo":{"token":"json-object-secret"}}',
+    },
+    { credential: '["json-array-secret",1]', responseBody: '{"echo":["json-array-secret",1]}' },
+  ])("redacts a credential echoed as a parsed JSON value", async ({ credential, responseBody }) => {
     const fixture = createFixture({
       allow: ["tavily_search"],
       runtimeCredential: credential,
