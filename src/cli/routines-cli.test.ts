@@ -1,0 +1,101 @@
+// Routines CLI tests cover durable-routine command parameter construction.
+import { Command } from "commander";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { registerRoutinesCli } from "./routines-cli.js";
+
+const mocks = vi.hoisted(() => {
+  const defaultRuntime = {
+    log: vi.fn(),
+    error: vi.fn(),
+    writeStdout: vi.fn(),
+    writeJson: vi.fn(),
+    exit: vi.fn((code: number) => {
+      throw new Error(`__exit__:${code}`);
+    }),
+  };
+  return {
+    defaultRuntime,
+    callGatewayFromCli: vi.fn(),
+  };
+});
+
+const { callGatewayFromCli, defaultRuntime } = mocks;
+
+vi.mock("./gateway-rpc.js", async () => {
+  const actual = await vi.importActual<typeof import("./gateway-rpc.js")>("./gateway-rpc.js");
+  return {
+    ...actual,
+    callGatewayFromCli: (method: string, opts: unknown, params?: unknown, extra?: unknown) =>
+      mocks.callGatewayFromCli(method, opts, params, extra as number | undefined),
+  };
+});
+
+vi.mock("../runtime.js", () => ({
+  defaultRuntime: mocks.defaultRuntime,
+}));
+
+function buildProgram() {
+  const program = new Command();
+  program.exitOverride();
+  registerRoutinesCli(program);
+  return program;
+}
+
+function resetGatewayMock() {
+  callGatewayFromCli.mockClear();
+  callGatewayFromCli.mockImplementation(async (method: string) => {
+    if (method === "cron.status") {
+      return { enabled: true };
+    }
+    if (method === "routines.create") {
+      return { created: true, routine: { id: "routine-1" } };
+    }
+    return {};
+  });
+  defaultRuntime.log.mockClear();
+  defaultRuntime.error.mockClear();
+  defaultRuntime.writeStdout.mockClear();
+  defaultRuntime.writeJson.mockClear();
+  defaultRuntime.exit.mockClear();
+}
+
+async function runRoutinesCommand(args: string[]): Promise<void> {
+  resetGatewayMock();
+  const program = buildProgram();
+  await program.parseAsync(args, { from: "user" });
+}
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+describe("registerRoutinesCli", () => {
+  it("allows webhook delivery for main system-event routines", async () => {
+    await runRoutinesCommand([
+      "routines",
+      "create",
+      "+1h",
+      "--name",
+      "Main webhook",
+      "--system-event",
+      "check status",
+      "--webhook",
+      "https://example.invalid/hook",
+    ]);
+
+    const createCall = callGatewayFromCli.mock.calls.find((call) => call[0] === "routines.create");
+    expect(createCall?.[2]).toMatchObject({
+      target: {
+        sessionTarget: "main",
+        delivery: {
+          mode: "webhook",
+          to: "https://example.invalid/hook",
+        },
+      },
+      action: {
+        kind: "systemEvent",
+        text: "check status",
+      },
+    });
+  });
+});

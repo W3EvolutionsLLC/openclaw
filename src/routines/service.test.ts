@@ -274,6 +274,70 @@ describe("routine service", () => {
     });
   });
 
+  it("ignores scheduler-generated every anchors when replaying create", async () => {
+    await withOpenClawTestState({ prefix: "routine-anchor-replay-" }, async () => {
+      const cron = createFakeCronService();
+      const created = await createRoutine(createRoutineInput(), { cron });
+      const cronJob = cron.jobs.get(created.routine.trigger.cronJobId);
+      if (!cronJob || cronJob.schedule.kind !== "every") {
+        throw new Error("expected every backing cron job");
+      }
+      cron.jobs.set(cronJob.id, {
+        ...cronJob,
+        schedule: { ...cronJob.schedule, anchorMs: 1_700_000_000_000 },
+      });
+
+      const replay = await createRoutine(createRoutineInput(), { cron });
+
+      expect(replay.idempotent).toBe(true);
+      expect(replay.created).toBe(false);
+    });
+  });
+
+  it("keeps stored disabled state when recreating a missing backing job", async () => {
+    await withOpenClawTestState({ prefix: "routine-missing-disabled-" }, async () => {
+      const cron = createFakeCronService();
+      const created = await createRoutine(createRoutineInput({ enabled: false }), { cron });
+      cron.jobs.delete(created.routine.trigger.cronJobId);
+
+      const replay = await createRoutine(createRoutineInput(), { cron });
+
+      expect(replay.idempotent).toBe(true);
+      expect(replay.created).toBe(false);
+      expect(cron.jobs.get(created.routine.trigger.cronJobId)?.enabled).toBe(false);
+    });
+  });
+
+  it("filters routine lists against canonical cron fields", async () => {
+    await withOpenClawTestState({ prefix: "routine-live-filter-canonical-" }, async () => {
+      const cron = createFakeCronService();
+      const created = await createRoutine(
+        createRoutineInput({
+          id: "default-owner",
+          name: "Original name",
+          owner: undefined,
+        }),
+        { cron },
+      );
+      const cronJob = cron.jobs.get(created.routine.trigger.cronJobId);
+      if (!cronJob) {
+        throw new Error("expected backing cron job");
+      }
+      cron.jobs.set(cronJob.id, {
+        ...cronJob,
+        name: "Renamed live routine",
+        updatedAtMs: cronJob.updatedAtMs + 1,
+      });
+
+      await expect(listRoutines({ agentId: "default-agent" }, { cron })).resolves.toMatchObject({
+        routines: [{ id: "default-owner" }],
+      });
+      await expect(listRoutines({ query: "renamed live" }, { cron })).resolves.toMatchObject({
+        routines: [{ id: "default-owner", name: "Renamed live routine" }],
+      });
+    });
+  });
+
   it("keeps one-shot routines durable and resolves current session targets", async () => {
     await withOpenClawTestState({ prefix: "routine-current-" }, async () => {
       const cron = createFakeCronService();

@@ -1,7 +1,10 @@
 /** Durable routine operations built on top of the canonical cron scheduler. */
 import crypto from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
-import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
+import {
+  normalizeLowercaseStringOrEmpty,
+  normalizeOptionalString,
+} from "@openclaw/normalization-core/string-coerce";
 import type { Insertable, Selectable } from "kysely";
 import { normalizeCronJobCreate } from "../cron/normalize.js";
 import type { CronServiceContract } from "../cron/service-contract.js";
@@ -19,7 +22,7 @@ import type {
 import { formatErrorMessage } from "../infra/errors.js";
 import { executeSqliteQuerySync, getNodeSqliteKysely } from "../infra/kysely-sync.js";
 import { normalizeSqliteNumber } from "../infra/sqlite-number.js";
-import { sanitizeAgentId } from "../routing/session-key.js";
+import { DEFAULT_AGENT_ID, sanitizeAgentId } from "../routing/session-key.js";
 import type { DB as OpenClawStateKyselyDatabase } from "../state/openclaw-state-db.generated.js";
 import {
   openOpenClawStateDatabase,
@@ -250,21 +253,11 @@ function getRoutineRecordFromSqlite(id: string): RoutineRecord | undefined {
 
 function listRoutineRecordsFromSqlite(options: RoutineListOptions = {}): RoutineRecord[] {
   const { db } = openRoutineRegistryDatabase();
-  let query = getRoutineStoreKysely(db)
+  const query = getRoutineStoreKysely(db)
     .selectFrom("routine_records")
     .select(ROUTINE_SELECT_COLUMNS)
     .orderBy("updated_at_ms", "desc")
     .orderBy("routine_id", "asc");
-
-  const rawAgentId = normalizeOptionalString(options.agentId);
-  if (rawAgentId) {
-    query = query.where("owner_agent_id", "=", sanitizeAgentId(rawAgentId));
-  }
-  const search = options.query?.trim();
-  if (search) {
-    const like = `%${search}%`;
-    query = query.where((eb) => eb.or([eb("name", "like", like), eb("description", "like", like)]));
-  }
   return executeSqliteQuerySync(db, query).rows.map(parseRoutineRecord);
 }
 
@@ -406,10 +399,20 @@ function routineIntentSignature(record: RoutineRecord): string {
     target: record.target,
     trigger: {
       kind: record.trigger.kind,
-      schedule: record.trigger.schedule,
+      schedule: routineScheduleIntent(record.trigger.schedule),
     },
     action: record.action,
   });
+}
+
+function routineScheduleIntent(schedule: CronSchedule): CronSchedule {
+  if (schedule.kind !== "every") {
+    return schedule;
+  }
+  return {
+    kind: "every",
+    everyMs: schedule.everyMs,
+  };
 }
 
 function stableStringify(value: unknown): string {
@@ -439,7 +442,7 @@ function routineIntentSignatureFromNormalized(normalized: NormalizedRoutineCreat
     target: normalized.target,
     trigger: {
       kind: "schedule",
-      schedule: cronInput.schedule,
+      schedule: routineScheduleIntent(cronInput.schedule),
     },
     action: cronInput.payload,
   });
@@ -584,6 +587,41 @@ function toRoutineView(record: RoutineRecord, cronJob: CronJob | undefined): Rou
   };
 }
 
+function routineEffectiveAgentId(routine: RoutineView, defaultAgentId: string | undefined): string {
+  return sanitizeAgentId(routine.owner.agentId ?? defaultAgentId ?? DEFAULT_AGENT_ID);
+}
+
+function routineMatchesListOptions(
+  routine: RoutineView,
+  options: RoutineListOptions,
+  defaultAgentId: string | undefined,
+): boolean {
+  if (!options.includeDisabled && !routine.status.enabled) {
+    return false;
+  }
+  const rawAgentId = normalizeOptionalString(options.agentId);
+  if (
+    rawAgentId &&
+    routineEffectiveAgentId(routine, defaultAgentId) !== sanitizeAgentId(rawAgentId)
+  ) {
+    return false;
+  }
+  const query = normalizeLowercaseStringOrEmpty(options.query);
+  if (!query) {
+    return true;
+  }
+  const haystack = normalizeLowercaseStringOrEmpty(
+    [
+      routine.id,
+      routine.name,
+      routine.description ?? "",
+      routine.owner.agentId ?? "",
+      routine.trigger.cronJobId,
+    ].join(" "),
+  );
+  return haystack.includes(query);
+}
+
 function routineCronStoreMatches(
   record: RoutineRecord,
   cronStorePath: string | undefined,
@@ -614,9 +652,10 @@ export async function listRoutines(
   const views = records.map((record) =>
     toRoutineView(record, jobsById.get(record.trigger.cronJobId)),
   );
-  const filtered = options.includeDisabled
-    ? views
-    : views.filter((routine) => routine.status.enabled);
+  const defaultAgentId = context.cron.getDefaultAgentId();
+  const filtered = views.filter((routine) =>
+    routineMatchesListOptions(routine, options, defaultAgentId),
+  );
   const offset = normalizeOffset(options.offset) ?? 0;
   const limit = normalizeLimit(options.limit);
   return {
@@ -678,7 +717,15 @@ export async function createRoutine(
       }
       const cronJob =
         existingCronJob ??
-        (await ensureRoutineBackingCronJob({ record: existing, normalized, context }));
+        (await ensureRoutineBackingCronJob({
+          record: existing,
+          normalized: {
+            ...normalized,
+            enabled: existing.enabled,
+            cronInput: { ...normalized.cronInput, enabled: existing.enabled },
+          },
+          context,
+        }));
       const record = createRoutineRecord({
         normalized,
         cronJob,
