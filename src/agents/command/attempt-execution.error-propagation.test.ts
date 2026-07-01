@@ -12,6 +12,7 @@ import {
   type TrustedToolExecutionEvent,
 } from "../../infra/diagnostic-events.js";
 import {
+  emitAcpLifecycleEnd,
   emitAcpLifecycleError,
   emitAcpPromptSubmitted,
   emitAcpRuntimeEvent,
@@ -189,12 +190,10 @@ describe("ACP diagnostic events", () => {
     ]);
   });
 
-  it("cancels outstanding tools when the enclosing ACP run is aborted", () => {
-    const abortController = new AbortController();
+  it("cancels outstanding tools when the ACP result reports cancellation", () => {
     const params = {
       runId: "run-cancelled-tool",
       sessionKey: "agent:main:acp:child",
-      abortSignal: abortController.signal,
     };
     emitAcpRuntimeEvent({
       ...params,
@@ -207,10 +206,9 @@ describe("ACP diagnostic events", () => {
         status: "in_progress",
       },
     });
-    abortController.abort();
     emitAcpRuntimeEvent({
       ...params,
-      event: { type: "done", stopReason: "cancelled" },
+      event: { type: "done", stopReason: "manual-cancel" },
     });
 
     expect(capturedTools).toMatchObject([
@@ -222,6 +220,17 @@ describe("ACP diagnostic events", () => {
         terminalReason: "cancelled",
       },
     ]);
+
+    emitAcpLifecycleEnd({
+      runId: "run-cancelled-lifecycle",
+      stopReason: "manual-cancel",
+    });
+    expect(captured.at(-1)?.data).toMatchObject({
+      phase: "end",
+      aborted: true,
+      stopReason: "stop",
+      status: "cancelled",
+    });
   });
 
   it("times out outstanding tools when the enclosing ACP run times out", () => {

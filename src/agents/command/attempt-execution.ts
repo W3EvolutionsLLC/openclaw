@@ -927,12 +927,39 @@ function acpAuditToolName(kind: unknown): string {
 
 function resolveAcpToolTerminalReason(
   signal: AbortSignal | undefined,
+  stopReason?: string,
 ): "failed" | "cancelled" | "timed_out" {
   const abortFields = resolveAgentRunAbortLifecycleFields(signal);
-  if (!abortFields.aborted) {
-    return "failed";
+  if (abortFields.aborted) {
+    return abortFields.stopReason === "timeout" ? "timed_out" : "cancelled";
   }
-  return abortFields.stopReason === "timeout" ? "timed_out" : "cancelled";
+  const normalizedStopReason = normalizeOptionalLowercaseString(stopReason);
+  if (normalizedStopReason === "timeout") {
+    return "timed_out";
+  }
+  if (
+    normalizedStopReason === "cancel" ||
+    normalizedStopReason === "cancelled" ||
+    normalizedStopReason === "manual-cancel"
+  ) {
+    return "cancelled";
+  }
+  return "failed";
+}
+
+function resolveAcpLifecycleEndFields(signal: AbortSignal | undefined, stopReason?: string) {
+  const abortFields = resolveAgentRunAbortLifecycleFields(signal);
+  if (abortFields.aborted) {
+    return abortFields;
+  }
+  const terminalReason = resolveAcpToolTerminalReason(undefined, stopReason);
+  if (terminalReason === "timed_out") {
+    return { aborted: true, stopReason: "timeout", status: "timed_out" } as const;
+  }
+  if (terminalReason === "cancelled") {
+    return { aborted: true, stopReason: "stop", status: "cancelled" } as const;
+  }
+  return {};
 }
 
 function emitAcpToolExecutionEvent(params: {
@@ -1118,7 +1145,13 @@ export function emitAcpRuntimeEvent(params: {
       event: params.event,
     });
   } else if (params.event.type === "done" || params.event.type === "error") {
-    finalizeAcpToolsForRun(params.runId, resolveAcpToolTerminalReason(params.abortSignal));
+    finalizeAcpToolsForRun(
+      params.runId,
+      resolveAcpToolTerminalReason(
+        params.abortSignal,
+        params.event.type === "done" ? params.event.stopReason : undefined,
+      ),
+    );
   }
   emitAgentEvent({
     runId: params.runId,
@@ -1137,8 +1170,12 @@ export function emitAcpLifecycleEnd(params: {
   agentId?: string;
   lifecycleGeneration?: string;
   abortSignal?: AbortSignal;
+  stopReason?: string;
 }) {
-  finalizeAcpToolsForRun(params.runId, resolveAcpToolTerminalReason(params.abortSignal));
+  finalizeAcpToolsForRun(
+    params.runId,
+    resolveAcpToolTerminalReason(params.abortSignal, params.stopReason),
+  );
   emitAgentEvent({
     runId: params.runId,
     ...(params.agentId ? { agentId: params.agentId } : {}),
@@ -1147,7 +1184,7 @@ export function emitAcpLifecycleEnd(params: {
     data: {
       phase: "end",
       endedAt: Date.now(),
-      ...resolveAgentRunAbortLifecycleFields(params.abortSignal),
+      ...resolveAcpLifecycleEndFields(params.abortSignal, params.stopReason),
     },
   });
 }
