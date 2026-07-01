@@ -40,9 +40,9 @@ export function createLazyPromiseLoader<T>(
   };
 
   return {
-    async load(): Promise<T> {
+    load(): Promise<T> {
       promise ??= createPromise();
-      return await promise;
+      return promise;
     },
     peek(): Promise<T> | undefined {
       return promise;

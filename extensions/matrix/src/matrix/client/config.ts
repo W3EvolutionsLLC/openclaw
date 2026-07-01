@@ -1,6 +1,6 @@
 // Matrix helper module supports config behavior.
 import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
-import { createLazyPromise, createLazyRuntimeModule } from "openclaw/plugin-sdk/lazy-runtime";
+import { createLazyRuntimeModule } from "openclaw/plugin-sdk/lazy-runtime";
 import { resolveOptionalIntegerOption } from "openclaw/plugin-sdk/number-runtime";
 import { requireRuntimeConfig } from "openclaw/plugin-sdk/plugin-config-runtime";
 import { retryAsync } from "openclaw/plugin-sdk/retry-runtime";
@@ -41,15 +41,11 @@ type MatrixAuthClientDeps = {
   retryMinDelayMs?: number;
 };
 
-const loadDefaultMatrixAuthClientDeps = createLazyPromise(
-  () =>
-    Promise.all([import("../sdk.js"), import("./logging.js")]).then(
-      ([sdkModule, loggingModule]) => ({
-        MatrixClient: sdkModule.MatrixClient,
-        ensureMatrixSdkLoggingConfigured: loggingModule.ensureMatrixSdkLoggingConfigured,
-      }),
-    ),
-  { cacheRejections: true },
+const loadDefaultMatrixAuthClientDeps = createLazyRuntimeModule(() =>
+  Promise.all([import("../sdk.js"), import("./logging.js")]).then(([sdkModule, loggingModule]) => ({
+    MatrixClient: sdkModule.MatrixClient,
+    ensureMatrixSdkLoggingConfigured: loggingModule.ensureMatrixSdkLoggingConfigured,
+  })),
 );
 let matrixAuthClientDepsForTest: MatrixAuthClientDeps | undefined;
 

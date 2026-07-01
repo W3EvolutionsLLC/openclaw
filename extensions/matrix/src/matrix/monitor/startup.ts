@@ -1,4 +1,4 @@
-import { createLazyPromise } from "openclaw/plugin-sdk/lazy-runtime";
+import { createLazyRuntimeModule } from "openclaw/plugin-sdk/lazy-runtime";
 // Matrix plugin module implements startup behavior.
 import type { RuntimeLogger } from "../../runtime-api.js";
 import type { CoreConfig, MatrixConfig } from "../../types.js";
@@ -26,30 +26,28 @@ export type MatrixStartupMaintenanceDeps = {
   ensureMatrixStartupVerification: typeof import("./startup-verification.js").ensureMatrixStartupVerification;
 };
 
-const loadMatrixStartupMaintenanceDeps = createLazyPromise(
-  () =>
-    Promise.all([
-      import("../config-update.js"),
-      import("../device-health.js"),
-      import("../profile.js"),
-      import("./legacy-crypto-restore.js"),
-      import("./startup-verification.js"),
-    ]).then(
-      ([
-        configUpdateModule,
-        deviceHealthModule,
-        profileModule,
-        legacyCryptoRestoreModule,
-        startupVerificationModule,
-      ]) => ({
-        updateMatrixAccountConfig: configUpdateModule.updateMatrixAccountConfig,
-        summarizeMatrixDeviceHealth: deviceHealthModule.summarizeMatrixDeviceHealth,
-        syncMatrixOwnProfile: profileModule.syncMatrixOwnProfile,
-        maybeRestoreLegacyMatrixBackup: legacyCryptoRestoreModule.maybeRestoreLegacyMatrixBackup,
-        ensureMatrixStartupVerification: startupVerificationModule.ensureMatrixStartupVerification,
-      }),
-    ),
-  { cacheRejections: true },
+const loadMatrixStartupMaintenanceDeps = createLazyRuntimeModule(() =>
+  Promise.all([
+    import("../config-update.js"),
+    import("../device-health.js"),
+    import("../profile.js"),
+    import("./legacy-crypto-restore.js"),
+    import("./startup-verification.js"),
+  ]).then(
+    ([
+      configUpdateModule,
+      deviceHealthModule,
+      profileModule,
+      legacyCryptoRestoreModule,
+      startupVerificationModule,
+    ]) => ({
+      updateMatrixAccountConfig: configUpdateModule.updateMatrixAccountConfig,
+      summarizeMatrixDeviceHealth: deviceHealthModule.summarizeMatrixDeviceHealth,
+      syncMatrixOwnProfile: profileModule.syncMatrixOwnProfile,
+      maybeRestoreLegacyMatrixBackup: legacyCryptoRestoreModule.maybeRestoreLegacyMatrixBackup,
+      ensureMatrixStartupVerification: startupVerificationModule.ensureMatrixStartupVerification,
+    }),
+  ),
 );
 
 export async function runMatrixStartupMaintenance(

@@ -1,4 +1,4 @@
-import { createLazyPromise } from "openclaw/plugin-sdk/lazy-runtime";
+import { createLazyRuntimeModule } from "openclaw/plugin-sdk/lazy-runtime";
 // Matrix plugin module implements client bootstrap behavior.
 import { requireRuntimeConfig } from "openclaw/plugin-sdk/plugin-config-runtime";
 import type { CoreConfig } from "../types.js";
@@ -20,16 +20,14 @@ type MatrixResolvedClientHook = (
   context: { preparedByDefault: boolean },
 ) => Promise<void> | void;
 
-const loadMatrixSharedClientRuntimeDeps = createLazyPromise(
-  () =>
-    Promise.all([import("./client.js"), import("./client/shared.js")]).then(
-      ([clientModule, sharedModule]) => ({
-        acquireSharedMatrixClient: clientModule.acquireSharedMatrixClient,
-        resolveMatrixAuthContext: clientModule.resolveMatrixAuthContext,
-        releaseSharedClientInstance: sharedModule.releaseSharedClientInstance,
-      }),
-    ),
-  { cacheRejections: true },
+const loadMatrixSharedClientRuntimeDeps = createLazyRuntimeModule(() =>
+  Promise.all([import("./client.js"), import("./client/shared.js")]).then(
+    ([clientModule, sharedModule]) => ({
+      acquireSharedMatrixClient: clientModule.acquireSharedMatrixClient,
+      resolveMatrixAuthContext: clientModule.resolveMatrixAuthContext,
+      releaseSharedClientInstance: sharedModule.releaseSharedClientInstance,
+    }),
+  ),
 );
 
 async function ensureResolvedClientReadiness(params: {

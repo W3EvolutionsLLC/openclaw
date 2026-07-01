@@ -13,7 +13,7 @@ import {
   type ExecApprovalReplyDecision,
 } from "openclaw/plugin-sdk/approval-reply-runtime";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
-import { createLazyPromiseLoader } from "openclaw/plugin-sdk/lazy-runtime";
+import { createLazyRuntimeModule } from "openclaw/plugin-sdk/lazy-runtime";
 import type { ReplyPayload } from "openclaw/plugin-sdk/reply-runtime";
 import { normalizeAccountId } from "openclaw/plugin-sdk/routing";
 import {
@@ -76,9 +76,7 @@ type SignalApprovalDeliveryResult = {
   meta?: Record<string, unknown>;
 };
 
-const resolverRuntimeLoader = createLazyPromiseLoader(() => import("./approval-resolver.js"), {
-  cacheRejections: true,
-});
+const resolverRuntimeLoader = createLazyRuntimeModule(() => import("./approval-resolver.js"));
 
 const signalApprovalReactionTargets =
   createApprovalReactionTargetStore<SignalApprovalReactionTarget>({
@@ -90,7 +88,7 @@ const signalApprovalReactionTargets =
     readPersistedTarget,
   });
 
-const loadApprovalResolver = resolverRuntimeLoader.load;
+const loadApprovalResolver = resolverRuntimeLoader;
 
 function resolveApprovalKindFromId(approvalId: string): ApprovalKind {
   return approvalId.startsWith("plugin:") ? "plugin" : "exec";

@@ -4,28 +4,25 @@ import {
   type OpenClawPluginCommandDefinition,
   type OpenClawPluginApi,
 } from "openclaw/plugin-sdk/channel-entry-contract";
-import { createLazyPromise } from "openclaw/plugin-sdk/lazy-runtime";
+import { createLazyRuntimeModule } from "openclaw/plugin-sdk/lazy-runtime";
 
 type RegisteredLineCardCommand = OpenClawPluginCommandDefinition;
 
 function createLineCardCommandLoader(api: OpenClawPluginApi) {
-  return createLazyPromise<RegisteredLineCardCommand>(
-    async () => {
-      let registered: RegisteredLineCardCommand | null = null;
-      const { registerLineCardCommand } = await import("./src/card-command.js");
-      registerLineCardCommand({
-        ...api,
-        registerCommand(command: RegisteredLineCardCommand) {
-          registered = command;
-        },
-      });
-      if (!registered) {
-        throw new Error("LINE card command registration unavailable");
-      }
-      return registered;
-    },
-    { cacheRejections: true },
-  );
+  return createLazyRuntimeModule<RegisteredLineCardCommand>(async () => {
+    let registered: RegisteredLineCardCommand | null = null;
+    const { registerLineCardCommand } = await import("./src/card-command.js");
+    registerLineCardCommand({
+      ...api,
+      registerCommand(command: RegisteredLineCardCommand) {
+        registered = command;
+      },
+    });
+    if (!registered) {
+      throw new Error("LINE card command registration unavailable");
+    }
+    return registered;
+  });
 }
 
 export default defineBundledChannelEntry({

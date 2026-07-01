@@ -1,6 +1,6 @@
 // Matrix plugin module implements create client behavior.
 import fs from "node:fs";
-import { createLazyPromise } from "openclaw/plugin-sdk/lazy-runtime";
+import { createLazyRuntimeModule } from "openclaw/plugin-sdk/lazy-runtime";
 import type { PinnedDispatcherPolicy } from "openclaw/plugin-sdk/ssrf-dispatcher";
 import {
   ssrfPolicyFromDangerouslyAllowPrivateNetwork,
@@ -15,15 +15,11 @@ import {
   writeStorageMeta,
 } from "./storage.js";
 
-const loadMatrixCreateClientRuntimeDeps = createLazyPromise(
-  () =>
-    Promise.all([import("../sdk.js"), import("./logging.js")]).then(
-      ([sdkModule, loggingModule]) => ({
-        MatrixClient: sdkModule.MatrixClient,
-        ensureMatrixSdkLoggingConfigured: loggingModule.ensureMatrixSdkLoggingConfigured,
-      }),
-    ),
-  { cacheRejections: true },
+const loadMatrixCreateClientRuntimeDeps = createLazyRuntimeModule(() =>
+  Promise.all([import("../sdk.js"), import("./logging.js")]).then(([sdkModule, loggingModule]) => ({
+    MatrixClient: sdkModule.MatrixClient,
+    ensureMatrixSdkLoggingConfigured: loggingModule.ensureMatrixSdkLoggingConfigured,
+  })),
 );
 
 export async function createMatrixClient(params: {

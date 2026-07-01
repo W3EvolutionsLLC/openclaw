@@ -5,7 +5,7 @@
  * It is only intended for CLI use, not browser environments.
  */
 
-import { createLazyPromise } from "openclaw/plugin-sdk/lazy-runtime";
+import { createLazyRuntimeModule } from "openclaw/plugin-sdk/lazy-runtime";
 import {
   parseOAuthAuthorizationInput,
   resolveOAuthTokenExpiresAt,
@@ -57,15 +57,11 @@ type TokenRequestOptions = {
   timeoutMs?: number;
 };
 
-const loadNodeOAuthModules = createLazyPromise(
-  () =>
-    Promise.all([import("node:crypto"), import("node:http")]).then(
-      ([cryptoModule, httpModule]) => ({
-        randomBytes: cryptoModule.randomBytes,
-        http: httpModule,
-      }),
-    ),
-  { cacheRejections: true },
+const loadNodeOAuthModules = createLazyRuntimeModule(() =>
+  Promise.all([import("node:crypto"), import("node:http")]).then(([cryptoModule, httpModule]) => ({
+    randomBytes: cryptoModule.randomBytes,
+    http: httpModule,
+  })),
 );
 
 function loadNodeOAuthRuntime(): Promise<NodeOAuthRuntime> {

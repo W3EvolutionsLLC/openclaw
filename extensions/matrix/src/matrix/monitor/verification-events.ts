@@ -1,4 +1,4 @@
-import { createLazyPromise } from "openclaw/plugin-sdk/lazy-runtime";
+import { createLazyRuntimeModule } from "openclaw/plugin-sdk/lazy-runtime";
 // Matrix plugin module implements verification events behavior.
 import type { MatrixClient } from "../sdk.js";
 import { resolveMatrixMonitorAccessState } from "./access-state.js";
@@ -32,15 +32,13 @@ type MatrixVerificationSummaryLike = {
   };
 };
 
-const loadMatrixDirectRoomDeps = createLazyPromise(
-  () =>
-    Promise.all([import("../direct-management.js"), import("../direct-room.js")]).then(
-      ([directManagementModule, directRoomModule]) => ({
-        inspectMatrixDirectRooms: directManagementModule.inspectMatrixDirectRooms,
-        isStrictDirectRoom: directRoomModule.isStrictDirectRoom,
-      }),
-    ),
-  { cacheRejections: true },
+const loadMatrixDirectRoomDeps = createLazyRuntimeModule(() =>
+  Promise.all([import("../direct-management.js"), import("../direct-room.js")]).then(
+    ([directManagementModule, directRoomModule]) => ({
+      inspectMatrixDirectRooms: directManagementModule.inspectMatrixDirectRooms,
+      isStrictDirectRoom: directRoomModule.isStrictDirectRoom,
+    }),
+  ),
 );
 
 function trimMaybeString(input: unknown): string | null {

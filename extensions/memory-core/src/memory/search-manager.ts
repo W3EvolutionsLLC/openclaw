@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 // Memory Core plugin module implements search manager behavior.
 import fs from "node:fs/promises";
 import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
-import { createLazyPromiseLoader, createLazyRuntimeModule } from "openclaw/plugin-sdk/lazy-runtime";
+import { createLazyRuntimeModule } from "openclaw/plugin-sdk/lazy-runtime";
 import {
   createSubsystemLogger,
   resolveAgentContextLimits,
@@ -113,10 +113,8 @@ const {
   pendingQmdManagerCreates: PENDING_QMD_MANAGER_CREATES,
   qmdManagerOpenFailures: QMD_MANAGER_OPEN_FAILURES,
 } = getMemorySearchManagerCacheStore();
-const managerRuntimeLoader = createLazyPromiseLoader(() => import("../../manager-runtime.js"), {
-  cacheRejections: true,
-});
-const loadManagerRuntime = managerRuntimeLoader.load;
+const managerRuntimeLoader = createLazyRuntimeModule(() => import("../../manager-runtime.js"));
+const loadManagerRuntime = managerRuntimeLoader;
 
 const loadQmdManagerModule = createLazyRuntimeModule(() => import("./qmd-manager.js"));
 

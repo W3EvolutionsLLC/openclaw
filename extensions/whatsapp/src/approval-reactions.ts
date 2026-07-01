@@ -9,7 +9,7 @@ import {
 } from "openclaw/plugin-sdk/approval-reaction-runtime";
 import type { ExecApprovalReplyDecision } from "openclaw/plugin-sdk/approval-reply-runtime";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
-import { createLazyPromiseLoader } from "openclaw/plugin-sdk/lazy-runtime";
+import { createLazyRuntimeModule } from "openclaw/plugin-sdk/lazy-runtime";
 import { getWhatsAppApprovalApprovers, whatsappApprovalAuth } from "./approval-auth.js";
 import { getOptionalWhatsAppRuntime } from "./runtime.js";
 
@@ -37,9 +37,7 @@ type ResolvedWhatsAppApprovalReactionTarget = WhatsAppApprovalReactionResolution
   remoteJid: string;
 };
 
-const resolverRuntimeLoader = createLazyPromiseLoader(() => import("./approval-resolver.js"), {
-  cacheRejections: true,
-});
+const resolverRuntimeLoader = createLazyRuntimeModule(() => import("./approval-resolver.js"));
 
 const whatsappApprovalReactionTargets =
   createApprovalReactionTargetStore<WhatsAppApprovalReactionTarget>({
@@ -51,7 +49,7 @@ const whatsappApprovalReactionTargets =
     readPersistedTarget,
   });
 
-const loadApprovalResolver = resolverRuntimeLoader.load;
+const loadApprovalResolver = resolverRuntimeLoader;
 
 function buildReactionTargetKey(params: {
   accountId: string;

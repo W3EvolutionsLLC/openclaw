@@ -21,11 +21,10 @@ describe("createLazyPromiseLoader", () => {
   it("dedupes concurrent loads and reuses the resolved value", async () => {
     let calls = 0;
     const loader = createLazyPromiseLoader(async () => `loaded-${++calls}`);
+    const first = loader.load();
 
-    await expect(Promise.all([loader.load(), loader.load()])).resolves.toEqual([
-      "loaded-1",
-      "loaded-1",
-    ]);
+    expect(loader.load()).toBe(first);
+    await expect(first).resolves.toBe("loaded-1");
     await expect(loader.load()).resolves.toBe("loaded-1");
     expect(calls).toBe(1);
   });

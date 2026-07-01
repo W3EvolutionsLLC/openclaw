@@ -9,7 +9,7 @@ import {
 } from "openclaw/plugin-sdk/approval-reaction-runtime";
 import type { ExecApprovalReplyDecision } from "openclaw/plugin-sdk/approval-reply-runtime";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
-import { createLazyPromiseLoader } from "openclaw/plugin-sdk/lazy-runtime";
+import { createLazyRuntimeModule } from "openclaw/plugin-sdk/lazy-runtime";
 import {
   asDateTimestampMs,
   isFutureDateTimestampMs,
@@ -59,12 +59,10 @@ export type PendingIMessageApprovalReactionPollTarget = {
   expiresAtMs: number;
 };
 
-const resolverRuntimeLoader = createLazyPromiseLoader(() => import("./approval-resolver.js"), {
-  cacheRejections: true,
-});
+const resolverRuntimeLoader = createLazyRuntimeModule(() => import("./approval-resolver.js"));
 const pendingReactionPollTargets = new Map<string, PendingIMessageApprovalReactionPollTarget>();
 
-const loadApprovalResolver = resolverRuntimeLoader.load;
+const loadApprovalResolver = resolverRuntimeLoader;
 
 function chatIdToKeyValue(chatId: number | string | undefined): string | null {
   if (chatId == null || chatId === "") {
