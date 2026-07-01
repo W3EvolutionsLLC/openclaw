@@ -42,9 +42,12 @@ type RoutineTarget = {
   delivery?: CronDelivery;
 };
 
+type RoutineSchedule = Extract<CronSchedule, { kind: "at" | "every" | "cron" }>;
+type RoutineCronJobCreate = CronJobCreate & { schedule: RoutineSchedule };
+
 type RoutineScheduleTrigger = {
   kind: "schedule";
-  schedule: CronSchedule;
+  schedule: RoutineSchedule;
   cronJobId: string;
   cronStoreKey?: string;
 };
@@ -75,7 +78,7 @@ export type RoutineCreateInput = {
   enabled?: boolean;
   owner?: RoutineOwner;
   target?: Partial<RoutineTarget>;
-  trigger: { kind: "schedule"; schedule: CronSchedule };
+  trigger: { kind: "schedule"; schedule: RoutineSchedule };
   action: CronPayload;
 };
 
@@ -142,7 +145,7 @@ type NormalizedRoutineCreate = {
   name: string;
   description?: string;
   enabled: boolean;
-  cronInput: CronJobCreate;
+  cronInput: RoutineCronJobCreate;
   target: RoutineTarget;
 };
 
@@ -512,21 +515,26 @@ function normalizeRoutineCreateInput(input: RoutineCreateInput): NormalizedRouti
   if (!cronInput) {
     throw routineInvalidRequest("invalid routine schedule or action");
   }
+  assertRoutineScheduleSupported(
+    cronInput.schedule,
+    `routine schedule kind is not supported: ${cronInput.schedule.kind}`,
+  );
+  const routineCronInput = { ...cronInput, schedule: cronInput.schedule };
   const target: RoutineTarget = {
-    sessionTarget: cronInput.sessionTarget,
-    wakeMode: cronInput.wakeMode,
-    ...(cronInput.delivery ? { delivery: cronInput.delivery } : {}),
+    sessionTarget: routineCronInput.sessionTarget,
+    wakeMode: routineCronInput.wakeMode,
+    ...(routineCronInput.delivery ? { delivery: routineCronInput.delivery } : {}),
   };
   const id =
     input.id === undefined
       ? createRoutineIdFromIntent({
-          name: cronInput.name,
-          ...(cronInput.description ? { description: cronInput.description } : {}),
-          cronInput,
+          name: routineCronInput.name,
+          ...(routineCronInput.description ? { description: routineCronInput.description } : {}),
+          cronInput: routineCronInput,
           target,
         })
       : normalizeExistingRoutineId(input.id);
-  const cronInputWithId = { ...cronInput, id: createRoutineCronJobId(id) };
+  const cronInputWithId = { ...routineCronInput, id: createRoutineCronJobId(id) };
   assertRoutinePayloadNonBlank(cronInputWithId.payload);
   if (cronInputWithId.sessionTarget === "main" && cronInputWithId.delivery?.mode === "webhook") {
     throw routineInvalidRequest("main-session routines do not support webhook delivery");
@@ -566,7 +574,10 @@ function routineIntentSignature(
   });
 }
 
-function routineScheduleIntent(schedule: CronSchedule, includeEveryAnchor?: boolean): CronSchedule {
+function routineScheduleIntent(
+  schedule: RoutineSchedule,
+  includeEveryAnchor?: boolean,
+): RoutineSchedule {
   if (schedule.kind !== "every") {
     return schedule;
   }
@@ -583,10 +594,26 @@ function routineScheduleIntent(schedule: CronSchedule, includeEveryAnchor?: bool
   };
 }
 
+function isRoutineSchedule(schedule: CronSchedule): schedule is RoutineSchedule {
+  return schedule.kind === "at" || schedule.kind === "every" || schedule.kind === "cron";
+}
+
+function assertRoutineScheduleSupported(
+  schedule: CronSchedule,
+  message: string,
+): asserts schedule is RoutineSchedule {
+  if (!isRoutineSchedule(schedule)) {
+    throw routineInvalidRequest(message);
+  }
+}
+
 function routineLinkedScheduleForView(
-  routineSchedule: CronSchedule,
+  routineSchedule: RoutineSchedule,
   cronSchedule: CronSchedule,
-): CronSchedule {
+): RoutineSchedule {
+  if (!isRoutineSchedule(cronSchedule)) {
+    return routineSchedule;
+  }
   if (
     routineSchedule.kind === "every" &&
     cronSchedule.kind === "every" &&
@@ -629,7 +656,7 @@ function stableStringify(value: unknown): string {
 function routineIntentSignatureFromNormalizedIntent(intent: {
   name: string;
   description?: string;
-  cronInput: CronJobCreate;
+  cronInput: RoutineCronJobCreate;
   target: RoutineTarget;
 }): string {
   const cronInput = intent.cronInput;
@@ -659,7 +686,7 @@ function routineIntentSignatureFromNormalized(normalized: NormalizedRoutineCreat
 function createRoutineIdFromIntent(intent: {
   name: string;
   description?: string;
-  cronInput: CronJobCreate;
+  cronInput: RoutineCronJobCreate;
   target: RoutineTarget;
 }): string {
   const digest = crypto
@@ -928,6 +955,10 @@ function assertRoutineBackingCronJobMatches(
       `routine backing cron job changed deleteAfterRun: ${record.trigger.cronJobId}`,
     );
   }
+  assertRoutineScheduleSupported(
+    cronJob.schedule,
+    `routine backing cron job changed to unsupported schedule: ${record.trigger.cronJobId}`,
+  );
   assertGeneratedEveryAnchorMatchesBaseline(record, cronJob);
   const comparable = createRoutineRecordFromCronJob(record, cronJob);
   if (

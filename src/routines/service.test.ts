@@ -872,6 +872,31 @@ describe("routine service", () => {
     });
   });
 
+  it("keeps routine views schedule-only when backing cron drifts to event-driven", async () => {
+    await withOpenClawTestState({ prefix: "routine-on-exit-drift-" }, async () => {
+      const cron = createFakeCronService();
+      const input = createRoutineInput();
+      const created = await createRoutine(input, { cron });
+      const cronJob = cron.jobs.get(created.routine.trigger.cronJobId);
+      if (!cronJob) {
+        throw new Error("expected backing cron job");
+      }
+      cron.jobs.set(cronJob.id, {
+        ...cronJob,
+        schedule: { kind: "on-exit", command: "echo done" },
+        updatedAtMs: cronJob.updatedAtMs + 1,
+      });
+
+      const listed = await listRoutines({ includeDisabled: true }, { cron });
+      expect(listed.routines[0]?.trigger.schedule).toEqual(created.routine.trigger.schedule);
+      await expect(inspectRoutine("daily-ops", { cron })).resolves.toMatchObject({
+        trigger: { schedule: created.routine.trigger.schedule },
+        status: { backing: "linked" },
+      });
+      await expect(createRoutine(input, { cron })).rejects.toThrow("unsupported schedule");
+    });
+  });
+
   it("ignores scheduler-generated every anchors when replaying create", async () => {
     await withOpenClawTestState({ prefix: "routine-anchor-replay-" }, async () => {
       const cron = createFakeCronService();
