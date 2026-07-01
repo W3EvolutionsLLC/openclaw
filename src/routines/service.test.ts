@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CronServiceContract } from "../cron/service-contract.js";
 import type { CronJob, CronJobCreate, CronJobPatch } from "../cron/types.js";
@@ -52,6 +53,11 @@ function createCronJob(input: CronJobCreate, id: string, now: number): CronJob {
       nextRunAtMs: 1_700_000_000_000 + now,
     },
   };
+}
+
+function createRoutineCronJobIdForTest(routineId: string): string {
+  const digest = crypto.createHash("sha256").update(routineId).digest("hex").slice(0, 32);
+  return `routine-cron-${digest}`;
 }
 
 function createFakeCronService(): FakeCronService {
@@ -147,7 +153,8 @@ describe("routine service", () => {
         payload: { kind: "agentTurn", message: "Summarize open work" },
       });
 
-      const listed = await listRoutines({ includeDisabled: true }, { cron });
+      const context = { cron, cronStorePath: "/tmp/cron.sqlite" };
+      const listed = await listRoutines({ includeDisabled: true }, context);
       expect(listed.routines).toHaveLength(1);
       expect(listed.routines[0]).toMatchObject({
         id: "daily-ops",
@@ -158,7 +165,7 @@ describe("routine service", () => {
           nextRunAtMs: 1_700_000_000_001,
         },
       });
-      expect(await listRoutines({ agentId: "Ops" }, { cron })).toMatchObject({
+      expect(await listRoutines({ agentId: "Ops" }, context)).toMatchObject({
         routines: [{ id: "daily-ops" }],
       });
     });
@@ -263,7 +270,7 @@ describe("routine service", () => {
     });
   });
 
-  it("removes a pending routine when cron rejects before creating a durable job", async () => {
+  it("does not persist a routine when cron rejects before creating a durable job", async () => {
     await withOpenClawTestState({ prefix: "routine-pending-retry-" }, async () => {
       const cron = createFakeCronService();
       cron.add.mockRejectedValueOnce(new Error("transient cron write failure"));
@@ -300,6 +307,42 @@ describe("routine service", () => {
       expect(created.created).toBe(true);
       expect(created.routine.status.backing).toBe("linked");
       expect(cron.jobs.size).toBe(1);
+    });
+  });
+
+  it("links an orphaned deterministic cron job after an interrupted create", async () => {
+    await withOpenClawTestState({ prefix: "routine-orphan-cron-" }, async () => {
+      const cron = createFakeCronService();
+      const input = createRoutineInput();
+      const cronJobId = createRoutineCronJobIdForTest(input.id ?? "daily-ops");
+      cron.jobs.set(
+        cronJobId,
+        createCronJob(
+          {
+            id: cronJobId,
+            name: "Daily ops",
+            enabled: true,
+            deleteAfterRun: false,
+            agentId: "ops",
+            schedule: { kind: "every", everyMs: 60_000 },
+            sessionTarget: "isolated",
+            wakeMode: "now",
+            payload: { kind: "agentTurn", message: "Summarize open work" },
+          },
+          cronJobId,
+          1,
+        ),
+      );
+
+      const created = await createRoutine(input, { cron });
+
+      expect(created.created).toBe(true);
+      expect(created.routine.status.backing).toBe("linked");
+      expect(created.routine.trigger.cronJobId).toBe(cronJobId);
+      expect(cron.add).not.toHaveBeenCalled();
+      await expect(inspectRoutine(created.routine.id, { cron })).resolves.toMatchObject({
+        status: { backing: "linked" },
+      });
     });
   });
 
@@ -461,6 +504,56 @@ describe("routine service", () => {
       await expect(listRoutines({ query: "renamed live" }, { cron })).resolves.toMatchObject({
         routines: [{ id: "default-owner", name: "Renamed live routine" }],
       });
+    });
+  });
+
+  it("scopes routine ids to the active cron store", async () => {
+    await withOpenClawTestState({ prefix: "routine-store-scope-" }, async () => {
+      const cronA = createFakeCronService();
+      const cronB = createFakeCronService();
+      const storeA = "/tmp/routine-store-a.sqlite";
+      const storeB = "/tmp/routine-store-b.sqlite";
+
+      await createRoutine(
+        createRoutineInput({
+          id: "store-routine",
+          name: "Store A routine",
+          action: { kind: "agentTurn", message: "Summarize store A." },
+        }),
+        { cron: cronA, cronStorePath: storeA },
+      );
+      await createRoutine(
+        createRoutineInput({
+          id: "store-routine",
+          name: "Store B routine",
+          action: { kind: "agentTurn", message: "Summarize store B." },
+        }),
+        { cron: cronB, cronStorePath: storeB },
+      );
+
+      const listedA = await listRoutines(
+        { includeDisabled: true },
+        { cron: cronA, cronStorePath: storeA },
+      );
+      const listedB = await listRoutines(
+        { includeDisabled: true },
+        { cron: cronB, cronStorePath: storeB },
+      );
+
+      expect(listedA.routines).toMatchObject([{ id: "store-routine", name: "Store A routine" }]);
+      expect(listedB.routines).toMatchObject([{ id: "store-routine", name: "Store B routine" }]);
+
+      await deleteRoutine("store-routine", { cron: cronB, cronStorePath: storeB });
+
+      await expect(
+        inspectRoutine("store-routine", { cron: cronA, cronStorePath: storeA }),
+      ).resolves.toMatchObject({
+        id: "store-routine",
+        name: "Store A routine",
+      });
+      await expect(
+        inspectRoutine("store-routine", { cron: cronB, cronStorePath: storeB }),
+      ).resolves.toBeUndefined();
     });
   });
 

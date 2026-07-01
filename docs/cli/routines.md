@@ -66,7 +66,7 @@ openclaw routines create --cron "0 18 * * 1-5" --tz America/Los_Angeles \
 
 | Option                  | Description                                                  |
 | ----------------------- | ------------------------------------------------------------ |
-| `--id <id>`             | Stable id for idempotent create                              |
+| `--id <id>`             | Stable id for idempotent create in the active cron store     |
 | `--name <name>`         | Human-readable routine name                                  |
 | `--description <text>`  | Optional description                                         |
 | `--disabled`            | Create the routine disabled                                  |

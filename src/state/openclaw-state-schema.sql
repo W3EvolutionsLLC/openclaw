@@ -951,18 +951,19 @@ CREATE INDEX IF NOT EXISTS idx_cron_jobs_agent_session
   WHERE agent_id IS NOT NULL OR session_key IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS routine_records (
-  routine_id TEXT NOT NULL PRIMARY KEY,
+  routine_id TEXT NOT NULL,
   name TEXT NOT NULL,
   description TEXT,
   owner_agent_id TEXT,
   owner_session_key TEXT,
   trigger_kind TEXT NOT NULL,
-  backing_cron_store_key TEXT,
+  backing_cron_store_key TEXT NOT NULL,
   backing_cron_job_id TEXT,
   enabled INTEGER NOT NULL,
   created_at_ms INTEGER NOT NULL,
   updated_at_ms INTEGER NOT NULL,
-  routine_json TEXT NOT NULL
+  routine_json TEXT NOT NULL,
+  PRIMARY KEY (backing_cron_store_key, routine_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_routine_records_owner_enabled

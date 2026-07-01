@@ -739,7 +739,7 @@ export interface PluginStateEntries {
 
 export interface RoutineRecords {
   backing_cron_job_id: string | null;
-  backing_cron_store_key: string | null;
+  backing_cron_store_key: string;
   created_at_ms: number;
   description: string | null;
   enabled: number;

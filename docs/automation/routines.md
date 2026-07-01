@@ -42,20 +42,21 @@ openclaw routines delete weekday-standup
 
 ## What routines add
 
-| Field                                        | Why it matters                                             |
-| -------------------------------------------- | ---------------------------------------------------------- |
-| `id`                                         | Stable id for idempotent create/update workflows           |
-| `name` and `description`                     | Human-readable operating intent                            |
-| `owner.agentId` and `owner.sessionKey`       | Agent/session ownership for filtering and handoff          |
-| `target.sessionTarget` and `target.delivery` | Where the work runs; completion delivery for message work  |
-| `trigger`                                    | Starts the routine; currently `schedule` only              |
-| `action`                                     | Cron payload to execute when the trigger fires             |
-| `status`                                     | Live backing state: enabled, disabled, running, or missing |
+| Field                                        | Why it matters                                              |
+| -------------------------------------------- | ----------------------------------------------------------- |
+| `id`                                         | Stable id for idempotent workflows in the active cron store |
+| `name` and `description`                     | Human-readable operating intent                             |
+| `owner.agentId` and `owner.sessionKey`       | Agent/session ownership for filtering and handoff           |
+| `target.sessionTarget` and `target.delivery` | Where the work runs; completion delivery for message work   |
+| `trigger`                                    | Starts the routine; currently `schedule` only               |
+| `action`                                     | Cron payload to execute when the trigger fires              |
+| `status`                                     | Live backing state: enabled, disabled, running, or missing  |
 
-Repeated `routines.create` calls with the same `id` and same routine intent are
-idempotent: OpenClaw returns the existing routine instead of creating another
-cron job. Reusing the same id with different intent is rejected so automation
-cannot accidentally fork a second operating loop.
+Repeated `routines.create` calls with the same `id` and same routine intent in
+the active cron store are idempotent: OpenClaw returns the existing routine
+instead of creating another cron job. Reusing the same id with different intent
+in that store is rejected so automation cannot accidentally fork a second
+operating loop.
 
 ## Relationship to cron and tasks
 
