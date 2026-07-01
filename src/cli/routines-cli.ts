@@ -159,12 +159,6 @@ function resolveDelivery(opts: RoutineCliOpts, payload: CronPayload, sessionTarg
     throw new Error("--webhook cannot be combined with chat delivery options.");
   }
   if (payload.kind === "systemEvent" || sessionTarget === "main") {
-    if (hasWebhook) {
-      return {
-        mode: "webhook",
-        to: webhookUrl,
-      };
-    }
     if (deliveryFlagCount > 0 || hasChatDeliveryTarget) {
       throw new Error("Delivery options require a non-main message routine.");
     }

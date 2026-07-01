@@ -6,6 +6,7 @@ import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import {
   createRoutine,
   deleteRoutine,
+  inspectRoutine,
   listRoutines,
   setRoutineEnabled,
   type RoutineCreateInput,
@@ -294,6 +295,33 @@ describe("routine service", () => {
     });
   });
 
+  it("preserves explicit every anchors as routine intent", async () => {
+    await withOpenClawTestState({ prefix: "routine-explicit-anchor-" }, async () => {
+      const cron = createFakeCronService();
+      const input = createRoutineInput({
+        id: "anchored-routine",
+        trigger: {
+          kind: "schedule",
+          schedule: { kind: "every", everyMs: 60_000, anchorMs: 1_700_000_000_000 },
+        },
+      });
+      await createRoutine(input, { cron });
+
+      await expect(
+        createRoutine(
+          createRoutineInput({
+            id: "anchored-routine",
+            trigger: {
+              kind: "schedule",
+              schedule: { kind: "every", everyMs: 60_000, anchorMs: 1_700_000_060_000 },
+            },
+          }),
+          { cron },
+        ),
+      ).rejects.toThrow("different intent");
+    });
+  });
+
   it("keeps stored disabled state when recreating a missing backing job", async () => {
     await withOpenClawTestState({ prefix: "routine-missing-disabled-" }, async () => {
       const cron = createFakeCronService();
@@ -335,6 +363,59 @@ describe("routine service", () => {
       await expect(listRoutines({ query: "renamed live" }, { cron })).resolves.toMatchObject({
         routines: [{ id: "default-owner", name: "Renamed live routine" }],
       });
+    });
+  });
+
+  it("surfaces delivery outcome on routine status", async () => {
+    await withOpenClawTestState({ prefix: "routine-delivery-status-" }, async () => {
+      const cron = createFakeCronService();
+      const created = await createRoutine(createRoutineInput(), { cron });
+      const cronJob = cron.jobs.get(created.routine.trigger.cronJobId);
+      if (!cronJob) {
+        throw new Error("expected backing cron job");
+      }
+      cron.jobs.set(cronJob.id, {
+        ...cronJob,
+        state: {
+          ...cronJob.state,
+          lastRunAtMs: 1_700_000_000_000,
+          lastRunStatus: "ok",
+          lastDelivered: false,
+          lastDeliveryStatus: "not-delivered",
+          lastDeliveryError: "Message failed",
+        },
+      });
+
+      await expect(inspectRoutine(created.routine.id, { cron })).resolves.toMatchObject({
+        status: {
+          lastRunStatus: "ok",
+          lastDelivered: false,
+          lastDeliveryStatus: "not-delivered",
+          lastDeliveryError: "Message failed",
+        },
+      });
+    });
+  });
+
+  it("rejects main-session webhook routines before creating cron jobs", async () => {
+    await withOpenClawTestState({ prefix: "routine-main-webhook-" }, async () => {
+      const cron = createFakeCronService();
+
+      await expect(
+        createRoutine(
+          createRoutineInput({
+            id: "main-webhook",
+            target: {
+              sessionTarget: "main",
+              wakeMode: "now",
+              delivery: { mode: "webhook", to: "https://example.invalid/hook" },
+            },
+            action: { kind: "systemEvent", text: "check status" },
+          }),
+          { cron },
+        ),
+      ).rejects.toThrow("main-session routines do not support webhook delivery");
+      expect(cron.add).not.toHaveBeenCalled();
     });
   });
 

@@ -11,6 +11,7 @@ import type { CronServiceContract } from "../cron/service-contract.js";
 import { cronStoreKey } from "../cron/store/key.js";
 import type {
   CronDelivery,
+  CronDeliveryStatus,
   CronJob,
   CronJobCreate,
   CronPayload,
@@ -89,6 +90,9 @@ type RoutineRuntimeStatus = {
   lastRunAtMs?: number;
   lastRunStatus?: CronRunStatus;
   lastError?: string;
+  lastDelivered?: boolean;
+  lastDeliveryStatus?: CronDeliveryStatus;
+  lastDeliveryError?: string;
 };
 
 type RoutineView = RoutineRecord & {
@@ -373,6 +377,9 @@ function normalizeRoutineCreateInput(input: RoutineCreateInput): NormalizedRouti
     throw new Error("invalid routine schedule or action");
   }
   const cronInputWithId = { ...cronInput, id: createRoutineCronJobId(id) };
+  if (cronInputWithId.sessionTarget === "main" && cronInputWithId.delivery?.mode === "webhook") {
+    throw new Error("main-session routines do not support webhook delivery");
+  }
   return {
     id,
     name: cronInputWithId.name,
@@ -391,7 +398,18 @@ export function normalizeRoutineCronCreateInput(input: RoutineCreateInput): Cron
   return normalizeRoutineCreateInput(input).cronInput;
 }
 
-function routineIntentSignature(record: RoutineRecord): string {
+function hasExplicitEveryAnchor(schedule: CronSchedule): boolean {
+  return (
+    schedule.kind === "every" &&
+    typeof schedule.anchorMs === "number" &&
+    Number.isFinite(schedule.anchorMs)
+  );
+}
+
+function routineIntentSignature(
+  record: RoutineRecord,
+  opts?: { includeEveryAnchor?: boolean },
+): string {
   return stableStringify({
     name: record.name,
     description: record.description,
@@ -399,15 +417,22 @@ function routineIntentSignature(record: RoutineRecord): string {
     target: record.target,
     trigger: {
       kind: record.trigger.kind,
-      schedule: routineScheduleIntent(record.trigger.schedule),
+      schedule: routineScheduleIntent(record.trigger.schedule, opts?.includeEveryAnchor),
     },
     action: record.action,
   });
 }
 
-function routineScheduleIntent(schedule: CronSchedule): CronSchedule {
+function routineScheduleIntent(schedule: CronSchedule, includeEveryAnchor?: boolean): CronSchedule {
   if (schedule.kind !== "every") {
     return schedule;
+  }
+  if (includeEveryAnchor === true && hasExplicitEveryAnchor(schedule)) {
+    return {
+      kind: "every",
+      everyMs: schedule.everyMs,
+      anchorMs: schedule.anchorMs,
+    };
   }
   return {
     kind: "every",
@@ -442,7 +467,10 @@ function routineIntentSignatureFromNormalized(normalized: NormalizedRoutineCreat
     target: normalized.target,
     trigger: {
       kind: "schedule",
-      schedule: routineScheduleIntent(cronInput.schedule),
+      schedule: routineScheduleIntent(
+        cronInput.schedule,
+        hasExplicitEveryAnchor(cronInput.schedule),
+      ),
     },
     action: cronInput.payload,
   });
@@ -572,6 +600,9 @@ function routineStatus(record: RoutineRecord, cronJob: CronJob | undefined): Rou
     ...(state.lastRunAtMs !== undefined ? { lastRunAtMs: state.lastRunAtMs } : {}),
     ...(state.lastRunStatus ? { lastRunStatus: state.lastRunStatus } : {}),
     ...(state.lastError ? { lastError: state.lastError } : {}),
+    ...(state.lastDelivered !== undefined ? { lastDelivered: state.lastDelivered } : {}),
+    ...(state.lastDeliveryStatus ? { lastDeliveryStatus: state.lastDeliveryStatus } : {}),
+    ...(state.lastDeliveryError ? { lastDeliveryError: state.lastDeliveryError } : {}),
   };
 }
 
@@ -712,7 +743,11 @@ export async function createRoutine(
       const comparable = existingCronJob
         ? createRoutineRecordFromCronJob(existing, existingCronJob)
         : existing;
-      if (routineIntentSignature(comparable) !== routineIntentSignatureFromNormalized(normalized)) {
+      if (
+        routineIntentSignature(comparable, {
+          includeEveryAnchor: hasExplicitEveryAnchor(existing.trigger.schedule),
+        }) !== routineIntentSignatureFromNormalized(normalized)
+      ) {
         throw new Error(`routine id already exists with different intent: ${normalized.id}`);
       }
       const cronJob =

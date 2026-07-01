@@ -2,6 +2,7 @@
 import { Type, type Static } from "typebox";
 import {
   CronDeliverySchema,
+  CronDeliveryStatusSchema,
   CronPayloadSchema,
   CronRunStatusSchema,
   CronScheduleSchema,
@@ -70,6 +71,9 @@ const RoutineRuntimeStatusSchema = Type.Object(
     lastRunAtMs: Type.Optional(Type.Integer({ minimum: 0 })),
     lastRunStatus: Type.Optional(CronRunStatusSchema),
     lastError: Type.Optional(Type.String()),
+    lastDelivered: Type.Optional(Type.Boolean()),
+    lastDeliveryStatus: Type.Optional(CronDeliveryStatusSchema),
+    lastDeliveryError: Type.Optional(Type.String()),
   },
   { additionalProperties: false },
 );

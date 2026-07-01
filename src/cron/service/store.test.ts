@@ -1,5 +1,6 @@
 // Cron service store tests cover persisted service state loading and writes.
 import fs from "node:fs/promises";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { setupCronServiceSuite } from "../service.test-harness.js";
 import { loadCronStore, saveCronStore } from "../store.js";
@@ -380,5 +381,25 @@ describe("cron service store seam coverage", () => {
     await ensureLoaded(state, { forceReload: true, skipRecompute: true });
 
     expect(findJobOrThrow(state, jobId).state.nextRunAtMs).toBeUndefined();
+  });
+
+  it("throws instead of acknowledging persistence when pending quarantine cannot flush", async () => {
+    const { storePath } = await makeStorePath();
+    const blockedParent = `${storePath}-blocked`;
+    await fs.mkdir(path.dirname(blockedParent), { recursive: true });
+    await fs.writeFile(blockedParent, "not a directory", "utf-8");
+    const state = createStoreTestState(path.join(blockedParent, "jobs.json"));
+    state.store = { version: 1, jobs: [] };
+    state.pendingQuarantineConfigJobs = [
+      {
+        sourceIndex: 0,
+        reason: "invalid test row",
+        job: { id: "bad-job" },
+      },
+    ];
+
+    await expect(persist(state)).rejects.toThrow(
+      "cron: failed to persist pending quarantine records",
+    );
   });
 });

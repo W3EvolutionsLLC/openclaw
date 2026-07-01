@@ -220,7 +220,7 @@ export async function persist(state: CronServiceState, opts?: { stateOnly?: bool
   if (state.pendingQuarantineConfigJobs.length > 0) {
     const quarantinePath = await flushPendingQuarantine(state, state.deps.nowMs());
     if (!quarantinePath) {
-      return;
+      throw new Error("cron: failed to persist pending quarantine records");
     }
     flushedPendingQuarantine = true;
   }

@@ -47,7 +47,7 @@ openclaw routines delete weekday-standup
 | `id`                                         | Stable id for idempotent create/update workflows           |
 | `name` and `description`                     | Human-readable operating intent                            |
 | `owner.agentId` and `owner.sessionKey`       | Agent/session ownership for filtering and handoff          |
-| `target.sessionTarget` and `target.delivery` | Where the work runs and where completion should go         |
+| `target.sessionTarget` and `target.delivery` | Where the work runs; completion delivery for message work  |
 | `trigger`                                    | Starts the routine; currently `schedule` only              |
 | `action`                                     | Cron payload to execute when the trigger fires             |
 | `status`                                     | Live backing state: enabled, disabled, running, or missing |
@@ -75,6 +75,9 @@ Routine list and inspect output includes live cron-derived state:
 - `disabled`: backing cron job is disabled.
 - `running`: cron is currently executing the backing job.
 - `missing`: the routine record exists, but the backing cron job is gone.
+
+Routine JSON status also includes the backing cron job's last delivery outcome
+when a run attempted completion delivery.
 
 `missing` is visible on purpose. It lets operators repair or delete the routine
 instead of silently losing a team operation.

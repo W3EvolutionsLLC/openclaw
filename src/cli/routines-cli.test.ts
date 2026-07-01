@@ -70,32 +70,24 @@ afterEach(() => {
 });
 
 describe("registerRoutinesCli", () => {
-  it("allows webhook delivery for main system-event routines", async () => {
-    await runRoutinesCommand([
-      "routines",
-      "create",
-      "+1h",
-      "--name",
-      "Main webhook",
-      "--system-event",
-      "check status",
-      "--webhook",
-      "https://example.invalid/hook",
-    ]);
+  it("rejects webhook delivery for main system-event routines", async () => {
+    await expect(
+      runRoutinesCommand([
+        "routines",
+        "create",
+        "+1h",
+        "--name",
+        "Main webhook",
+        "--system-event",
+        "check status",
+        "--webhook",
+        "https://example.invalid/hook",
+      ]),
+    ).rejects.toThrow("__exit__:1");
 
-    const createCall = callGatewayFromCli.mock.calls.find((call) => call[0] === "routines.create");
-    expect(createCall?.[2]).toMatchObject({
-      target: {
-        sessionTarget: "main",
-        delivery: {
-          mode: "webhook",
-          to: "https://example.invalid/hook",
-        },
-      },
-      action: {
-        kind: "systemEvent",
-        text: "check status",
-      },
-    });
+    expect(callGatewayFromCli.mock.calls.some((call) => call[0] === "routines.create")).toBe(false);
+    expect(defaultRuntime.error.mock.calls[0]?.[0]).toContain(
+      "Delivery options require a non-main message routine.",
+    );
   });
 });

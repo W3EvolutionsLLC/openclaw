@@ -63,6 +63,9 @@ describe("routines protocol schemas", () => {
         enabled: true,
         cronJobId: "cron-1",
         nextRunAtMs: 3,
+        lastDelivered: false,
+        lastDeliveryStatus: "not-delivered",
+        lastDeliveryError: "Message failed",
       },
     };
 

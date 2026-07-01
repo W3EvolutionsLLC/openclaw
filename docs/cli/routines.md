@@ -12,8 +12,8 @@ Manage durable team-operation routines through the Gateway.
 
 <Tip>
 See [Routines](/automation/routines) for the conceptual guide. Schedule-triggered
-routines use the same scheduler, delivery modes, and run history as
-[cron jobs](/automation/cron-jobs).
+routines use the same scheduler and run history as [cron jobs](/automation/cron-jobs);
+message routines also use cron completion delivery.
 </Tip>
 
 ## Usage
@@ -78,15 +78,16 @@ openclaw routines create --cron "0 18 * * 1-5" --tz America/Los_Angeles \
 | `--message <text>`      | Isolated/current/custom-session agent message                |
 | `--announce`            | Fallback-deliver final text to a chat                        |
 | `--no-deliver`          | Disable runner fallback delivery                             |
-| `--webhook <url>`       | POST the finished payload to a webhook URL                   |
+| `--webhook <url>`       | POST non-main message routine output to a webhook URL        |
 | `--channel <channel>`   | Delivery channel                                             |
 | `--to <dest>`           | Delivery destination                                         |
 | `--thread-id <id>`      | Telegram forum topic thread id                               |
 | `--account <id>`        | Channel account id for delivery                              |
 | `--json`                | Output JSON                                                  |
 
-Main-session routines require `--system-event`. Isolated, current, and custom
-session routines require `--message`.
+Main-session routines require `--system-event` and do not support completion
+delivery flags. Isolated, current, and custom session routines require
+`--message`.
 
 ## Idempotency
 

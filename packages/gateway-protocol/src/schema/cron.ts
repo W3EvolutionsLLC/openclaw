@@ -108,7 +108,7 @@ const CronRunsStatusValueSchema = Type.Union([
   Type.Literal("error"),
   Type.Literal("skipped"),
 ]);
-const CronDeliveryStatusSchema = Type.Union([
+export const CronDeliveryStatusSchema = Type.Union([
   Type.Literal("delivered"),
   Type.Literal("not-delivered"),
   Type.Literal("unknown"),
