@@ -255,7 +255,7 @@ function getRoutineRecordFromSqlite(id: string): RoutineRecord | undefined {
   return row ? parseRoutineRecord(row) : undefined;
 }
 
-function listRoutineRecordsFromSqlite(options: RoutineListOptions = {}): RoutineRecord[] {
+function listRoutineRecordsFromSqlite(): RoutineRecord[] {
   const { db } = openRoutineRegistryDatabase();
   const query = getRoutineStoreKysely(db)
     .selectFrom("routine_records")
@@ -476,7 +476,7 @@ function routineIntentSignatureFromNormalized(normalized: NormalizedRoutineCreat
   });
 }
 
-function createRoutineRecordFromCron(params: {
+function createRoutineRecord(params: {
   normalized: NormalizedRoutineCreate;
   enabled: boolean;
   cronJobId: string;
@@ -508,40 +508,6 @@ function createRoutineRecordFromCron(params: {
   };
 }
 
-function createRoutinePendingRecord(params: {
-  normalized: NormalizedRoutineCreate;
-  nowMs: number;
-  cronStorePath?: string;
-}): RoutineRecord {
-  const cronInput = params.normalized.cronInput;
-  return createRoutineRecordFromCron({
-    normalized: params.normalized,
-    enabled: params.normalized.enabled,
-    cronJobId: cronInput.id ?? createRoutineCronJobId(params.normalized.id),
-    action: cronInput.payload,
-    createdAtMs: params.nowMs,
-    updatedAtMs: params.nowMs,
-    cronStorePath: params.cronStorePath,
-  });
-}
-
-function createRoutineRecord(params: {
-  normalized: NormalizedRoutineCreate;
-  cronJob: CronJob;
-  cronStorePath?: string;
-  createdAtMs?: number;
-}): RoutineRecord {
-  return createRoutineRecordFromCron({
-    normalized: params.normalized,
-    enabled: params.cronJob.enabled,
-    cronJobId: params.cronJob.id,
-    action: params.cronJob.payload,
-    createdAtMs: params.createdAtMs ?? params.cronJob.createdAtMs,
-    updatedAtMs: params.cronJob.updatedAtMs,
-    cronStorePath: params.cronStorePath,
-  });
-}
-
 function createRoutineRecordFromCronJob(record: RoutineRecord, cronJob: CronJob): RoutineRecord {
   const description = normalizeOptionalString(cronJob.description);
   return {
@@ -570,12 +536,9 @@ function createRoutineRecordFromCronJob(record: RoutineRecord, cronJob: CronJob)
   };
 }
 
-function cronJobMap(jobs: readonly CronJob[]): Map<string, CronJob> {
-  return new Map(jobs.map((job) => [job.id, job]));
-}
-
 async function readCronJobsById(cron: CronServiceContract): Promise<Map<string, CronJob>> {
-  return cronJobMap(await cron.list({ includeDisabled: true }));
+  const jobs = await cron.list({ includeDisabled: true });
+  return new Map(jobs.map((job) => [job.id, job]));
 }
 
 function routineStatus(record: RoutineRecord, cronJob: CronJob | undefined): RoutineRuntimeStatus {
@@ -653,32 +616,21 @@ function routineMatchesListOptions(
   return haystack.includes(query);
 }
 
-function routineCronStoreMatches(
-  record: RoutineRecord,
-  cronStorePath: string | undefined,
-): boolean {
-  return (
-    !record.trigger.cronStoreKey ||
-    !cronStorePath ||
-    record.trigger.cronStoreKey === cronStoreKey(cronStorePath)
-  );
-}
-
 function assertRoutineCronStoreActive(record: RoutineRecord, cronStorePath: string | undefined) {
-  if (!routineCronStoreMatches(record, cronStorePath)) {
+  if (
+    record.trigger.cronStoreKey &&
+    cronStorePath &&
+    record.trigger.cronStoreKey !== cronStoreKey(cronStorePath)
+  ) {
     throw new Error(`routine backing cron store is not active: ${record.trigger.cronJobId}`);
   }
-}
-
-function routineMissingError(id: string): Error {
-  return new Error(`routine not found: ${id}`);
 }
 
 export async function listRoutines(
   options: RoutineListOptions,
   context: RoutineCronContext,
 ): Promise<{ routines: RoutineView[] }> {
-  const records = listRoutineRecordsFromSqlite(options);
+  const records = listRoutineRecordsFromSqlite();
   const jobsById = await readCronJobsById(context.cron);
   const views = records.map((record) =>
     toRoutineView(record, jobsById.get(record.trigger.cronJobId)),
@@ -763,17 +715,25 @@ export async function createRoutine(
         }));
       const record = createRoutineRecord({
         normalized,
-        cronJob,
+        enabled: cronJob.enabled,
+        cronJobId: cronJob.id,
+        action: cronJob.payload,
         cronStorePath: context.cronStorePath,
         createdAtMs: existing.createdAtMs,
+        updatedAtMs: cronJob.updatedAtMs,
       });
       upsertRoutineRecordToSqlite(record);
       return { routine: toRoutineView(record, cronJob), created: false, idempotent: true };
     }
 
-    const pending = createRoutinePendingRecord({
+    const nowMs = Date.now();
+    const pending = createRoutineRecord({
       normalized,
-      nowMs: Date.now(),
+      enabled: normalized.enabled,
+      cronJobId: normalized.cronInput.id ?? createRoutineCronJobId(normalized.id),
+      action: normalized.cronInput.payload,
+      createdAtMs: nowMs,
+      updatedAtMs: nowMs,
       cronStorePath: context.cronStorePath,
     });
     upsertRoutineRecordToSqlite(pending);
@@ -786,9 +746,12 @@ export async function createRoutine(
     }
     const record = createRoutineRecord({
       normalized,
-      cronJob,
+      enabled: cronJob.enabled,
+      cronJobId: cronJob.id,
+      action: cronJob.payload,
       cronStorePath: context.cronStorePath,
       createdAtMs: pending.createdAtMs,
+      updatedAtMs: cronJob.updatedAtMs,
     });
     try {
       upsertRoutineRecordToSqlite(record);
@@ -811,7 +774,7 @@ export async function setRoutineEnabled(
   return await withRoutineMutationLock(id, async () => {
     const record = getRoutineRecordFromSqlite(id);
     if (!record) {
-      throw routineMissingError(id);
+      throw new Error(`routine not found: ${id}`);
     }
     assertRoutineCronStoreActive(record, context.cronStorePath);
     const cronJob = await context.cron.readJob(record.trigger.cronJobId);
