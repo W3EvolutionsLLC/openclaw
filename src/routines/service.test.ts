@@ -1177,7 +1177,7 @@ describe("routine service", () => {
     },
   );
 
-  it("preserves concurrent cron run state when toggle persistence rollback runs", async () => {
+  it("preserves concurrent cron run state between toggle and rollback", async () => {
     await withOpenClawTestState({ prefix: "routine-toggle-rollback-interleave-" }, async () => {
       const cron = createFakeCronService();
       const created = await createRoutine(createRoutineInput({ id: "toggle-interleave" }), {
@@ -1201,7 +1201,7 @@ describe("routine service", () => {
         const current = cron.jobs.get(id);
         if (id === cronJobId) {
           readCount += 1;
-          if (readCount === 3 && current) {
+          if (readCount === 2 && current) {
             const concurrent = {
               ...current,
               state: concurrentState,

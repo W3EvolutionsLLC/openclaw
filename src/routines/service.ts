@@ -1353,7 +1353,7 @@ export async function setRoutineEnabled(
         const rollbackError = await rollbackRoutineCronJobSnapshot({
           context,
           snapshot: previousCronJob,
-          postToggle: updatedCronJob ?? postToggleCronJob,
+          postToggle: postToggleCronJob,
           cause: err,
         });
         if (rollbackError) {
