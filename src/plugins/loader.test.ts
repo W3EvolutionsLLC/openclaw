@@ -1222,6 +1222,7 @@ rl.on("line", (line) => {
           configSchema: EMPTY_PLUGIN_SCHEMA,
           contracts: { tools: ["manifest_echo"] },
           jsonRpc: {
+            protocolVersion: 1,
             process: {
               command: process.execPath,
               args: [childPath],

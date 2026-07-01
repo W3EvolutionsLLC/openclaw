@@ -60,6 +60,7 @@ describe("createJsonRpcManifestPluginDefinition process management", () => {
       },
     });
     const entry = createJsonRpcManifestPluginDefinition({
+      protocolVersion: 1,
       id: "json-rpc-process-test",
       name: "JSON RPC Process Test",
       description: "Test spawn resolution",
@@ -110,6 +111,7 @@ describe("createJsonRpcManifestPluginDefinition process management", () => {
       },
     });
     const entry = createJsonRpcManifestPluginDefinition({
+      protocolVersion: 1,
       id: "json-rpc-process-abort-test",
       name: "JSON RPC Process Abort Test",
       description: "Test pre-aborted process requests",
@@ -134,6 +136,175 @@ describe("createJsonRpcManifestPluginDefinition process management", () => {
 
     expect(mocks.resolveWindowsSpawnProgram).not.toHaveBeenCalled();
     expect(mocks.spawn).not.toHaveBeenCalled();
+  });
+
+  it("materializes callbacks only at audited generic registration paths", () => {
+    let service: Parameters<OpenClawPluginApi["registerService"]>[0] | undefined;
+    let subscription:
+      | Parameters<OpenClawPluginApi["registerAgentEventSubscription"]>[0]
+      | undefined;
+    const api = createProcessTestApi({
+      registerService(registration) {
+        service = registration;
+      },
+      registerAgentEventSubscription(registration) {
+        subscription = registration;
+      },
+    });
+    const entry = createJsonRpcManifestPluginDefinition({
+      protocolVersion: 1,
+      id: "json-rpc-generic-registration-test",
+      name: "JSON RPC Generic Registration Test",
+      description: "Generic registration test",
+      process: { command: "json-rpc-child" },
+      registrations: [
+        {
+          type: "api",
+          method: "registerService",
+          args: [
+            {
+              id: "remote-service",
+              start: { $rpc: "service.start" },
+              stop: { $rpc: "service.stop" },
+            },
+          ],
+        },
+        {
+          type: "api",
+          method: "registerAgentEventSubscription",
+          args: [
+            {
+              id: "remote-events",
+              streams: ["run"],
+              handle: { $rpc: "events.handle" },
+            },
+          ],
+        },
+      ],
+    });
+
+    entry.register?.(api);
+
+    expect(service?.start).toBeTypeOf("function");
+    expect(service?.stop).toBeTypeOf("function");
+    expect(subscription?.handle).toBeTypeOf("function");
+    expect(mocks.spawn).not.toHaveBeenCalled();
+  });
+
+  it("registers process disposal after remote lifecycle cleanup", () => {
+    const lifecycleIds: string[] = [];
+    const registerRuntimeLifecycle: OpenClawPluginApi["registerRuntimeLifecycle"] = (lifecycle) => {
+      lifecycleIds.push(lifecycle.id);
+    };
+    const api = createProcessTestApi({
+      registerRuntimeLifecycle,
+      lifecycle: { registerRuntimeLifecycle } as OpenClawPluginApi["lifecycle"],
+    });
+    const entry = createJsonRpcManifestPluginDefinition({
+      protocolVersion: 1,
+      id: "json-rpc-lifecycle-order-test",
+      name: "JSON RPC Lifecycle Order Test",
+      description: "Lifecycle order test",
+      process: { command: "json-rpc-child" },
+      registrations: [
+        {
+          type: "api",
+          method: "registerRuntimeLifecycle",
+          args: [{ id: "remote-cleanup", cleanup: { $rpc: "lifecycle.cleanup" } }],
+        },
+      ],
+    });
+
+    entry.register?.(api);
+
+    expect(lifecycleIds).toEqual([
+      "remote-cleanup",
+      "json-rpc-lifecycle-order-test.json-rpc-process",
+    ]);
+  });
+
+  it("rejects generic registrations with synchronous or unaudited callback paths", () => {
+    const api = createProcessTestApi();
+    const syncProvider = createJsonRpcManifestPluginDefinition({
+      protocolVersion: 1,
+      id: "json-rpc-sync-provider-test",
+      name: "JSON RPC Sync Provider Test",
+      description: "Sync provider test",
+      process: { command: "json-rpc-child" },
+      registrations: [
+        {
+          type: "api",
+          method: "registerSpeechProvider",
+          args: [{ id: "remote-speech", isConfigured: { $rpc: "speech.isConfigured" } }],
+        },
+      ],
+    });
+    expect(() => syncProvider.register?.(api)).toThrow(
+      "unsupported JSON-RPC plugin registration method: registerSpeechProvider",
+    );
+
+    const wrongPath = createJsonRpcManifestPluginDefinition({
+      protocolVersion: 1,
+      id: "json-rpc-callback-path-test",
+      name: "JSON RPC Callback Path Test",
+      description: "Callback path test",
+      process: { command: "json-rpc-child" },
+      registrations: [
+        {
+          type: "api",
+          method: "registerService",
+          args: [{ id: "remote-service", unexpected: { $rpc: "service.unexpected" } }],
+        },
+      ],
+    });
+    expect(() => wrongPath.register?.(api)).toThrow(
+      "JSON-RPC callback is not supported at registration argument path: 0.unexpected",
+    );
+
+    const wireMarker = createJsonRpcManifestPluginDefinition({
+      protocolVersion: 1,
+      id: "json-rpc-wire-marker-test",
+      name: "JSON RPC Wire Marker Test",
+      description: "Wire marker test",
+      process: { command: "json-rpc-child" },
+      registrations: [
+        {
+          type: "api",
+          method: "registerSessionExtension",
+          args: [{ id: "remote-state", project: { $callback: "smuggled" } }],
+        },
+      ],
+    });
+    expect(() => wireMarker.register?.(api)).toThrow(
+      "JSON-RPC wire marker is not allowed in registration arguments: $callback",
+    );
+  });
+
+  it("rejects unsupported protocol versions and synchronous hooks", () => {
+    const api = createProcessTestApi();
+    const unsupported = createJsonRpcManifestPluginDefinition({
+      protocolVersion: 2 as never,
+      id: "json-rpc-version-test",
+      name: "JSON RPC Version Test",
+      description: "Version test",
+      process: { command: "json-rpc-child" },
+      registrations: [{ type: "tool", name: "version", description: "Version" }],
+    });
+    expect(() => unsupported.register?.(api)).toThrow(
+      "unsupported JSON-RPC plugin protocol version",
+    );
+
+    const syncHook = createJsonRpcManifestPluginDefinition({
+      protocolVersion: 1,
+      id: "json-rpc-sync-hook-test",
+      name: "JSON RPC Sync Hook Test",
+      description: "Sync hook test",
+      process: { command: "json-rpc-child" },
+      registrations: [{ type: "hook", hook: "before_message_write" }],
+    });
+    expect(() => syncHook.register?.(api)).toThrow(
+      "JSON-RPC plugins cannot register synchronous hook",
+    );
   });
 
   it("honors aborts while initialization is pending without canceling shared initialization", async () => {
@@ -161,6 +332,7 @@ describe("createJsonRpcManifestPluginDefinition process management", () => {
       },
     });
     const entry = createJsonRpcManifestPluginDefinition({
+      protocolVersion: 1,
       id: "json-rpc-process-init-abort-test",
       name: "JSON RPC Process Init Abort Test",
       description: "Test initialization abort",
@@ -186,6 +358,50 @@ describe("createJsonRpcManifestPluginDefinition process management", () => {
     const active = tools[0]?.execute("tool-call-active", {});
     child.resolveInitialize();
     await expect(active).resolves.toEqual({ content: [{ type: "text", text: "ok" }] });
+  });
+
+  it("stops a child before buffering an oversized unterminated frame", async () => {
+    mocks.resolveWindowsSpawnProgram.mockReturnValue({
+      command: "json-rpc-child",
+      leadingArgv: [],
+      resolution: "direct",
+      windowsHide: true,
+    });
+    mocks.materializeWindowsSpawnProgram.mockReturnValue({
+      command: "json-rpc-child",
+      argv: [],
+      shell: false,
+      windowsHide: true,
+    });
+    const child = new FakeJsonRpcChild({ deferInitialize: true });
+    mocks.spawn.mockReturnValue(asSpawnedChild(child));
+    const tools: AnyAgentTool[] = [];
+    const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const api = createProcessTestApi({
+      logger,
+      registerTool(tool) {
+        if (typeof tool !== "function") {
+          tools.push(tool);
+        }
+      },
+    });
+    const entry = createJsonRpcManifestPluginDefinition({
+      protocolVersion: 1,
+      id: "json-rpc-frame-limit-test",
+      name: "JSON RPC Frame Limit Test",
+      description: "Frame limit test",
+      process: { command: "json-rpc-child", maxFrameBytes: 16 },
+      registrations: [{ type: "tool", name: "frame_limit", description: "Frame limit" }],
+    });
+
+    entry.register?.(api);
+    const pending = tools[0]?.execute("tool-call", {});
+    child.stdout.write(Buffer.alloc(17, 0x78));
+
+    await expect(pending).rejects.toThrow("JSON-RPC plugin process was disposed");
+    expect(logger.warn).toHaveBeenCalledWith(
+      "JSON-RPC plugin json-rpc-process-test exceeded the frame size limit",
+    );
   });
 
   it("uses process-tree cleanup when stdin shutdown does not stop the child", async () => {
@@ -219,6 +435,7 @@ describe("createJsonRpcManifestPluginDefinition process management", () => {
       },
     });
     const entry = createJsonRpcManifestPluginDefinition({
+      protocolVersion: 1,
       id: "json-rpc-process-cleanup-test",
       name: "JSON RPC Process Cleanup Test",
       description: "Test process-tree cleanup",
@@ -296,13 +513,14 @@ class FakeJsonRpcChild extends EventEmitter {
       }
       const message = JSON.parse(line) as { id: unknown; method: string };
       if (message.method === "openclaw.initialize" && deferInitialize) {
-        this.deferredInitialize = () => this.writeJsonRpcResult(message.id, { ok: true });
+        this.deferredInitialize = () =>
+          this.writeJsonRpcResult(message.id, { ok: true, protocolVersion: 1 });
         continue;
       }
       const result =
         message.method === "openclaw.tool.execute"
           ? { content: [{ type: "text", text: "ok" }] }
-          : { ok: true };
+          : { ok: true, protocolVersion: 1 };
       this.writeJsonRpcResult(message.id, result);
     }
   }

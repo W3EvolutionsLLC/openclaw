@@ -4,7 +4,6 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import type { IncomingMessage } from "node:http";
 import type { ServerResponse } from "node:http";
 import path from "node:path";
-import { createInterface, type Interface as ReadlineInterface } from "node:readline";
 import type { Readable } from "node:stream";
 import type { ErrorShape } from "../../packages/gateway-protocol/src/index.js";
 import type { RespondFn } from "../gateway/server-methods/types.js";
@@ -14,6 +13,11 @@ import {
 } from "../plugin-sdk/windows-spawn.js";
 import { killProcessTree, signalProcessTree } from "../process/kill-tree.js";
 import { isPluginHookName, type PluginHookHandlerMap } from "./hook-types.js";
+import { JsonRpcPeer } from "./json-rpc-peer.js";
+import {
+  JSON_RPC_PLUGIN_PROTOCOL_VERSION,
+  JsonRpcPluginProtocol,
+} from "./json-rpc-plugin-protocol.js";
 import type { PluginManifestJsonRpc, PluginManifestJsonRpcRegistration } from "./manifest.js";
 import type {
   AnyAgentTool,
@@ -42,6 +46,7 @@ export type JsonRpcPluginGatewayMethodRegistration = Extract<
   JsonRpcPluginRegistration,
   { type: "gatewayMethod" }
 >;
+export type JsonRpcPluginApiRegistration = Extract<JsonRpcPluginRegistration, { type: "api" }>;
 
 export type JsonRpcManifestPluginOptions = {
   id: string;
@@ -49,29 +54,16 @@ export type JsonRpcManifestPluginOptions = {
   description: string;
   kind?: OpenClawPluginDefinition["kind"];
   configSchema?: OpenClawPluginConfigSchema;
+  protocolVersion: PluginManifestJsonRpc["protocolVersion"];
   process: JsonRpcPluginProcessOptions;
+  permissions?: PluginManifestJsonRpc["permissions"];
   registrations: readonly JsonRpcPluginRegistration[];
-};
-
-type PendingRequest = {
-  resolve: (value: unknown) => void;
-  reject: (error: Error) => void;
-  timeout: NodeJS.Timeout;
-};
-
-type JsonRpcResponse = {
-  jsonrpc?: "2.0";
-  id?: unknown;
-  result?: unknown;
-  error?: {
-    code?: number | string;
-    message?: string;
-    data?: unknown;
-  };
 };
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const DEFAULT_INITIALIZATION_TIMEOUT_MS = 10_000;
+const DEFAULT_MAX_FRAME_BYTES = 8 * 1024 * 1024;
+const DEFAULT_MAX_PENDING_REQUESTS = 256;
 const DEFAULT_HTTP_BODY_LIMIT_BYTES = 1024 * 1024;
 const PROCESS_CLOSE_TIMEOUT_MS = 2_000;
 const PROCESS_TREE_KILL_GRACE_MS = 500;
@@ -84,6 +76,27 @@ const EMPTY_OBJECT_SCHEMA = {
   type: "object",
   additionalProperties: false,
 } as const satisfies JsonRpcPluginJsonObject;
+const JSON_RPC_API_CALLBACK_PATHS = new Map<keyof OpenClawPluginApi, ReadonlySet<string>>([
+  ["registerAgentEventSubscription", new Set(["0.handle"])],
+  ["registerAgentToolResultMiddleware", new Set(["0"])],
+  ["registerCommand", new Set(["0.handler"])],
+  ["registerCompactionProvider", new Set(["0.summarize"])],
+  ["registerControlUiDescriptor", new Set()],
+  ["registerGatewayDiscoveryService", new Set(["0.advertise"])],
+  ["registerHostedMediaResolver", new Set(["0"])],
+  ["registerInteractiveHandler", new Set(["0.handler"])],
+  ["registerNodeHostCommand", new Set(["0.handle"])],
+  ["registerNodeInvokePolicy", new Set(["0.handle"])],
+  ["registerReload", new Set()],
+  ["registerRuntimeLifecycle", new Set(["0.cleanup"])],
+  ["registerService", new Set(["0.start", "0.stop"])],
+  ["registerSessionAction", new Set(["0.handler"])],
+  ["registerSessionExtension", new Set()],
+  ["registerSessionSchedulerJob", new Set()],
+  ["registerTool", new Set(["0.execute"])],
+  ["registerToolMetadata", new Set()],
+  ["onConversationBindingResolved", new Set(["0"])],
+]);
 
 export function createJsonRpcManifestPluginDefinition(
   options: JsonRpcManifestPluginOptions,
@@ -95,7 +108,19 @@ export function createJsonRpcManifestPluginDefinition(
     ...(options.kind ? { kind: options.kind } : {}),
     ...(options.configSchema ? { configSchema: options.configSchema } : {}),
     register(api) {
-      const client = new JsonRpcPluginClient(api, options.process);
+      if (options.protocolVersion !== JSON_RPC_PLUGIN_PROTOCOL_VERSION) {
+        throw new Error("unsupported JSON-RPC plugin protocol version");
+      }
+      const client = new JsonRpcPluginClient(api, options);
+      const gatewayStopHooks = options.registrations.filter(isGatewayStopHookRegistration);
+      for (const registration of options.registrations) {
+        if (isGatewayStopHookRegistration(registration)) {
+          continue;
+        }
+        registerJsonRpcSurface(api, client, registration);
+      }
+      registerJsonRpcGatewayStopHook(api, client, gatewayStopHooks);
+      // Remote cleanup must run before the transport that carries it is terminated.
       api.lifecycle.registerRuntimeLifecycle({
         id: `${options.id}.json-rpc-process`,
         description: "JSON-RPC child process owned by this plugin",
@@ -105,15 +130,6 @@ export function createJsonRpcManifestPluginDefinition(
           }
         },
       });
-
-      const gatewayStopHooks = options.registrations.filter(isGatewayStopHookRegistration);
-      for (const registration of options.registrations) {
-        if (isGatewayStopHookRegistration(registration)) {
-          continue;
-        }
-        registerJsonRpcSurface(api, client, registration);
-      }
-      registerJsonRpcGatewayStopHook(api, client, gatewayStopHooks);
     },
   };
 }
@@ -135,7 +151,64 @@ function registerJsonRpcSurface(
     registerJsonRpcHttpRoute(api, client, registration);
     return;
   }
-  registerJsonRpcGatewayMethod(api, client, registration);
+  if (registration.type === "gatewayMethod") {
+    registerJsonRpcGatewayMethod(api, client, registration);
+    return;
+  }
+  registerJsonRpcApi(api, client, registration);
+}
+
+function registerJsonRpcApi(
+  api: OpenClawPluginApi,
+  client: JsonRpcPluginClient,
+  registration: JsonRpcPluginApiRegistration,
+): void {
+  const methodName = registration.method as keyof OpenClawPluginApi;
+  const callbackPaths = JSON_RPC_API_CALLBACK_PATHS.get(methodName);
+  if (!callbackPaths) {
+    throw new Error(`unsupported JSON-RPC plugin registration method: ${registration.method}`);
+  }
+  validateJsonRpcCallbackPaths(registration.args, callbackPaths);
+  const method = api[methodName];
+  if (typeof method !== "function") {
+    throw new Error(`unknown JSON-RPC plugin registration method: ${registration.method}`);
+  }
+  Reflect.apply(
+    method,
+    api,
+    registration.args.map((arg) => client.materialize(arg)),
+  );
+}
+
+function validateJsonRpcCallbackPaths(value: unknown, allowed: ReadonlySet<string>): void {
+  const visit = (current: unknown, valuePath: string): void => {
+    if (Array.isArray(current)) {
+      current.forEach((entry, index) =>
+        visit(entry, valuePath ? `${valuePath}.${index}` : String(index)),
+      );
+      return;
+    }
+    if (!isRecord(current)) {
+      return;
+    }
+    for (const marker of ["$callback", "$stream", "$abortSignal", "$bytes"] as const) {
+      if (marker in current) {
+        throw new Error(`JSON-RPC wire marker is not allowed in registration arguments: ${marker}`);
+      }
+    }
+    if (typeof current.$rpc === "string") {
+      if (!allowed.has(valuePath)) {
+        throw new Error(
+          `JSON-RPC callback is not supported at registration argument path: ${valuePath}`,
+        );
+      }
+      return;
+    }
+    for (const [key, entry] of Object.entries(current)) {
+      visit(entry, valuePath ? `${valuePath}.${key}` : key);
+    }
+  };
+  visit(value, "");
 }
 
 function isGatewayStopHookRegistration(
@@ -155,7 +228,7 @@ function registerJsonRpcTool(
     description: registration.description,
     parameters: registration.parameters ?? EMPTY_OBJECT_SCHEMA,
     ...(registration.displaySummary ? { displaySummary: registration.displaySummary } : {}),
-    async execute(toolCallId, params, signal) {
+    async execute(toolCallId, params, signal, onUpdate) {
       return (await client.request(
         registration.method ?? DEFAULT_TOOL_METHOD,
         {
@@ -164,6 +237,7 @@ function registerJsonRpcTool(
           },
           toolCallId,
           params: toJsonRpcValue(params),
+          ...(onUpdate ? { onUpdate } : {}),
         },
         { timeoutMs: registration.timeoutMs, signal },
       )) as Awaited<ReturnType<AnyAgentTool["execute"]>>;
@@ -180,11 +254,19 @@ function registerJsonRpcHook(
   if (!isPluginHookName(registration.hook)) {
     throw new Error(`unknown JSON-RPC plugin hook: ${registration.hook}`);
   }
-  api.on(
+  if (registration.hook === "tool_result_persist" || registration.hook === "before_message_write") {
+    throw new Error(`JSON-RPC plugins cannot register synchronous hook: ${registration.hook}`);
+  }
+  const registerAsyncHook = api.on as (
+    hookName: string,
+    handler: (event: unknown, context: unknown) => Promise<unknown>,
+    options?: { priority?: number; timeoutMs?: number },
+  ) => void;
+  registerAsyncHook(
     registration.hook,
-    (async (event: unknown, context: unknown) => {
+    async (event: unknown, context: unknown) => {
       return await dispatchJsonRpcHook(client, registration, event, context);
-    }) as Parameters<OpenClawPluginApi["on"]>[1],
+    },
     registration.options,
   );
 }
@@ -309,16 +391,27 @@ function registerJsonRpcGatewayMethod(
 
 class JsonRpcPluginClient {
   private child: ChildProcessWithoutNullStreams | undefined;
-  private lines: ReadlineInterface | undefined;
-  private nextId = 1;
-  private pending = new Map<number, PendingRequest>();
+  private stdoutBuffer = Buffer.alloc(0);
+  private peer: JsonRpcPeer | undefined;
+  private protocol: JsonRpcPluginProtocol;
   private initializing: Promise<unknown> | undefined;
   private disposed = false;
 
   constructor(
     private readonly api: OpenClawPluginApi,
-    private readonly options: JsonRpcPluginProcessOptions,
-  ) {}
+    private readonly manifestOptions: JsonRpcManifestPluginOptions,
+  ) {
+    this.protocol = new JsonRpcPluginProtocol(
+      api,
+      new Set(manifestOptions.permissions?.host ?? []),
+      () => this.requirePeer(),
+      (method, params, options) => this.request(method, params, options),
+    );
+  }
+
+  materialize(value: unknown): unknown {
+    return this.protocol.materialize(value);
+  }
 
   async request(
     method: string,
@@ -327,7 +420,9 @@ class JsonRpcPluginClient {
   ): Promise<unknown> {
     rejectIfAborted(options.signal);
     await waitForAbortable(this.ensureInitialized(), options.signal);
-    return this.requestRaw(method, params, options);
+    return this.protocol.materialize(
+      await this.requirePeer().request(method, this.protocol.serialize(params), options),
+    );
   }
 
   async dispose(): Promise<void> {
@@ -336,13 +431,10 @@ class JsonRpcPluginClient {
   }
 
   async stop(): Promise<void> {
-    this.lines?.close();
-    this.lines = undefined;
-    for (const [, pending] of this.pending) {
-      clearTimeout(pending.timeout);
-      pending.reject(new Error("JSON-RPC plugin process was disposed"));
-    }
-    this.pending.clear();
+    this.peer?.close(new Error("JSON-RPC plugin process was disposed"));
+    this.peer = undefined;
+    this.protocol.dispose(new Error("JSON-RPC plugin process was disposed"));
+    this.stdoutBuffer = Buffer.alloc(0);
     const child = this.child;
     this.child = undefined;
     this.initializing = undefined;
@@ -365,17 +457,32 @@ class JsonRpcPluginClient {
             registrationMode: this.api.registrationMode,
           },
           pluginConfig: toJsonRpcValue(this.api.pluginConfig ?? {}),
+          protocol: {
+            version: this.manifestOptions.protocolVersion,
+            hostCapabilities: [...(this.manifestOptions.permissions?.host ?? [])],
+            features: ["bidirectional", "callbacks", "cancellation", "streams", "subscriptions"],
+          },
         },
         {
-          timeoutMs: this.options.initializationTimeoutMs ?? DEFAULT_INITIALIZATION_TIMEOUT_MS,
+          timeoutMs:
+            this.manifestOptions.process.initializationTimeoutMs ??
+            DEFAULT_INITIALIZATION_TIMEOUT_MS,
         },
-      ).catch(async (error: unknown) => {
-        if (this.initializing === initialization) {
-          this.initializing = undefined;
-        }
-        await this.stop();
-        throw error;
-      });
+      )
+        .then((result) => {
+          if (!isRecord(result) || result.protocolVersion !== JSON_RPC_PLUGIN_PROTOCOL_VERSION) {
+            throw new Error(
+              "JSON-RPC plugin initialization did not acknowledge protocol version 1",
+            );
+          }
+        })
+        .catch(async (error: unknown) => {
+          if (this.initializing === initialization) {
+            this.initializing = undefined;
+          }
+          await this.stop();
+          throw error;
+        });
       this.initializing = initialization;
     }
     await this.initializing;
@@ -389,18 +496,20 @@ class JsonRpcPluginClient {
       return;
     }
     const env =
-      this.options.inheritEnv === false
-        ? { ...this.options.env }
-        : {
+      this.manifestOptions.process.inheritEnv === true
+        ? {
             ...process.env,
-            ...this.options.env,
-          };
+            ...this.manifestOptions.process.env,
+          }
+        : { ...this.manifestOptions.process.env };
     const spawnInvocation = resolveJsonRpcSpawnInvocation({
-      command: resolveJsonRpcProcessCommand(this.api, this.options.command),
-      args: [...(this.options.args ?? [])],
+      command: resolveJsonRpcProcessCommand(this.api, this.manifestOptions.process.command),
+      args: [...(this.manifestOptions.process.args ?? [])],
       env,
     });
-    const cwd = this.options.cwd ? this.api.resolvePath(this.options.cwd) : this.api.rootDir;
+    const cwd = this.manifestOptions.process.cwd
+      ? this.api.resolvePath(this.manifestOptions.process.cwd)
+      : this.api.rootDir;
     const child = spawn(spawnInvocation.command, spawnInvocation.argv, {
       cwd,
       detached: process.platform !== "win32",
@@ -410,11 +519,19 @@ class JsonRpcPluginClient {
       windowsHide: spawnInvocation.windowsHide,
     });
     this.child = child;
-    this.lines = createInterface({ input: child.stdout });
-    this.lines.on("line", (line) => this.handleLine(line));
+    this.peer = new JsonRpcPeer({
+      write: child.stdin,
+      requestTimeoutMs: this.manifestOptions.process.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
+      maxPendingRequests:
+        this.manifestOptions.process.maxPendingRequests ?? DEFAULT_MAX_PENDING_REQUESTS,
+      requestHandlers: this.protocol.requestHandlers,
+      notificationHandlers: this.protocol.notificationHandlers,
+      onProtocolError: (message) => this.api.logger.warn(`[${this.api.id}] ${message}`),
+    });
+    child.stdout.on("data", (chunk: Buffer | string) => this.handleStdoutChunk(chunk));
     child.once("error", (error) => {
       if (this.child === child) {
-        this.failAll(error);
+        this.peer?.close(error);
       }
     });
     child.once("close", (code, signal) => {
@@ -422,15 +539,16 @@ class JsonRpcPluginClient {
         return;
       }
       const label = signal ? `signal ${signal}` : `exit code ${code ?? "unknown"}`;
-      this.failAll(new Error(`JSON-RPC plugin process closed with ${label}`));
+      this.peer?.close(new Error(`JSON-RPC plugin process closed with ${label}`));
+      this.protocol.dispose(new Error(`JSON-RPC plugin process closed with ${label}`));
       this.child = undefined;
-      this.lines?.close();
-      this.lines = undefined;
+      this.peer = undefined;
+      this.stdoutBuffer = Buffer.alloc(0);
       this.initializing = undefined;
     });
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk) => {
-      if (this.options.logStderr === false) {
+      if (this.manifestOptions.process.logStderr === false) {
         return;
       }
       const message = String(chunk).trim();
@@ -445,85 +563,61 @@ class JsonRpcPluginClient {
     params: unknown,
     options: { timeoutMs?: number; signal?: AbortSignal } = {},
   ): Promise<unknown> {
-    rejectIfAborted(options.signal);
     this.ensureStarted();
-    const child = this.child;
-    if (!child) {
-      return Promise.reject(new Error("JSON-RPC plugin process is not running"));
-    }
-    const id = this.nextId++;
-    const timeoutMs = options.timeoutMs ?? this.options.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        this.pending.delete(id);
-        reject(new Error(`JSON-RPC plugin request timed out: ${method}`));
-      }, timeoutMs);
-      const abort = () => {
-        clearTimeout(timeout);
-        this.pending.delete(id);
-        reject(new Error(`JSON-RPC plugin request aborted: ${method}`));
-      };
-      options.signal?.addEventListener("abort", abort, { once: true });
-      this.pending.set(id, {
-        resolve: (value) => {
-          options.signal?.removeEventListener("abort", abort);
-          resolve(value);
-        },
-        reject: (error) => {
-          options.signal?.removeEventListener("abort", abort);
-          reject(error);
-        },
-        timeout,
-      });
-      child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`, (error) => {
-        if (!error) {
-          return;
-        }
-        const pending = this.pending.get(id);
-        if (!pending) {
-          return;
-        }
-        clearTimeout(pending.timeout);
-        this.pending.delete(id);
-        pending.reject(error);
-      });
-    });
+    return this.requirePeer().request(method, this.protocol.serialize(params), options);
   }
 
-  private handleLine(line: string): void {
-    const trimmed = line.trim();
+  private handleStdoutChunk(chunk: Buffer | string): void {
+    let remaining = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
+    const maxFrameBytes = this.manifestOptions.process.maxFrameBytes ?? DEFAULT_MAX_FRAME_BYTES;
+    while (true) {
+      const newlineIndex = remaining.indexOf(0x0a);
+      if (newlineIndex === -1) {
+        if (this.stdoutBuffer.length + remaining.length > maxFrameBytes) {
+          this.rejectOversizedFrame();
+          return;
+        }
+        this.stdoutBuffer = Buffer.concat([this.stdoutBuffer, remaining]);
+        return;
+      }
+      const frameTail = remaining.subarray(0, newlineIndex);
+      if (this.stdoutBuffer.length + frameTail.length > maxFrameBytes) {
+        this.rejectOversizedFrame();
+        return;
+      }
+      const frame = Buffer.concat([this.stdoutBuffer, frameTail]);
+      this.stdoutBuffer = Buffer.alloc(0);
+      this.handleFrame(frame);
+      remaining = remaining.subarray(newlineIndex + 1);
+    }
+  }
+
+  private rejectOversizedFrame(): void {
+    this.stdoutBuffer = Buffer.alloc(0);
+    this.api.logger.warn(`JSON-RPC plugin ${this.api.id} exceeded the frame size limit`);
+    void this.stop();
+  }
+
+  private handleFrame(frame: Buffer): void {
+    const trimmed = frame.toString("utf8").trim();
     if (!trimmed) {
       return;
     }
-    let response: JsonRpcResponse;
+    let message: unknown;
     try {
-      response = JSON.parse(trimmed) as JsonRpcResponse;
+      message = JSON.parse(trimmed) as unknown;
     } catch {
-      this.api.logger.warn(`Ignoring invalid JSON-RPC response from plugin ${this.api.id}`);
+      this.api.logger.warn(`Ignoring invalid JSON-RPC message from plugin ${this.api.id}`);
       return;
     }
-    if (typeof response.id !== "number") {
-      return;
-    }
-    const pending = this.pending.get(response.id);
-    if (!pending) {
-      return;
-    }
-    clearTimeout(pending.timeout);
-    this.pending.delete(response.id);
-    if (response.error) {
-      pending.reject(new Error(response.error.message ?? "JSON-RPC plugin request failed"));
-      return;
-    }
-    pending.resolve(response.result);
+    this.peer?.handle(message);
   }
 
-  private failAll(error: Error): void {
-    for (const [, pending] of this.pending) {
-      clearTimeout(pending.timeout);
-      pending.reject(error);
+  private requirePeer(): JsonRpcPeer {
+    if (!this.peer) {
+      throw new Error("JSON-RPC plugin process is not running");
     }
-    this.pending.clear();
+    return this.peer;
   }
 }
 

@@ -3,7 +3,7 @@ import type { IncomingMessage } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Readable, Writable } from "node:stream";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createTestPluginApi } from "../plugin-sdk/plugin-test-api.js";
 import { createJsonRpcManifestPluginDefinition } from "./json-rpc-manifest-runtime.js";
 import type { AnyAgentTool, OpenClawPluginApi } from "./types.js";
@@ -78,6 +78,7 @@ describe("createJsonRpcManifestPluginDefinition", () => {
     });
 
     const entry = createJsonRpcManifestPluginDefinition({
+      protocolVersion: 1,
       id: "json-rpc-test",
       name: "JSON RPC Test",
       description: "Test plugin",
@@ -223,6 +224,7 @@ describe("createJsonRpcManifestPluginDefinition", () => {
     });
 
     const entry = createJsonRpcManifestPluginDefinition({
+      protocolVersion: 1,
       id: "json-rpc-env-test",
       name: "JSON RPC Env Test",
       description: "Test plugin env isolation",
@@ -246,6 +248,63 @@ describe("createJsonRpcManifestPluginDefinition", () => {
 
     await expect(tools[0]?.execute("tool-call-env", {})).resolves.toEqual({
       content: [{ type: "text", text: "missing" }],
+    });
+  });
+
+  it("registers generic API descriptors and permits declared child-to-host calls", async () => {
+    const rootDir = mkdtempSync(path.join(tmpdir(), "openclaw-json-rpc-plugin-api-"));
+    tempDirs.push(rootDir);
+    const childPath = path.join(rootDir, "child.mjs");
+    writeFileSync(childPath, BIDIRECTIONAL_RUNTIME, "utf8");
+    let command: Parameters<OpenClawPluginApi["registerCommand"]>[0] | undefined;
+    const requestHeartbeat = vi.fn(() => ({ requested: true }));
+    const api = createTestPluginApi({
+      id: "json-rpc-api-test",
+      name: "JSON RPC API Test",
+      source: path.join(rootDir, "index.ts"),
+      rootDir,
+      runtime: {
+        system: { requestHeartbeat },
+      } as never,
+      registerCommand(registration) {
+        command = registration;
+      },
+      registerRuntimeLifecycle(lifecycle) {
+        if (lifecycle.cleanup) {
+          runtimeCleanups.push(lifecycle.cleanup);
+        }
+      },
+    });
+    const entry = createJsonRpcManifestPluginDefinition({
+      protocolVersion: 1,
+      id: "json-rpc-api-test",
+      name: "JSON RPC API Test",
+      description: "Generic API registration test",
+      process: { command: process.execPath, args: [childPath], cwd: rootDir },
+      permissions: { host: ["runtime.system.requestHeartbeat"] },
+      registrations: [
+        {
+          type: "api",
+          method: "registerCommand",
+          args: [
+            {
+              name: "rpc-command",
+              description: "RPC command",
+              handler: { $rpc: "plugin.command.handle" },
+            },
+          ],
+        },
+      ],
+    });
+
+    entry.register?.(api);
+    await expect(command?.handler({ args: "hello" } as never)).resolves.toEqual({
+      text: "heartbeat:hello:true",
+    });
+    expect(requestHeartbeat).toHaveBeenCalledWith({
+      source: "other",
+      intent: "event",
+      reason: "rpc-command",
     });
   });
 
@@ -278,6 +337,7 @@ describe("createJsonRpcManifestPluginDefinition", () => {
     });
 
     const entry = createJsonRpcManifestPluginDefinition({
+      protocolVersion: 1,
       id: "json-rpc-dispose-test",
       name: "JSON RPC Dispose Test",
       description: "Test plugin-wide cleanup",
@@ -333,6 +393,7 @@ describe("createJsonRpcManifestPluginDefinition", () => {
     });
 
     const entry = createJsonRpcManifestPluginDefinition({
+      protocolVersion: 1,
       id: "json-rpc-retry-test",
       name: "JSON RPC Retry Test",
       description: "Test plugin initialization retry",
@@ -384,6 +445,7 @@ describe("createJsonRpcManifestPluginDefinition", () => {
     });
 
     const entry = createJsonRpcManifestPluginDefinition({
+      protocolVersion: 1,
       id: "json-rpc-abort-test",
       name: "JSON RPC Abort Test",
       description: "Test plugin initialization abort isolation",
@@ -476,7 +538,7 @@ function handle(method, params) {
   if (method === "openclaw.initialize") {
     initializeCount += 1;
     greeting = params.pluginConfig.greeting;
-    return { ok: true };
+    return { ok: true, protocolVersion: 1 };
   }
   if (method === "openclaw.tool.execute") {
     toolCallCount += 1;
@@ -511,6 +573,46 @@ function handle(method, params) {
 }
 `;
 
+const BIDIRECTIONAL_RUNTIME = `
+import readline from "node:readline";
+
+let nextId = 1;
+const pending = new Map();
+const rl = readline.createInterface({ input: process.stdin });
+rl.on("line", async (line) => {
+  const message = JSON.parse(line);
+  if (message.method === "openclaw.initialize") {
+    respond(message.id, { ok: true, protocolVersion: 1 });
+    return;
+  }
+  if (message.method === "plugin.command.handle") {
+    const hostResult = await request("openclaw.host.call", {
+      method: "runtime.system.requestHeartbeat",
+      args: [{ source: "other", intent: "event", reason: "rpc-command" }],
+    });
+    respond(message.id, {
+      text: "heartbeat:" + message.params.args[0].args + ":" + hostResult.requested,
+    });
+    return;
+  }
+  if (message.id !== undefined && pending.has(message.id)) {
+    const resolve = pending.get(message.id);
+    pending.delete(message.id);
+    resolve(message.result);
+  }
+});
+
+function request(method, params) {
+  const id = "child-" + nextId++;
+  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\\n");
+  return new Promise((resolve) => pending.set(id, resolve));
+}
+
+function respond(id, result) {
+  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, result }) + "\\n");
+}
+`;
+
 const ENV_RUNTIME = `
 import readline from "node:readline";
 
@@ -525,9 +627,9 @@ rl.on("line", (line) => {
   process.stdout.write(JSON.stringify({
     jsonrpc: "2.0",
     id: message.id,
-    result: message.method === "openclaw.tool.execute"
-      ? { content: [{ type: "text", text }] }
-      : { ok: true },
+    result: message.method === "openclaw.initialize"
+      ? { ok: true, protocolVersion: 1 }
+      : { content: [{ type: "text", text }] },
   }) + "\\n");
 });
 `;
@@ -552,7 +654,7 @@ rl.on("line", (line) => {
       return;
     }
     initializeCount += 1;
-    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { ok: true } }) + "\\n");
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { ok: true, protocolVersion: 1 } }) + "\\n");
     return;
   }
   process.stdout.write(JSON.stringify({
@@ -571,7 +673,7 @@ rl.on("line", (line) => {
   const message = JSON.parse(line);
   if (message.method === "openclaw.initialize") {
     setTimeout(() => {
-      process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { ok: true } }) + "\\n");
+      process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { ok: true, protocolVersion: 1 } }) + "\\n");
     }, 25);
     return;
   }

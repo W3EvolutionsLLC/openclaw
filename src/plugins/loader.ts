@@ -2454,7 +2454,9 @@ export function loadOpenClawPlugins(options: PluginLoadOptions = {}): PluginRegi
           description: record.description ?? "",
           kind: record.kind,
           configSchema: { jsonSchema: manifestRecord.configSchema },
+          protocolVersion: manifestRecord.jsonRpc.protocolVersion,
           process: manifestRecord.jsonRpc.process,
+          permissions: manifestRecord.jsonRpc.permissions,
           registrations: manifestRecord.jsonRpc.registrations,
         });
       } else {
@@ -3243,7 +3245,9 @@ export async function loadOpenClawPluginCliRegistry(
         description: record.description ?? "",
         kind: record.kind,
         configSchema: { jsonSchema: manifestRecord.configSchema },
+        protocolVersion: manifestRecord.jsonRpc.protocolVersion,
         process: manifestRecord.jsonRpc.process,
+        permissions: manifestRecord.jsonRpc.permissions,
         registrations: manifestRecord.jsonRpc.registrations,
       });
     } else {

@@ -38,6 +38,14 @@ const MAX_SECRET_PROVIDER_EXEC_ARG_BYTES = 1024;
 const MAX_SECRET_PROVIDER_EXEC_TIMEOUT_MS = 120_000;
 const MAX_SECRET_PROVIDER_EXEC_OUTPUT_BYTES = 20 * 1024 * 1024;
 const MAX_SECRET_PROVIDER_EXEC_PASS_ENV = 128;
+const MAX_JSON_RPC_VALUE_DEPTH = 32;
+const MAX_JSON_RPC_ARRAY_ITEMS = 4096;
+const MAX_JSON_RPC_OBJECT_KEYS = 4096;
+const MAX_JSON_RPC_FRAME_BYTES = 64 * 1024 * 1024;
+const MAX_JSON_RPC_PENDING_REQUESTS = 4096;
+const MAX_JSON_RPC_TIMEOUT_MS = 10 * 60 * 1000;
+const JSON_RPC_HOST_CAPABILITY_RE =
+  /^(?:runtime|session|agent|runContext)(?:\.[A-Za-z][A-Za-z0-9_]*)+$/u;
 const SECRET_PROVIDER_NODE_COMMAND_PLACEHOLDER = "${node}";
 
 type PluginManifestLoadCacheEntry = {
@@ -317,7 +325,13 @@ export type PluginManifestJsonRpcProcess = {
   inheritEnv?: boolean;
   timeoutMs?: number;
   initializationTimeoutMs?: number;
+  maxFrameBytes?: number;
+  maxPendingRequests?: number;
   logStderr?: boolean;
+};
+
+export type PluginManifestJsonRpcPermissions = {
+  host?: string[];
 };
 
 export type PluginManifestJsonRpcRegistration =
@@ -359,10 +373,17 @@ export type PluginManifestJsonRpcRegistration =
       scope?: OperatorScope;
       rpcMethod?: string;
       timeoutMs?: number;
+    }
+  | {
+      type: "api";
+      method: string;
+      args: PluginManifestJsonRpcJsonValue[];
     };
 
 export type PluginManifestJsonRpc = {
+  protocolVersion: 1;
   process: PluginManifestJsonRpcProcess;
+  permissions?: PluginManifestJsonRpcPermissions;
   registrations: PluginManifestJsonRpcRegistration[];
 };
 
@@ -665,8 +686,56 @@ function normalizeOptionalNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
+function normalizePositiveInteger(value: unknown, maximum: number): number | undefined {
+  return Number.isSafeInteger(value) && Number(value) > 0 && Number(value) <= maximum
+    ? Number(value)
+    : undefined;
+}
+
 function normalizeJsonRpcJsonObject(value: unknown): PluginManifestJsonRpcJsonObject | undefined {
-  return isRecord(value) ? (value as PluginManifestJsonRpcJsonObject) : undefined;
+  const normalized = normalizeJsonRpcJsonValue(value);
+  return isRecord(normalized) ? (normalized as PluginManifestJsonRpcJsonObject) : undefined;
+}
+
+function normalizeJsonRpcJsonValue(
+  value: unknown,
+  depth = 0,
+): PluginManifestJsonRpcJsonValue | undefined {
+  if (depth > MAX_JSON_RPC_VALUE_DEPTH) {
+    return undefined;
+  }
+  if (value === null || typeof value === "string" || typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : undefined;
+  }
+  if (Array.isArray(value)) {
+    if (value.length > MAX_JSON_RPC_ARRAY_ITEMS) {
+      return undefined;
+    }
+    const items = value.map((entry) => normalizeJsonRpcJsonValue(entry, depth + 1));
+    return items.every((entry) => entry !== undefined) ? items : undefined;
+  }
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const entries = Object.entries(value);
+  if (entries.length > MAX_JSON_RPC_OBJECT_KEYS) {
+    return undefined;
+  }
+  const normalized: Record<string, PluginManifestJsonRpcJsonValue> = Object.create(null);
+  for (const [key, entry] of entries) {
+    if (isBlockedObjectKey(key)) {
+      return undefined;
+    }
+    const normalizedEntry = normalizeJsonRpcJsonValue(entry, depth + 1);
+    if (normalizedEntry === undefined) {
+      return undefined;
+    }
+    normalized[key] = normalizedEntry;
+  }
+  return normalized;
 }
 
 function normalizeJsonRpcProcess(value: unknown): PluginManifestJsonRpcProcess | undefined {
@@ -680,8 +749,16 @@ function normalizeJsonRpcProcess(value: unknown): PluginManifestJsonRpcProcess |
   const args = normalizeTrimmedStringList(value.args);
   const cwd = normalizeOptionalString(value.cwd);
   const env = normalizeStringEnvRecord(value.env);
-  const timeoutMs = normalizeOptionalNumber(value.timeoutMs);
-  const initializationTimeoutMs = normalizeOptionalNumber(value.initializationTimeoutMs);
+  const timeoutMs = normalizePositiveInteger(value.timeoutMs, MAX_JSON_RPC_TIMEOUT_MS);
+  const initializationTimeoutMs = normalizePositiveInteger(
+    value.initializationTimeoutMs,
+    MAX_JSON_RPC_TIMEOUT_MS,
+  );
+  const maxFrameBytes = normalizePositiveInteger(value.maxFrameBytes, MAX_JSON_RPC_FRAME_BYTES);
+  const maxPendingRequests = normalizePositiveInteger(
+    value.maxPendingRequests,
+    MAX_JSON_RPC_PENDING_REQUESTS,
+  );
   return {
     command,
     ...(args.length > 0 ? { args } : {}),
@@ -690,8 +767,20 @@ function normalizeJsonRpcProcess(value: unknown): PluginManifestJsonRpcProcess |
     ...(typeof value.inheritEnv === "boolean" ? { inheritEnv: value.inheritEnv } : {}),
     ...(timeoutMs !== undefined ? { timeoutMs } : {}),
     ...(initializationTimeoutMs !== undefined ? { initializationTimeoutMs } : {}),
+    ...(maxFrameBytes !== undefined ? { maxFrameBytes } : {}),
+    ...(maxPendingRequests !== undefined ? { maxPendingRequests } : {}),
     ...(typeof value.logStderr === "boolean" ? { logStderr: value.logStderr } : {}),
   };
+}
+
+function normalizeJsonRpcPermissions(value: unknown): PluginManifestJsonRpcPermissions | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const host = normalizeTrimmedStringList(value.host).filter((entry) =>
+    JSON_RPC_HOST_CAPABILITY_RE.test(entry),
+  );
+  return host.length > 0 ? { host } : undefined;
 }
 
 function normalizeJsonRpcRegistration(
@@ -803,6 +892,21 @@ function normalizeJsonRpcRegistration(
       ...(timeoutMs !== undefined ? { timeoutMs } : {}),
     };
   }
+  if (value.type === "api") {
+    const method = normalizeOptionalString(value.method);
+    if (!method || !Array.isArray(value.args)) {
+      return undefined;
+    }
+    const args = value.args.map((entry) => normalizeJsonRpcJsonValue(entry));
+    if (args.some((entry) => entry === undefined)) {
+      return undefined;
+    }
+    return {
+      type: "api",
+      method,
+      args: args as PluginManifestJsonRpcJsonValue[],
+    };
+  }
   return undefined;
 }
 
@@ -814,6 +918,11 @@ function normalizeJsonRpcManifest(value: unknown): PluginManifestJsonRpc | undef
   if (!process || !Array.isArray(value.registrations)) {
     return undefined;
   }
+  const protocolVersion = value.protocolVersion === 1 ? 1 : undefined;
+  if (protocolVersion === undefined) {
+    return undefined;
+  }
+  const permissions = normalizeJsonRpcPermissions(value.permissions);
   const registrations = value.registrations
     .map(normalizeJsonRpcRegistration)
     .filter((registration): registration is PluginManifestJsonRpcRegistration =>
@@ -822,7 +931,12 @@ function normalizeJsonRpcManifest(value: unknown): PluginManifestJsonRpc | undef
   if (registrations.length === 0) {
     return undefined;
   }
-  return { process, registrations };
+  return {
+    protocolVersion,
+    process,
+    ...(permissions ? { permissions } : {}),
+    registrations,
+  };
 }
 
 const MEDIA_UNDERSTANDING_CAPABILITIES = new Set(["image", "audio", "video"]);
