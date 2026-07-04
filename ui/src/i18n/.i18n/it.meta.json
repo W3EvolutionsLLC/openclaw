@@ -1,11 +1,26 @@
 {
-  "fallbackKeys": [],
-  "generatedAt": "2026-07-04T01:02:41.550Z",
+  "fallbackKeys": [
+    "terminal.closeSession",
+    "terminal.dockBottom",
+    "terminal.dockRight",
+    "terminal.exited",
+    "terminal.exitedCode",
+    "terminal.hide",
+    "terminal.newSession",
+    "terminal.open",
+    "terminal.resize",
+    "terminal.starting",
+    "terminal.tabHint",
+    "terminal.tabLabel",
+    "terminal.title",
+    "terminal.toggle"
+  ],
+  "generatedAt": "2026-07-04T04:07:10.467Z",
   "locale": "it",
   "model": "claude-opus-4-8",
   "provider": "anthropic",
-  "sourceHash": "f457ef4a415e1348150b8bb0850858d69fb802331e8ce40ea905872b06f33f35",
-  "totalKeys": 1422,
+  "sourceHash": "af60f9c20d75d2252aa54ac477cc1c858489c854256521209b3c079d56af3bc4",
+  "totalKeys": 1436,
   "translatedKeys": 1422,
   "workflow": 1
 }
