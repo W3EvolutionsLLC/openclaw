@@ -13,9 +13,9 @@ models as **bounded text workers** for tasks where the input and output are plai
 text or JSON: drafting, summarizing, rewriting, extracting labels, or proposing
 small edits for the orchestrator to review.
 
-This pattern keeps tool execution with the model that is most reliable at
-planning and tool calling, while still using local capacity for private,
-repeatable text work.
+This pattern keeps tool execution with the hosted orchestrator that is most
+reliable at planning and tool calling, while still using local capacity for
+private, repeatable text work.
 
 ## Use this pattern when
 
