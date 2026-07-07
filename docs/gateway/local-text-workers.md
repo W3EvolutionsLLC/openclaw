@@ -159,8 +159,10 @@ Set a cheaper or local model for sub-agents and keep the task prompt explicit:
 
 If the local worker should stay text-only, either prefer `llm-task`, or narrow
 the sub-agent tool surface with `tools.subagents.tools.allow` so the worker
-cannot reach side-effecting tools. The parent orchestrator should still verify
-the result before applying it.
+cannot reach side-effecting tools. That allowlist is a final filter, so choose
+an agent tool profile that already includes the harmless tools the worker needs
+before narrowing it. The parent orchestrator should still verify the result
+before applying it.
 
 ### CLI backends as text fallback
 
