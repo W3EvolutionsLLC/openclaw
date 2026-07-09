@@ -360,7 +360,11 @@ export async function appendConfiguredProviderRows(params: {
     params.context.cfg.models?.providers ?? {},
   )) {
     for (const configuredModel of providerConfig.models ?? []) {
-      if (!shouldListConfiguredProviderModel({ providerConfig, model: configuredModel })) {
+      // Replace-mode rows are canonical even when runtime infers their transport.
+      if (
+        params.context.cfg.models?.mode !== "replace" &&
+        !shouldListConfiguredProviderModel({ providerConfig, model: configuredModel })
+      ) {
         continue;
       }
       const key = modelKey(provider, configuredModel.id);
@@ -388,6 +392,10 @@ export async function appendAuthenticatedCatalogRows(params: {
   context: RowBuilderContext;
   seenKeys: Set<string>;
 }): Promise<void> {
+  // Replace narrows default configured lists; explicit browse paths skip this helper.
+  if (params.context.cfg.models?.mode === "replace") {
+    return;
+  }
   const { loadModelCatalog } = await loadModelCatalogModule();
   const catalog = await loadModelCatalog({
     config: params.context.cfg,
