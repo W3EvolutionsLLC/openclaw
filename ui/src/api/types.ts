@@ -727,6 +727,7 @@ type CronJobState = {
   streamError?: string;
   streamConsecutiveFailures?: number;
   streamRestartExhausted?: boolean;
+  streamSourceIdentity?: string;
   streamDroppedBatches?: number;
   streamCoalescedBatches?: number;
   streamLastStartedAtMs?: number;
