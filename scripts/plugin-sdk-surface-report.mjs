@@ -150,7 +150,8 @@ export function readPluginSdkSurfaceBudgets(env = process.env) {
       // +18: generic schema primitives needed by plugin-owned channel config schemas.
       // +2: shared Teams reply-style and TTS schema leaves.
       // +2: generic inbound-root and SCP-host schema validators.
-      4700,
+      // +3: approval markdown downgrade, default text mode, and text-mode type.
+      4703,
       env,
     ),
     publicFunctionExports: readPluginSdkSurfaceBudgetEnv(
@@ -162,7 +163,8 @@ export function readPluginSdkSurfaceBudgets(env = process.env) {
       // +4: generic channel schema shape builders.
       // +1: plugin-owned sensitive-schema registration.
       // +2: generic inbound-root and SCP-host schema validators.
-      2849,
+      // +1: approval markdown downgrade helper.
+      2850,
       env,
     ),
     publicDeprecatedExports: readPluginSdkSurfaceBudgetEnv(
