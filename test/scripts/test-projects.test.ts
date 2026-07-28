@@ -3127,6 +3127,7 @@ describe("scripts/test-projects changed-target routing", () => {
         [
           "test/vitest/vitest.agents-core.config.ts",
           "test/vitest/vitest.agents-embedded-agent.config.ts",
+          "test/vitest/vitest.agents-embedded-agent-incomplete-turn.config.ts",
           "test/vitest/vitest.agents-embedded-agent-run.config.ts",
           "test/vitest/vitest.agents-support.config.ts",
           "test/vitest/vitest.agents-tools.config.ts",
@@ -4216,6 +4217,7 @@ describe("scripts/test-projects changed-target routing", () => {
   it.each([
     "test/vitest/vitest.agents-core.config.ts",
     "test/vitest/vitest.agents-embedded-agent.config.ts",
+    "test/vitest/vitest.agents-embedded-agent-incomplete-turn.config.ts",
     "test/vitest/vitest.agents-embedded-agent-run.config.ts",
     "test/vitest/vitest.agents-support.config.ts",
     "test/vitest/vitest.agents-tools.config.ts",
@@ -4814,6 +4816,7 @@ describe("scripts/test-projects full-suite sharding", () => {
       "test/vitest/vitest.agents-core-isolated.config.ts",
       ...agentsCorePlans.map(() => agentsCoreConfig),
       "test/vitest/vitest.agents-embedded-agent.config.ts",
+      "test/vitest/vitest.agents-embedded-agent-incomplete-turn.config.ts",
       "test/vitest/vitest.agents-embedded-agent-run.config.ts",
       "test/vitest/vitest.agents-support.config.ts",
       "test/vitest/vitest.agents-tools.config.ts",
@@ -4934,6 +4937,7 @@ describe("scripts/test-projects full-suite sharding", () => {
     const args = [
       "test/vitest/vitest.agents-core.config.ts",
       "test/vitest/vitest.agents-embedded-agent.config.ts",
+      "test/vitest/vitest.agents-embedded-agent-incomplete-turn.config.ts",
       "test/vitest/vitest.agents-embedded-agent-run.config.ts",
       "test/vitest/vitest.agents-support.config.ts",
       "test/vitest/vitest.agents-tools.config.ts",

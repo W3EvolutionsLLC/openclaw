@@ -12,6 +12,7 @@ import {
 import { expectNoNodeFsScans } from "../../src/test-utils/fs-scan-assertions.js";
 import { listGitTrackedFiles, sortRepoPaths, toRepoPath } from "../../src/test-utils/repo-files.js";
 import {
+  agentsEmbeddedIncompleteTurnTestFiles,
   agentsEmbeddedRunTestPatterns,
   agentsEmbeddedTestPatterns,
 } from "../vitest/vitest.agents-paths.mjs";
@@ -1009,6 +1010,7 @@ describe("scripts/lib/ci-node-test-plan.mjs", () => {
         checkName: "checks-node-agentic-agents-embedded",
         configs: [
           "test/vitest/vitest.agents-embedded-agent.config.ts",
+          "test/vitest/vitest.agents-embedded-agent-incomplete-turn.config.ts",
           "test/vitest/vitest.agents-embedded-agent-run.config.ts",
         ],
         env: { OPENCLAW_VITEST_NO_OUTPUT_TIMEOUT_MS: "420000" },
@@ -1100,19 +1102,23 @@ describe("scripts/lib/ci-node-test-plan.mjs", () => {
     expect(new Set(actual).size).toBe(actual.length);
   });
 
-  it("keeps embedded-agent tests in two bounded config surfaces", () => {
+  it("keeps embedded-agent tests in three bounded config surfaces", () => {
     const shard = createNodeTestShards().find(
       (candidate) => candidate.shardName === "agentic-agents-embedded",
     );
-    const actual = fg
-      .sync([...agentsEmbeddedTestPatterns, ...agentsEmbeddedRunTestPatterns])
-      .toSorted((left, right) => left.localeCompare(right));
+    const incompleteTurnFiles = new Set(agentsEmbeddedIncompleteTurnTestFiles);
+    const actual = [
+      ...fg.sync(agentsEmbeddedTestPatterns).filter((file) => !incompleteTurnFiles.has(file)),
+      ...agentsEmbeddedIncompleteTurnTestFiles,
+      ...fg.sync(agentsEmbeddedRunTestPatterns),
+    ].toSorted((left, right) => left.localeCompare(right));
     const expected = listTestFiles("src/agents/embedded-agent-runner").toSorted((left, right) =>
       left.localeCompare(right),
     );
 
     expect(shard?.configs).toEqual([
       "test/vitest/vitest.agents-embedded-agent.config.ts",
+      "test/vitest/vitest.agents-embedded-agent-incomplete-turn.config.ts",
       "test/vitest/vitest.agents-embedded-agent-run.config.ts",
     ]);
     expect(actual).toEqual(expected);
