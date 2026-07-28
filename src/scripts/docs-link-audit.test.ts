@@ -159,10 +159,10 @@ describe("docs-link-audit", () => {
         .readFileSync(path.join(outputRoot, "docs", "legacy.md"), "utf8")
         .split("\n");
       expect(prepared[6]).toContain('href="https://legacy.example.test"');
-      expect(prepared[5].match(/https:\/\/same\.example\.test/g)).toHaveLength(1);
+      expect(prepared[5]?.match(/https:\/\/same\.example\.test/g)).toHaveLength(1);
       expect(prepared[9]).toContain('href="https://component.example.test"');
       expect(prepared[11]).toContain('href="https://reference.example.test"');
-      expect(prepared[14].match(/https:\/\/style\.example\.test/g)).toHaveLength(1);
+      expect(prepared[14]?.match(/https:\/\/style\.example\.test/g)).toHaveLength(1);
       expect(prepared[20]).toContain('href="https://after-fence.example.test"');
       expect(prepared.join("\n")).not.toContain("https://hidden.example.test");
       expect(prepared.join("\n")).not.toContain("https://fenced-hidden.example.test");
