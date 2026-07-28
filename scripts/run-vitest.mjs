@@ -48,6 +48,10 @@ export const VITEST_CONFIG_NO_OUTPUT_TIMEOUT_MS = new Map([
     DEFAULT_LONG_RUNNING_VITEST_NO_OUTPUT_TIMEOUT_MS,
   ],
   [
+    "test/vitest/vitest.agents-embedded-agent-overflow-compaction.config.ts",
+    DEFAULT_LONG_RUNNING_VITEST_NO_OUTPUT_TIMEOUT_MS,
+  ],
+  [
     "test/vitest/vitest.agents-embedded-agent-run.config.ts",
     DEFAULT_LONG_RUNNING_VITEST_NO_OUTPUT_TIMEOUT_MS,
   ],

@@ -29,6 +29,10 @@ export const agentsEmbeddedIncompleteTurnTestFiles = [
   "src/agents/embedded-agent-runner/run.incomplete-turn.test.ts",
 ];
 
+export const agentsEmbeddedOverflowCompactionTestFiles = [
+  "src/agents/embedded-agent-runner/run.overflow-compaction.test.ts",
+];
+
 export const agentsEmbeddedRunTestPatterns = ["src/agents/embedded-agent-runner/run/**/*.test.ts"];
 
 export const agentsToolsTestPatterns = ["src/agents/tools/**/*.test.ts"];

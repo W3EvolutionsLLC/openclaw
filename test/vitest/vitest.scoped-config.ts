@@ -99,6 +99,7 @@ const SCOPED_PROJECT_GROUP_ORDER_BY_NAME = new Map(
     "agents-core",
     "agents-embedded-agent",
     "agents-embedded-agent-incomplete-turn",
+    "agents-embedded-agent-overflow-compaction",
     "agents-embedded-agent-run",
     "agents-support",
     "agents-tools",
