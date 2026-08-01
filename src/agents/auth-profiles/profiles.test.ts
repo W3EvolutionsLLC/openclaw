@@ -6,10 +6,8 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { DatabaseSync } from "node:sqlite";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { resolveOAuthDir } from "../../config/paths.js";
-import { requireNodeSqlite } from "../../infra/node-sqlite.js";
 import {
   closeOpenClawAgentDatabasesForTest,
   openOpenClawAgentDatabase,
@@ -32,7 +30,11 @@ import {
   getRuntimeAuthProfileStoreCredentialsRevision,
   getRuntimeAuthProfileStoreStateMutationToken,
 } from "./runtime-snapshots.js";
-import { resolveAuthProfileDatabasePath, runAuthProfileWriteTransaction } from "./sqlite.js";
+import {
+  resolveAuthProfileDatabasePath,
+  runAuthProfileWriteTransaction,
+  writePersistedAuthProfileStoreRaw,
+} from "./sqlite.js";
 import {
   captureAuthProfileStorePersistenceSnapshot,
   clearRuntimeAuthProfileStoreSnapshots,
@@ -369,79 +371,99 @@ describe("promoteAuthProfileInOrder", () => {
     });
   });
 
-  it("publishes from the committed database when a fresh file open fails", async () => {
+  it("isolates an unreadable derived store from main publication", async () => {
     await withAuthProfileTestState(
-      "openclaw-auth-committed-publication-",
+      "openclaw-auth-derived-refresh-failure-",
       async ({ agentDir, agentDirFor }) => {
-        const derivedAgentDir = agentDirFor("worker");
-        const store = (key: string): AuthProfileStore => ({
+        const brokenAgentDir = agentDirFor("broken");
+        const healthyAgentDir = agentDirFor("healthy");
+        const mainStore = (key: string): AuthProfileStore => ({
           version: AUTH_STORE_VERSION,
           profiles: {
             "openai:default": { type: "api_key", provider: "openai", key },
           },
         });
-        saveAuthProfileStore(store("sk-old"), agentDir);
-        saveAuthProfileStore(
-          {
-            version: AUTH_STORE_VERSION,
-            profiles: {
-              "anthropic:local": {
-                type: "api_key",
-                provider: "anthropic",
-                key: "sk-local",
-              },
-            },
+        const localStore = (
+          profileId: string,
+          provider: string,
+          key: string,
+        ): AuthProfileStore => ({
+          version: AUTH_STORE_VERSION,
+          profiles: {
+            [profileId]: { type: "api_key", provider, key },
           },
-          derivedAgentDir,
+        });
+        saveAuthProfileStore(mainStore("sk-main-old"), agentDir);
+        saveAuthProfileStore(
+          localStore("anthropic:broken", "anthropic", "sk-broken"),
+          brokenAgentDir,
         );
+        saveAuthProfileStore(localStore("google:healthy", "google", "sk-healthy"), healthyAgentDir);
         replaceRuntimeAuthProfileStoreSnapshots([
           { agentDir, store: loadAuthProfileStoreForRuntime(agentDir) },
-          { agentDir: derivedAgentDir, store: loadAuthProfileStoreForRuntime(derivedAgentDir) },
+          { agentDir: brokenAgentDir, store: loadAuthProfileStoreForRuntime(brokenAgentDir) },
+          { agentDir: healthyAgentDir, store: loadAuthProfileStoreForRuntime(healthyAgentDir) },
         ]);
-        let committedDatabase: DatabaseSync | undefined;
-        runAuthProfileWriteTransaction(agentDir, (database) => {
-          committedDatabase = database.db;
-        });
-        const { DatabaseSync } = requireNodeSqlite();
-        const originalPrepare = DatabaseSync.prototype.prepare;
-        const prepareSpy = vi.spyOn(DatabaseSync.prototype, "prepare");
-        storeTesting.setRuntimeSnapshotPublisherForTest((publish) => {
-          prepareSpy.mockImplementation(function (this: DatabaseSync, sql: string) {
-            if (this !== committedDatabase) {
-              throw Object.assign(new Error("simulated fresh SQLite connection read failure"), {
-                code: "SQLITE_IOERR",
-                errcode: 10,
-              });
-            }
-            return originalPrepare.call(this, sql);
-          });
-          try {
-            publish();
-          } finally {
-            prepareSpy.mockRestore();
-          }
-        });
+        writePersistedAuthProfileStoreRaw(
+          { version: AUTH_STORE_VERSION, profiles: "invalid-profile-map" },
+          brokenAgentDir,
+        );
 
-        try {
-          saveAuthProfileStore(store("sk-new"), agentDir);
-        } finally {
-          storeTesting.resetRuntimeSnapshotPublisherForTest();
-        }
+        expect(() => saveAuthProfileStore(mainStore("sk-main-new"), agentDir)).not.toThrow();
 
+        expect(loadPersistedAuthProfileStore(agentDir)?.profiles["openai:default"]).toMatchObject({
+          key: "sk-main-new",
+        });
         expect(
           getRuntimeAuthProfileStoreSnapshot(agentDir)?.profiles["openai:default"],
         ).toMatchObject({
-          key: "sk-new",
+          key: "sk-main-new",
         });
         expect(
-          getRuntimeAuthProfileStoreSnapshot(derivedAgentDir)?.profiles["anthropic:local"],
+          getRuntimeAuthProfileStoreSnapshot(healthyAgentDir)?.profiles["openai:default"],
         ).toMatchObject({
-          key: "sk-local",
+          key: "sk-main-new",
         });
         expect(
-          getRuntimeAuthProfileStoreSnapshot(derivedAgentDir)?.profiles["openai:default"],
+          getRuntimeAuthProfileStoreSnapshot(healthyAgentDir)?.profiles["google:healthy"],
         ).toMatchObject({
-          key: "sk-new",
+          key: "sk-healthy",
+        });
+        expect(
+          getRuntimeAuthProfileStoreSnapshot(brokenAgentDir)?.profiles["openai:default"],
+        ).toMatchObject({
+          key: "sk-main-new",
+        });
+        expect(
+          getRuntimeAuthProfileStoreSnapshot(brokenAgentDir)?.profiles["anthropic:broken"],
+        ).toMatchObject({
+          key: "sk-broken",
+        });
+
+        const replacementMainStore: AuthProfileStore = {
+          version: AUTH_STORE_VERSION,
+          profiles: {
+            "google:replacement": {
+              type: "api_key",
+              provider: "google",
+              key: "sk-main-replacement",
+            },
+          },
+        };
+        expect(() => saveAuthProfileStore(replacementMainStore, agentDir)).not.toThrow();
+
+        expect(
+          getRuntimeAuthProfileStoreSnapshot(brokenAgentDir)?.profiles["openai:default"],
+        ).toBeUndefined();
+        expect(
+          getRuntimeAuthProfileStoreSnapshot(brokenAgentDir)?.profiles["google:replacement"],
+        ).toMatchObject({
+          key: "sk-main-replacement",
+        });
+        expect(
+          getRuntimeAuthProfileStoreSnapshot(brokenAgentDir)?.profiles["anthropic:broken"],
+        ).toMatchObject({
+          key: "sk-broken",
         });
       },
     );

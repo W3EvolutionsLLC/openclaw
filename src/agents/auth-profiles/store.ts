@@ -711,6 +711,29 @@ function runtimeStoreInheritsMainState(
   return !isDeepStrictEqual(state(store), state(localStore));
 }
 
+function rebuildDerivedRuntimeStoreFromCapturedLocalProfiles(
+  captured: RuntimeAuthProfileStore,
+  committedMainStore: AuthProfileStore,
+): RuntimeAuthProfileStore {
+  const localProfileIds = new Set(captured.runtimeLocalProfileIds ?? []);
+  const localStore = cloneAuthProfileStore(captured);
+  localStore.profiles = Object.fromEntries(
+    Object.entries(localStore.profiles).filter(([profileId]) => localProfileIds.has(profileId)),
+  );
+  pruneAuthProfileStoreReferences(localStore, localProfileIds);
+  const merged = mergeAuthProfileStores(committedMainStore, localStore, {
+    preserveBaseRuntimeExternalProfiles: true,
+  });
+  return setRuntimeLocalProfileMetadata(
+    mergeRuntimeExternalProfileReferences({
+      next: preserveResolvedSecretBackedCredentials({ next: merged, existing: captured }),
+      existing: captured,
+    }),
+    localProfileIds,
+    runtimeStoreInheritsMainState(merged, localStore),
+  );
+}
+
 function listRuntimeLocalProfileIds(
   store: AuthProfileStore,
   mainStore?: AuthProfileStore,
@@ -1394,50 +1417,44 @@ function saveAuthProfileStoreInTransaction(
     writePersistedAuthProfileStateRaw(statePayload, agentDir, database);
   }
   const committedStore = loadAuthProfileStoreWithoutExternalProfiles(agentDir, { database });
-  const committedDerivedStores = savesMainStore
-    ? new Map(
-        listRuntimeAuthProfileStoreSnapshots()
-          .filter((entry) => resolveAuthStorePath(entry.agentDir) !== mainAuthPath)
-          .map((entry) => [
-            resolveAuthStorePath(entry.agentDir),
-            {
-              runtimeRevision: getRuntimeAuthProfileStoreSnapshotRevision(entry.agentDir),
-              store: loadAuthProfileStoreWithoutExternalProfiles(entry.agentDir, {
-                inheritedStore: committedStore,
-              }),
-            },
-          ]),
-      )
-    : new Map<string, { runtimeRevision: number; store: AuthProfileStore }>();
   const publishRuntimeSnapshots = () => {
     // Main-store publication invalidates derived stores. Capture the latest
     // overlays at the publication edge so post-commit refreshes are retained.
-    const derivedSnapshots = savesMainStore
-      ? listRuntimeAuthProfileStoreSnapshots().filter(
-          (entry) => resolveAuthStorePath(entry.agentDir) !== mainAuthPath,
-        )
-      : [];
-    const derivedSnapshotRevisions = new Map(
-      derivedSnapshots.map((entry) => [
-        resolveAuthStorePath(entry.agentDir),
-        getRuntimeAuthProfileStoreSnapshotRevision(entry.agentDir),
-      ]),
-    );
-    const resolveCommittedDerivedStore = (derived: {
+    const derivedSnapshots =
+      savesMainStore && (credentialsChanged || stateChanged)
+        ? listRuntimeAuthProfileStoreSnapshots().filter(
+            (entry) => resolveAuthStorePath(entry.agentDir) !== mainAuthPath,
+          )
+        : [];
+    const refreshDerivedSnapshot = (derived: {
       agentDir: string;
       store: AuthProfileStore;
-    }): AuthProfileStore => {
-      const key = resolveAuthStorePath(derived.agentDir);
-      const captured = committedDerivedStores.get(key);
-      // A derived write can commit before an intentionally deferred main
-      // publisher runs. Re-read only when its publication-edge revision proves
-      // the captured local store is stale.
-      if (captured && captured.runtimeRevision === derivedSnapshotRevisions.get(key)) {
-        return captured.store;
+    }): void => {
+      try {
+        const refreshed = loadAuthProfileStoreWithoutExternalProfiles(derived.agentDir, {
+          inheritedStore: committedStore,
+        });
+        const materialized = preserveResolvedSecretBackedCredentials({
+          next: refreshed,
+          existing: derived.store,
+        });
+        setRuntimeAuthProfileStoreSnapshot(
+          mergeRuntimeExternalProfileReferences({ next: materialized, existing: derived.store }),
+          derived.agentDir,
+        );
+      } catch (err) {
+        // A main credential mutation evicts derived snapshots before refresh.
+        // Recompose from captured local ownership so stale inherited credentials
+        // cannot survive a main rotation while unrelated owners keep publishing.
+        setRuntimeAuthProfileStoreSnapshot(
+          rebuildDerivedRuntimeStoreFromCapturedLocalProfiles(derived.store, committedStore),
+          derived.agentDir,
+        );
+        log.warn(
+          "derived auth profile snapshot refresh failed; preserving captured local profiles",
+          { err },
+        );
       }
-      return loadAuthProfileStoreWithoutExternalProfiles(derived.agentDir, {
-        inheritedStore: committedStore,
-      });
     };
     if (credentialsChanged || stateChanged) {
       noteRuntimeAuthProfileStorePersistedMutation(agentDir, {
@@ -1461,30 +1478,14 @@ function saveAuthProfileStoreInTransaction(
       }
       if (savesMainStore && (credentialsChanged || stateChanged)) {
         for (const derived of derivedSnapshots) {
-          const refreshed = resolveCommittedDerivedStore(derived);
-          const materialized = preserveResolvedSecretBackedCredentials({
-            next: refreshed,
-            existing: derived.store,
-          });
-          setRuntimeAuthProfileStoreSnapshot(
-            mergeRuntimeExternalProfileReferences({ next: materialized, existing: derived.store }),
-            derived.agentDir,
-          );
+          refreshDerivedSnapshot(derived);
         }
       }
       return;
     }
     refreshRuntimeAuthProfileStoreSnapshot(agentDir, committedStore);
     for (const derived of derivedSnapshots) {
-      const refreshed = resolveCommittedDerivedStore(derived);
-      const materialized = preserveResolvedSecretBackedCredentials({
-        next: refreshed,
-        existing: derived.store,
-      });
-      setRuntimeAuthProfileStoreSnapshot(
-        mergeRuntimeExternalProfileReferences({ next: materialized, existing: derived.store }),
-        derived.agentDir,
-      );
+      refreshDerivedSnapshot(derived);
     }
   };
   return publishRuntimeSnapshots;
