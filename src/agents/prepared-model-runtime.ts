@@ -1,5 +1,6 @@
 /** Lifecycle-owned auth/model discovery snapshots for agent runs. */
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { formatErrorMessage } from "../infra/errors.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { isReservedSystemAgentId } from "../system-agent/agent-id.js";
 import { registerRuntimeAuthProfileStoreMutationListener } from "./auth-profiles/runtime-snapshots.js";
@@ -44,6 +45,33 @@ export type {
 } from "./prepared-model-runtime.owner.js";
 
 const log = createSubsystemLogger("agents/prepared-model-runtime");
+const MAX_REFRESH_ERROR_GRAPH_ITEMS = 8;
+const MAX_REFRESH_ERROR_MESSAGE_LENGTH = 2_048;
+
+function formatPreparedModelRuntimeRefreshError(error: unknown): string {
+  const queue = [error];
+  const seen = new Set<unknown>();
+  const messages: string[] = [];
+  while (queue.length > 0 && seen.size < MAX_REFRESH_ERROR_GRAPH_ITEMS) {
+    const current = queue.shift();
+    if (current == null || seen.has(current)) {
+      continue;
+    }
+    seen.add(current);
+    const message = formatErrorMessage(current);
+    if (message && !messages.includes(message)) {
+      messages.push(message);
+    }
+    if (current instanceof AggregateError) {
+      queue.push(...current.errors);
+    }
+  }
+  const formatted = messages.join(" | ");
+  return formatted.length > MAX_REFRESH_ERROR_MESSAGE_LENGTH
+    ? `${formatted.slice(0, MAX_REFRESH_ERROR_MESSAGE_LENGTH)}...`
+    : formatted;
+}
+
 // This bound only detects hung builds; overlap safety comes from the completion
 // chain, and a timeout here is fatal to gateway startup. Cold builds (plugin
 // metadata + model catalog + stores) legitimately exceed 30s on slow or loaded
@@ -742,7 +770,9 @@ function invalidateForAuthMutation(event: AuthMutationEvent): void {
     if (error instanceof PreparedModelRuntimePublicationSupersededError) {
       return;
     }
-    log.warn(`auth-triggered model runtime refresh failed: ${String(error)}`);
+    log.warn(
+      `auth-triggered model runtime refresh failed: ${formatPreparedModelRuntimeRefreshError(error)}`,
+    );
   });
 }
 
@@ -766,6 +796,7 @@ if (process.env.VITEST || process.env.NODE_ENV === "test") {
   (globalThis as Record<PropertyKey, unknown>)[Symbol.for("openclaw.preparedModelRuntimeTestApi")] =
     {
       resetPreparedModelRuntimeSnapshotsForTest,
+      formatPreparedModelRuntimeRefreshError,
       setModelRuntimeBuildTimeoutMsForTest: (timeoutMs: number) => {
         modelRuntimeBuildTimeoutMs = timeoutMs;
       },

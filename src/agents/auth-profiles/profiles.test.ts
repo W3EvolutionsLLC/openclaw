@@ -6,8 +6,10 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import type { DatabaseSync } from "node:sqlite";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { resolveOAuthDir } from "../../config/paths.js";
+import { requireNodeSqlite } from "../../infra/node-sqlite.js";
 import {
   closeOpenClawAgentDatabasesForTest,
   openOpenClawAgentDatabase,
@@ -367,6 +369,84 @@ describe("promoteAuthProfileInOrder", () => {
     });
   });
 
+  it("publishes from the committed database when a fresh file open fails", async () => {
+    await withAuthProfileTestState(
+      "openclaw-auth-committed-publication-",
+      async ({ agentDir, agentDirFor }) => {
+        const derivedAgentDir = agentDirFor("worker");
+        const store = (key: string): AuthProfileStore => ({
+          version: AUTH_STORE_VERSION,
+          profiles: {
+            "openai:default": { type: "api_key", provider: "openai", key },
+          },
+        });
+        saveAuthProfileStore(store("sk-old"), agentDir);
+        saveAuthProfileStore(
+          {
+            version: AUTH_STORE_VERSION,
+            profiles: {
+              "anthropic:local": {
+                type: "api_key",
+                provider: "anthropic",
+                key: "sk-local",
+              },
+            },
+          },
+          derivedAgentDir,
+        );
+        replaceRuntimeAuthProfileStoreSnapshots([
+          { agentDir, store: loadAuthProfileStoreForRuntime(agentDir) },
+          { agentDir: derivedAgentDir, store: loadAuthProfileStoreForRuntime(derivedAgentDir) },
+        ]);
+        let committedDatabase: DatabaseSync | undefined;
+        runAuthProfileWriteTransaction(agentDir, (database) => {
+          committedDatabase = database.db;
+        });
+        const { DatabaseSync } = requireNodeSqlite();
+        const originalPrepare = DatabaseSync.prototype.prepare;
+        const prepareSpy = vi.spyOn(DatabaseSync.prototype, "prepare");
+        storeTesting.setRuntimeSnapshotPublisherForTest((publish) => {
+          prepareSpy.mockImplementation(function (this: DatabaseSync, sql: string) {
+            if (this !== committedDatabase) {
+              throw Object.assign(new Error("simulated fresh SQLite connection read failure"), {
+                code: "SQLITE_IOERR",
+                errcode: 10,
+              });
+            }
+            return originalPrepare.call(this, sql);
+          });
+          try {
+            publish();
+          } finally {
+            prepareSpy.mockRestore();
+          }
+        });
+
+        try {
+          saveAuthProfileStore(store("sk-new"), agentDir);
+        } finally {
+          storeTesting.resetRuntimeSnapshotPublisherForTest();
+        }
+
+        expect(
+          getRuntimeAuthProfileStoreSnapshot(agentDir)?.profiles["openai:default"],
+        ).toMatchObject({
+          key: "sk-new",
+        });
+        expect(
+          getRuntimeAuthProfileStoreSnapshot(derivedAgentDir)?.profiles["anthropic:local"],
+        ).toMatchObject({
+          key: "sk-local",
+        });
+        expect(
+          getRuntimeAuthProfileStoreSnapshot(derivedAgentDir)?.profiles["openai:default"],
+        ).toMatchObject({
+          key: "sk-new",
+        });
+      },
+    );
+  });
+
   it("publishes a caller-owned database transaction from the supplied store", async () => {
     await withAuthProfileTestState("openclaw-auth-caller-transaction-", async ({ agentDir }) => {
       const store = (key: string): AuthProfileStore => ({
@@ -571,6 +651,7 @@ describe("promoteAuthProfileInOrder", () => {
           },
         },
       });
+      closeOpenClawAgentDatabasesForTest();
       expect(committed.publishRuntimeSnapshots()).toBe(true);
       const { owned } = committed;
       restoreAuthProfileStorePersistenceSnapshot(snapshot, owned, agentDir);

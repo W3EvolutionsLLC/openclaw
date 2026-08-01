@@ -1020,7 +1020,12 @@ function loadAuthProfileStoreForAgent(
     effectiveOptions?.database,
   );
   if (inspection.status !== "missing") {
-    throw new AuthProfileStoreUnreadableError(effectiveAgentDir);
+    throw new AuthProfileStoreUnreadableError(effectiveAgentDir, {
+      cause:
+        inspection.status === "unreadable"
+          ? inspection.cause
+          : new Error("Auth profile store row does not match the canonical persisted shape."),
+    });
   }
   const legacySources = listLegacyAuthProfileSources({ agentDir: effectiveAgentDir });
   const credentialSources = legacySources.filter((source) => source.kind !== "auth-state");
@@ -1107,13 +1112,19 @@ export function loadAuthProfileStoreForSecretsRuntime(
 /** Load auth profiles with runtime external profiles removed from the result. */
 export function loadAuthProfileStoreWithoutExternalProfiles(
   agentDir?: string,
-  loadOptions?: Pick<LoadAuthProfileStoreOptions, "allowKeychainPrompt" | "inheritedAuthDir">,
+  loadOptions?: Pick<
+    LoadAuthProfileStoreOptions,
+    "allowKeychainPrompt" | "database" | "inheritedAuthDir"
+  > & {
+    inheritedStore?: AuthProfileStore;
+  },
 ): AuthProfileStore {
   const effectiveAgentDir = resolveRuntimeAuthProfileAgentDir(agentDir);
   const effectiveLoadOptions = resolveRuntimeAuthProfileLoadOptions(loadOptions);
   const options: LoadAuthProfileStoreOptions = {
     readOnly: true,
     allowKeychainPrompt: effectiveLoadOptions?.allowKeychainPrompt ?? false,
+    ...(effectiveLoadOptions?.database ? { database: effectiveLoadOptions.database } : {}),
     ...(effectiveLoadOptions?.inheritedAuthDir
       ? { inheritedAuthDir: effectiveLoadOptions.inheritedAuthDir }
       : {}),
@@ -1128,7 +1139,12 @@ export function loadAuthProfileStoreWithoutExternalProfiles(
     );
   }
 
-  const mainStore = loadAuthProfileStoreForAgent(options.inheritedAuthDir, options);
+  const mainStore =
+    loadOptions?.inheritedStore ??
+    loadAuthProfileStoreForAgent(options.inheritedAuthDir, {
+      ...options,
+      database: undefined,
+    });
   const mergedStore = mergeAuthProfileStores(mainStore, store, {
     preserveBaseRuntimeExternalProfiles: true,
   });
@@ -1377,6 +1393,19 @@ function saveAuthProfileStoreInTransaction(
   if (stateChanged) {
     writePersistedAuthProfileStateRaw(statePayload, agentDir, database);
   }
+  const committedStore = loadAuthProfileStoreWithoutExternalProfiles(agentDir, { database });
+  const committedDerivedStores = savesMainStore
+    ? new Map(
+        listRuntimeAuthProfileStoreSnapshots()
+          .filter((entry) => resolveAuthStorePath(entry.agentDir) !== mainAuthPath)
+          .map((entry) => [
+            resolveAuthStorePath(entry.agentDir),
+            loadAuthProfileStoreWithoutExternalProfiles(entry.agentDir, {
+              inheritedStore: committedStore,
+            }),
+          ]),
+      )
+    : new Map<string, AuthProfileStore>();
   const publishRuntimeSnapshots = () => {
     // Main-store publication invalidates derived stores. Capture the latest
     // overlays at the publication edge so post-commit refreshes are retained.
@@ -1407,7 +1436,11 @@ function saveAuthProfileStoreInTransaction(
       }
       if (savesMainStore && (credentialsChanged || stateChanged)) {
         for (const derived of derivedSnapshots) {
-          const refreshed = loadAuthProfileStoreWithoutExternalProfiles(derived.agentDir);
+          const refreshed =
+            committedDerivedStores.get(resolveAuthStorePath(derived.agentDir)) ??
+            loadAuthProfileStoreWithoutExternalProfiles(derived.agentDir, {
+              inheritedStore: committedStore,
+            });
           const materialized = preserveResolvedSecretBackedCredentials({
             next: refreshed,
             existing: derived.store,
@@ -1420,9 +1453,13 @@ function saveAuthProfileStoreInTransaction(
       }
       return;
     }
-    refreshRuntimeAuthProfileStoreSnapshot(agentDir);
+    refreshRuntimeAuthProfileStoreSnapshot(agentDir, committedStore);
     for (const derived of derivedSnapshots) {
-      const refreshed = loadAuthProfileStoreWithoutExternalProfiles(derived.agentDir);
+      const refreshed =
+        committedDerivedStores.get(resolveAuthStorePath(derived.agentDir)) ??
+        loadAuthProfileStoreWithoutExternalProfiles(derived.agentDir, {
+          inheritedStore: committedStore,
+        });
       const materialized = preserveResolvedSecretBackedCredentials({
         next: refreshed,
         existing: derived.store,
@@ -1574,20 +1611,24 @@ function replaceRuntimeAuthProfileStoreSnapshot(
   );
 }
 
-function refreshRuntimeAuthProfileStoreSnapshot(agentDir?: string): void {
+function refreshRuntimeAuthProfileStoreSnapshot(
+  agentDir?: string,
+  refreshed?: AuthProfileStore,
+): void {
   const existing = getRuntimeAuthProfileStoreSnapshot(agentDir);
   if (!existing) {
     return;
   }
-  rebuildRuntimeAuthProfileStoreSnapshot(agentDir, existing);
+  rebuildRuntimeAuthProfileStoreSnapshot(agentDir, existing, undefined, refreshed);
 }
 
 function rebuildRuntimeAuthProfileStoreSnapshot(
   agentDir: string | undefined,
   existing: AuthProfileStore,
   predecessor?: AuthProfileStore,
+  committedStore?: AuthProfileStore,
 ): void {
-  const refreshed = loadAuthProfileStoreWithoutExternalProfiles(agentDir);
+  const refreshed = committedStore ?? loadAuthProfileStoreWithoutExternalProfiles(agentDir);
   const currentMaterialized = preserveResolvedSecretBackedCredentials({
     next: refreshed,
     existing,

@@ -26,6 +26,7 @@ import {
 import {
   clearRuntimeAuthProfileStoreSnapshots,
   ensureAuthProfileStore,
+  loadAuthProfileStoreForRuntime,
   saveAuthProfileStore,
 } from "./auth-profiles/store.js";
 import type { AuthProfileStore, OAuthCredential } from "./auth-profiles/types.js";
@@ -185,7 +186,9 @@ describe("auth profile sqlite store", () => {
       database.exec(`PRAGMA user_version = ${OPENCLAW_AGENT_SCHEMA_VERSION + 1};`);
       database.close();
 
-      expect(inspectPersistedAuthProfileStoreRaw(agentDir)).toEqual({ status: "unreadable" });
+      expect(inspectPersistedAuthProfileStoreRaw(agentDir)).toMatchObject({
+        status: "unreadable",
+      });
     });
   });
 
@@ -197,7 +200,42 @@ describe("auth profile sqlite store", () => {
       );
       database.close();
 
-      expect(inspectPersistedAuthProfileStoreRaw(agentDir)).toEqual({ status: "unreadable" });
+      expect(inspectPersistedAuthProfileStoreRaw(agentDir)).toMatchObject({
+        status: "unreadable",
+      });
+    });
+  });
+
+  it("preserves the SQLite cause behind an unreadable auth store", async () => {
+    await withAgentDirEnv("openclaw-auth-sqlite-cause-", (agentDir) => {
+      saveAuthProfileStore(apiKeyStore("sk-test"), agentDir);
+      closeOpenClawAgentDatabasesForTest();
+      const failure = Object.assign(new Error("simulated auth store read failure"), {
+        code: "SQLITE_IOERR",
+        errcode: 10,
+      });
+      const originalPrepare = DatabaseSync.prototype.prepare;
+      const prepareSpy = vi.spyOn(DatabaseSync.prototype, "prepare").mockImplementation(function (
+        this: DatabaseSync,
+        sql: string,
+      ) {
+        if (sql.includes("sqlite_master")) {
+          throw failure;
+        }
+        return originalPrepare.call(this, sql);
+      });
+      try {
+        const inspection = inspectPersistedAuthProfileStoreRaw(agentDir);
+        expect(inspection).toMatchObject({ status: "unreadable", cause: failure });
+        expect(() => loadAuthProfileStoreForRuntime(agentDir)).toThrow(
+          expect.objectContaining({
+            name: "AuthProfileStoreUnreadableError",
+            cause: failure,
+          }),
+        );
+      } finally {
+        prepareSpy.mockRestore();
+      }
     });
   });
 
