@@ -447,6 +447,49 @@ describe("promoteAuthProfileInOrder", () => {
     );
   });
 
+  it("preserves a newer derived write before deferred main publication", async () => {
+    await withAuthProfileTestState(
+      "openclaw-auth-deferred-main-publication-",
+      async ({ agentDir, agentDirFor }) => {
+        const derivedAgentDir = agentDirFor("worker");
+        const mainStore = (key: string): AuthProfileStore => ({
+          version: AUTH_STORE_VERSION,
+          profiles: {
+            "openai:default": { type: "api_key", provider: "openai", key },
+          },
+        });
+        const derivedStore = (key: string): AuthProfileStore => ({
+          version: AUTH_STORE_VERSION,
+          profiles: {
+            "anthropic:local": { type: "api_key", provider: "anthropic", key },
+          },
+        });
+        saveAuthProfileStore(mainStore("sk-main-old"), agentDir);
+        saveAuthProfileStore(derivedStore("sk-derived-old"), derivedAgentDir);
+        replaceRuntimeAuthProfileStoreSnapshots([
+          { agentDir, store: loadAuthProfileStoreForRuntime(agentDir) },
+          { agentDir: derivedAgentDir, store: loadAuthProfileStoreForRuntime(derivedAgentDir) },
+        ]);
+        const snapshot = captureAuthProfileStorePersistenceSnapshot(agentDir);
+        const committed = saveAuthProfileStoreIfPersistenceSnapshotMatches({
+          snapshot,
+          agentDir,
+          store: mainStore("sk-main-new"),
+        });
+
+        saveAuthProfileStore(derivedStore("sk-derived-new"), derivedAgentDir);
+        expect(committed.publishRuntimeSnapshots()).toBe(true);
+
+        expect(
+          getRuntimeAuthProfileStoreSnapshot(derivedAgentDir)?.profiles["openai:default"],
+        ).toMatchObject({ key: "sk-main-new" });
+        expect(
+          getRuntimeAuthProfileStoreSnapshot(derivedAgentDir)?.profiles["anthropic:local"],
+        ).toMatchObject({ key: "sk-derived-new" });
+      },
+    );
+  });
+
   it("publishes a caller-owned database transaction from the supplied store", async () => {
     await withAuthProfileTestState("openclaw-auth-caller-transaction-", async ({ agentDir }) => {
       const store = (key: string): AuthProfileStore => ({

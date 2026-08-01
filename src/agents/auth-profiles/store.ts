@@ -1400,12 +1400,15 @@ function saveAuthProfileStoreInTransaction(
           .filter((entry) => resolveAuthStorePath(entry.agentDir) !== mainAuthPath)
           .map((entry) => [
             resolveAuthStorePath(entry.agentDir),
-            loadAuthProfileStoreWithoutExternalProfiles(entry.agentDir, {
-              inheritedStore: committedStore,
-            }),
+            {
+              runtimeRevision: getRuntimeAuthProfileStoreSnapshotRevision(entry.agentDir),
+              store: loadAuthProfileStoreWithoutExternalProfiles(entry.agentDir, {
+                inheritedStore: committedStore,
+              }),
+            },
           ]),
       )
-    : new Map<string, AuthProfileStore>();
+    : new Map<string, { runtimeRevision: number; store: AuthProfileStore }>();
   const publishRuntimeSnapshots = () => {
     // Main-store publication invalidates derived stores. Capture the latest
     // overlays at the publication edge so post-commit refreshes are retained.
@@ -1414,6 +1417,28 @@ function saveAuthProfileStoreInTransaction(
           (entry) => resolveAuthStorePath(entry.agentDir) !== mainAuthPath,
         )
       : [];
+    const derivedSnapshotRevisions = new Map(
+      derivedSnapshots.map((entry) => [
+        resolveAuthStorePath(entry.agentDir),
+        getRuntimeAuthProfileStoreSnapshotRevision(entry.agentDir),
+      ]),
+    );
+    const resolveCommittedDerivedStore = (derived: {
+      agentDir: string;
+      store: AuthProfileStore;
+    }): AuthProfileStore => {
+      const key = resolveAuthStorePath(derived.agentDir);
+      const captured = committedDerivedStores.get(key);
+      // A derived write can commit before an intentionally deferred main
+      // publisher runs. Re-read only when its publication-edge revision proves
+      // the captured local store is stale.
+      if (captured && captured.runtimeRevision === derivedSnapshotRevisions.get(key)) {
+        return captured.store;
+      }
+      return loadAuthProfileStoreWithoutExternalProfiles(derived.agentDir, {
+        inheritedStore: committedStore,
+      });
+    };
     if (credentialsChanged || stateChanged) {
       noteRuntimeAuthProfileStorePersistedMutation(agentDir, {
         credentialsChanged,
@@ -1436,11 +1461,7 @@ function saveAuthProfileStoreInTransaction(
       }
       if (savesMainStore && (credentialsChanged || stateChanged)) {
         for (const derived of derivedSnapshots) {
-          const refreshed =
-            committedDerivedStores.get(resolveAuthStorePath(derived.agentDir)) ??
-            loadAuthProfileStoreWithoutExternalProfiles(derived.agentDir, {
-              inheritedStore: committedStore,
-            });
+          const refreshed = resolveCommittedDerivedStore(derived);
           const materialized = preserveResolvedSecretBackedCredentials({
             next: refreshed,
             existing: derived.store,
@@ -1455,11 +1476,7 @@ function saveAuthProfileStoreInTransaction(
     }
     refreshRuntimeAuthProfileStoreSnapshot(agentDir, committedStore);
     for (const derived of derivedSnapshots) {
-      const refreshed =
-        committedDerivedStores.get(resolveAuthStorePath(derived.agentDir)) ??
-        loadAuthProfileStoreWithoutExternalProfiles(derived.agentDir, {
-          inheritedStore: committedStore,
-        });
+      const refreshed = resolveCommittedDerivedStore(derived);
       const materialized = preserveResolvedSecretBackedCredentials({
         next: refreshed,
         existing: derived.store,
