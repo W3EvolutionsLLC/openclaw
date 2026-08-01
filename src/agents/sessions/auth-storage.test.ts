@@ -95,6 +95,7 @@ describe("SQLite auth storage", () => {
     const failure = Object.assign(new Error("simulated auth state read failure"), {
       code: "SQLITE_IOERR",
     });
+    // oxlint-disable-next-line typescript/unbound-method -- invoked with the intercepted database receiver below.
     const originalPrepare = DatabaseSync.prototype.prepare;
     let schemaProbeCount = 0;
     const prepareSpy = vi.spyOn(DatabaseSync.prototype, "prepare").mockImplementation(function (

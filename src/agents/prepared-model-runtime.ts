@@ -802,3 +802,4 @@ if (process.env.VITEST || process.env.NODE_ENV === "test") {
       },
     };
 }
+/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

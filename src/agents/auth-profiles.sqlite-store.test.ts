@@ -214,6 +214,7 @@ describe("auth profile sqlite store", () => {
         code: "SQLITE_IOERR",
         errcode: 10,
       });
+      // oxlint-disable-next-line typescript/unbound-method -- invoked with the intercepted database receiver below.
       const originalPrepare = DatabaseSync.prototype.prepare;
       const prepareSpy = vi.spyOn(DatabaseSync.prototype, "prepare").mockImplementation(function (
         this: DatabaseSync,
