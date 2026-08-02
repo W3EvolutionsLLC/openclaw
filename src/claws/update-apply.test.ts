@@ -1,8 +1,12 @@
+import { createHash } from "node:crypto";
 import { join } from "node:path";
+import { stableStringify } from "@openclaw/normalization-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import type { InstallPolicyWarning } from "../plugins/install-security-scan.js";
 import { ClawCronUpdateError } from "./cron-update.js";
+import { digestClawPlanValue } from "./install-policy.js";
 import {
   persistClawInstallRecord,
   readClawInstallRecord,
@@ -131,6 +135,87 @@ describe("applyClawUpdatePlan", () => {
       ),
     ).rejects.toMatchObject({ code: "plan_integrity_mismatch" });
     expect(rebuildPlan).not.toHaveBeenCalled();
+  });
+
+  it("declines a planned package warning before any update mutation", async () => {
+    const warning = {
+      acknowledgementId: `v1:${"w".repeat(43)}`,
+      reason: "Review the changed plugin before updating.",
+    };
+    const targetPackage = {
+      kind: "plugin" as const,
+      source: "clawhub" as const,
+      ref: "github",
+      version: "2.0.0",
+    };
+    const integrity = `sha256:${"a".repeat(64)}`;
+    const desiredDigest = digestClawPlanValue({
+      package: targetPackage,
+      integrity,
+      installId: "github",
+      riskWarning: undefined,
+      installPolicyWarning: warning,
+    });
+    const updatePlan = plan([
+      {
+        kind: "package",
+        id: "plugin:github",
+        action: "change",
+        target: "clawhub:github@2.0.0",
+        blocked: false,
+        reason: "target changes package version",
+        desiredDigest,
+        installPolicyWarning: warning,
+      },
+    ]);
+    const packageAddPlan: ClawAddPlan = {
+      ...addPlan,
+      actions: [
+        {
+          kind: "package",
+          id: "plugin:github",
+          action: "install",
+          target: "clawhub:github@2.0.0",
+          blocked: false,
+          digest: integrity,
+          details: {
+            ...targetPackage,
+            integrity,
+            installId: "github",
+            installPolicyWarning: warning,
+            expectedState: "absent",
+            ownerAction: "install",
+          },
+        },
+      ],
+    };
+    const applyWorkspace = vi.fn(async () => ({
+      appliedPaths: [],
+      rollback: vi.fn(async () => undefined),
+    }));
+
+    await expect(
+      applyClawUpdatePlan(
+        updatePlan,
+        {
+          targetManifest: { ...manifest, packages: [targetPackage] },
+          targetSource: source,
+        },
+        {
+          config: {},
+          ...consent(updatePlan),
+          rebuildPlan: vi.fn(async () => updatePlan),
+          buildAddPlan: vi.fn(async () => packageAddPlan),
+          readInstall: vi.fn(() => install),
+          applyWorkspace,
+          onInstallPolicyWarning: vi.fn(async () => false),
+        },
+      ),
+    ).rejects.toMatchObject({
+      code: "install_policy_acknowledgement_required",
+      message: "Review the changed plugin before updating.",
+    });
+    expect(applyWorkspace).not.toHaveBeenCalled();
   });
 
   it("rejects a capability disclosure that changed after consent", async () => {
@@ -433,21 +518,56 @@ describe("applyClawUpdatePlan", () => {
       ref: "github",
       version: "2.0.0",
     };
+    const acknowledgementId = `v1:${"w".repeat(43)}`;
+    const plannedWarning: InstallPolicyWarning = {
+      acknowledgementId,
+      reason: "Review /tmp/first-stage/plugin before updating.",
+      findings: [
+        {
+          ruleId: "suspicious-file",
+          severity: "warn",
+          message: "Suspicious file at /tmp/first-stage/plugin/index.js",
+          file: "/tmp/first-stage/plugin/index.js",
+        },
+      ],
+    };
+    const rebuiltWarning: InstallPolicyWarning = {
+      acknowledgementId,
+      reason: "Review /tmp/second-stage/plugin before updating.",
+      findings: [
+        {
+          ruleId: "suspicious-file",
+          severity: "warn",
+          message: "Suspicious file at /tmp/second-stage/plugin/index.js",
+          file: "/tmp/second-stage/plugin/index.js",
+        },
+      ],
+    };
+    const resolvedWarning: InstallPolicyWarning = {
+      acknowledgementId,
+      reason: "Review /tmp/third-stage/plugin before updating.",
+      findings: [
+        {
+          ruleId: "suspicious-file",
+          severity: "warn",
+          message: "Suspicious file at /tmp/third-stage/plugin/index.js",
+          file: "/tmp/third-stage/plugin/index.js",
+        },
+      ],
+    };
     const resolved = {
       integrity: `sha256:${"a".repeat(64)}`,
       installId: "github",
       warning: "Review @acme/github before installation.",
+      installPolicyWarning: resolvedWarning,
     };
-    const desiredDigest = `sha256:${createHash("sha256")
-      .update(
-        stableStringify({
-          package: targetPackage,
-          integrity: resolved.integrity,
-          installId: resolved.installId,
-          riskWarning: resolved.warning,
-        }),
-      )
-      .digest("hex")}`;
+    const desiredDigest = digestClawPlanValue({
+      package: targetPackage,
+      integrity: resolved.integrity,
+      installId: resolved.installId,
+      riskWarning: resolved.warning,
+      installPolicyWarning: plannedWarning,
+    });
     const updatePlan = plan([
       {
         kind: "package",
@@ -457,8 +577,16 @@ describe("applyClawUpdatePlan", () => {
         blocked: false,
         reason: "target changes package version",
         desiredDigest,
+        installPolicyWarning: plannedWarning,
       },
     ]);
+    const rebuiltPlan: ClawUpdatePlan = {
+      ...updatePlan,
+      actions: updatePlan.actions.map((action) => ({
+        ...action,
+        installPolicyWarning: rebuiltWarning,
+      })),
+    };
     const packagePreflight = vi.fn(async () => ({
       ok: false as const,
       code: "plugin_version_conflict",
@@ -466,10 +594,16 @@ describe("applyClawUpdatePlan", () => {
       installedVersion: "1.0.0",
       ...resolved,
     }));
-    const applyPackage = vi.fn(async () => ({
-      appliedIds: ["plugin:github"],
-      rollback: vi.fn(async () => undefined),
-    }));
+    const applyPackage = vi.fn(
+      async (...args: Parameters<typeof import("./package-update.js").applyClawPackageUpdate>) => {
+        expect(await args[3].onInstallPolicyWarning?.(resolved.installPolicyWarning)).toBe(true);
+        return {
+          appliedIds: ["plugin:github"],
+          rollback: vi.fn(async () => undefined),
+        };
+      },
+    );
+    const onInstallPolicyWarning = vi.fn(async () => true);
 
     await applyClawUpdatePlan(
       updatePlan,
@@ -477,8 +611,9 @@ describe("applyClawUpdatePlan", () => {
       {
         config: {},
         ...consent(updatePlan),
-        rebuildPlan: vi.fn(async () => updatePlan),
+        rebuildPlan: vi.fn(async () => rebuiltPlan),
         packagePreflight,
+        onInstallPolicyWarning,
         readInstall: vi.fn(() => install),
         persistInstall: vi.fn(() => ({ ...install, claw: source })),
         applyWorkspace: vi.fn(async () => ({
@@ -498,6 +633,7 @@ describe("applyClawUpdatePlan", () => {
     );
 
     expect(packagePreflight).toHaveBeenCalledOnce();
+    expect(onInstallPolicyWarning).toHaveBeenCalledOnce();
     expect(applyPackage).toHaveBeenCalledOnce();
   });
 
@@ -653,5 +789,3 @@ describe("applyClawUpdatePlan", () => {
     ).rejects.toMatchObject({ code: "update_blocked" });
   });
 });
-import { createHash } from "node:crypto";
-import { stableStringify } from "@openclaw/normalization-core";

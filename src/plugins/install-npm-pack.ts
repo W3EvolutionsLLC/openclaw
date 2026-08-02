@@ -234,6 +234,7 @@ export async function installPluginFromNpmPackArchive(
     dangerouslyForceUnsafeInstall: params.dangerouslyForceUnsafeInstall,
     trustedSourceLinkedOfficialInstall: params.trustedSourceLinkedOfficialInstall,
     config: params.config,
+    onInstallPolicyWarning: params.onInstallPolicyWarning,
     packageName,
     prepareDependencySpec: async ({ npmRoot }) => {
       try {

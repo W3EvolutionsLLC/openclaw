@@ -31,6 +31,7 @@ openclaw update --dry-run
 openclaw update --no-restart
 openclaw update --yes
 openclaw update --acknowledge-clawhub-risk
+openclaw update --dangerously-force-unsafe-install
 openclaw update --json
 openclaw --update
 ```
@@ -50,6 +51,7 @@ launcher scripts).
 | `--timeout <seconds>`                            | Per-step timeout. Default `1800`.                                                                                                                                                                                                                                                                                                            |
 | `--yes`                                          | Skip confirmation prompts (for example downgrade confirmation).                                                                                                                                                                                                                                                                              |
 | `--acknowledge-clawhub-risk`                     | Allow post-update plugin sync to continue past community ClawHub trust warnings without an interactive prompt. Without it, risky community releases are skipped and left unchanged when OpenClaw cannot prompt. Official ClawHub packages and bundled plugin sources bypass this prompt.                                                     |
+| `--dangerously-force-unsafe-install`             | Acknowledge reviewed `security.installPolicy` warnings during post-update plugin sync. OpenClaw reruns the policy before continuing; this cannot override `block` or a policy failure.                                                                                                                                                       |
 
 There is no `--verbose` flag. Use `--dry-run` to preview planned actions,
 `--json` for machine-readable results, and `openclaw update status --json`
@@ -102,6 +104,7 @@ converge.
 openclaw update repair
 openclaw update repair --channel beta
 openclaw update repair --acknowledge-clawhub-risk
+openclaw update repair --dangerously-force-unsafe-install
 openclaw update repair --json
 ```
 
@@ -112,6 +115,7 @@ openclaw update repair --json
 | `--timeout <seconds>`                            | Timeout for repair steps. Default `1800`.                                                                                                                                                                                                                           |
 | `--yes`                                          | Skip confirmation prompts.                                                                                                                                                                                                                                          |
 | `--acknowledge-clawhub-risk`                     | Same behavior as on `openclaw update`.                                                                                                                                                                                                                              |
+| `--dangerously-force-unsafe-install`             | Same install-policy warning acknowledgement behavior as on `openclaw update`.                                                                                                                                                                                       |
 | `--no-restart`                                   | Accepted for parity; repair never restarts the Gateway.                                                                                                                                                                                                             |
 
 `update repair` runs `openclaw doctor --fix`, reloads the repaired config and

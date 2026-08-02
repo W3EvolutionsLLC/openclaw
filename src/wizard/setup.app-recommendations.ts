@@ -32,6 +32,7 @@ import {
   type SetupAppScanPhase,
 } from "../system-agent/setup-app-recommendations.js";
 import { t } from "./i18n/index.js";
+import { confirmWizardInstallPolicyWarning } from "./install-policy-warning.js";
 import type { WizardPrompter } from "./prompts.js";
 
 const SKIP_VALUE = "__skip__";
@@ -329,6 +330,11 @@ export async function setupAppRecommendations(params: {
                   name: match.candidate.displayName,
                 }),
                 initialValue: false,
+              }),
+            onInstallPolicyWarning: async (warning) =>
+              await confirmWizardInstallPolicyWarning({
+                prompter: params.prompter,
+                warning,
               }),
             logger: { warn: (message) => params.runtime.error(message) },
           });

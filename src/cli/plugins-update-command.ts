@@ -46,6 +46,7 @@ import {
 import { defaultRuntime } from "../runtime.js";
 import { VERSION } from "../version.js";
 import { resolveClawHubRiskAcknowledgementCliOptions } from "./clawhub-risk-acknowledgement.js";
+import { resolveInstallPolicyAcknowledgementCliOptions } from "./install-policy-acknowledgement.js";
 import { notifyGatewayPluginMetadataChanged } from "./plugins-update-gateway-signal.js";
 import { logPluginUpdateOutcomes } from "./plugins-update-outcomes.js";
 import {
@@ -53,9 +54,6 @@ import {
   resolvePluginUpdateSelection,
 } from "./plugins-update-selection.js";
 import { promptYesNo } from "./prompt.js";
-
-const DEPRECATED_DANGEROUS_FORCE_UNSAFE_UPDATE_WARNING =
-  "--dangerously-force-unsafe-install is deprecated and no longer affects plugin updates because built-in install-time dangerous-code scanning has been removed. Configure security.installPolicy for operator-owned install decisions.";
 
 function mayMutatePluginInstallRecord(
   record: PluginInstallRecord | undefined,
@@ -228,9 +226,12 @@ async function runPluginUpdateCommandUnlocked(params: RunPluginUpdateCommandPara
     info: (msg: string) => defaultRuntime.log(msg),
     warn: (msg: string) => defaultRuntime.log(msg.includes("╭─") ? msg : theme.warn(msg)),
   };
-  if (params.opts.dangerouslyForceUnsafeInstall) {
-    defaultRuntime.log(theme.warn(DEPRECATED_DANGEROUS_FORCE_UNSAFE_UPDATE_WARNING));
-  }
+  const installPolicyAcknowledgement = resolveInstallPolicyAcknowledgementCliOptions({
+    dangerouslyForceUnsafeInstall: params.opts.dangerouslyForceUnsafeInstall,
+    action: "update",
+    allowPrompt: !params.opts.dryRun,
+    reportError: (message) => defaultRuntime.error(message),
+  });
   const pluginSelection = resolvePluginUpdateSelection({
     installs: pluginInstallRecords,
     rawId: params.id,
@@ -357,6 +358,7 @@ async function runPluginUpdateCommandUnlocked(params: RunPluginUpdateCommandPara
           syncOfficialPluginInstalls: params.opts.all ? true : undefined,
           coreVersion: VERSION,
           dangerouslyForceUnsafeInstall: params.opts.dangerouslyForceUnsafeInstall,
+          ...installPolicyAcknowledgement,
           ...resolveClawHubRiskAcknowledgementCliOptions({
             acknowledgeClawHubRisk: params.opts.acknowledgeClawHubRisk,
             action: "updating",
@@ -386,6 +388,7 @@ async function runPluginUpdateCommandUnlocked(params: RunPluginUpdateCommandPara
           hookIds: hookSelection.hookIds,
           specOverrides: hookSelection.specOverrides,
           dryRun: params.opts.dryRun,
+          ...installPolicyAcknowledgement,
           logger,
           onIntegrityDrift: async (drift) => {
             const specLabel = drift.resolvedSpec ?? drift.spec;

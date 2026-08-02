@@ -155,7 +155,10 @@ flag overwrites an existing install target when needed. Normal updates of an
 already tracked install do not require it. This confirmation is separate from
 `--acknowledge-clawhub-risk`, which only applies to risky ClawHub release trust
 warnings. `--force` does not bypass `security.installPolicy` or remaining
-install safety checks.
+install safety checks. If `security.installPolicy` returns `warn`, interactive
+commands ask for confirmation; reviewed noninteractive installs use
+`--dangerously-force-unsafe-install`. The policy is rerun, and a `block`
+decision cannot be acknowledged or bypassed.
 </Warning>
 
 `plugins search` queries ClawHub for installable `code-plugin` and
@@ -197,9 +200,16 @@ non-npm sources are not rewritten.
     `--pin` applies to npm installs only and records the resolved exact `<name>@<version>`. It is not supported with `git:` installs (pin the ref in the spec instead, e.g. `git:github.com/acme/plugin@v1.2.3`) or with `--marketplace` (marketplace installs persist marketplace source metadata instead of an npm spec).
   </Accordion>
   <Accordion title="--dangerously-force-unsafe-install">
-    `--dangerously-force-unsafe-install` is deprecated and is now a no-op. OpenClaw no longer runs built-in install-time dangerous-code blocking for plugin installs.
+    When the operator-owned `security.installPolicy` command returns `warn`,
+    OpenClaw shows its reason and findings before asking whether to continue.
+    Use `--dangerously-force-unsafe-install` only for a reviewed noninteractive
+    install or update. OpenClaw reruns the policy, and the flag does not
+    override a `block` response or the built-in plugin dependency denylist.
+    The flag applies only to that request; it is not stored or bound to a
+    warning or artifact fingerprint.
 
-    Use the operator-owned `security.installPolicy` surface when host-specific install policy is required. Plugin `before_install` hooks are plugin-runtime lifecycle hooks, not the primary policy boundary for CLI installs.
+    This is separate from `--acknowledge-clawhub-risk`: ClawHub release trust
+    and the local operator policy can both require acknowledgement.
 
     If a plugin you published on ClawHub is hidden or blocked by a registry scan, use the publisher steps in [ClawHub publishing](/clawhub/publishing). `--dangerously-force-unsafe-install` does not ask ClawHub to rescan the plugin or make a blocked release public.
 
@@ -467,7 +477,10 @@ Updates apply to tracked plugin installs in the managed plugin index and tracked
 
   </Accordion>
   <Accordion title="--dangerously-force-unsafe-install on update">
-    `--dangerously-force-unsafe-install` is also accepted on `plugins update` for compatibility, but it is deprecated and no longer changes plugin update behavior. Operator `security.installPolicy` can still block updates; plugin `before_install` hooks only apply in processes where plugin hooks are loaded.
+    `--dangerously-force-unsafe-install` acknowledges reviewed
+    `security.installPolicy` warnings during plugin and hook-pack updates. It
+    does not override a policy `block`, policy execution failure, or the
+    built-in plugin dependency denylist.
   </Accordion>
   <Accordion title="--acknowledge-clawhub-risk on update">
     Community ClawHub-backed plugin updates run the same exact-release trust check as installs before downloading the replacement package. Use `--acknowledge-clawhub-risk` for reviewed automation that should continue when the selected ClawHub release has a risky trust warning. Official ClawHub packages and bundled OpenClaw plugin sources bypass this release-trust prompt.

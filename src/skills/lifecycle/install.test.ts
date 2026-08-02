@@ -2,6 +2,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import {
   initializeGlobalHookRunner,
   resetGlobalHookRunner,
@@ -82,6 +83,75 @@ function loadTestWorkspaceSkillEntries(workspaceDir: string): SkillEntry[] {
 function lastRunCommandCall(): unknown[] | undefined {
   const calls = runCommandWithTimeoutMock.mock.calls;
   return calls[calls.length - 1];
+}
+
+async function writeDecisionPolicyScript(root: string): Promise<{
+  scriptPath: string;
+  countPath: string;
+}> {
+  await fs.chmod(root, 0o700);
+  const scriptPath = path.join(root, "decision-policy.cjs");
+  const countPath = path.join(root, "policy-count.txt");
+  await fs.writeFile(
+    scriptPath,
+    `#!${process.execPath}
+const fs = require("node:fs");
+
+let input = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  input += chunk;
+});
+process.stdin.on("end", () => {
+  JSON.parse(input);
+  let count = 0;
+  try {
+    count = Number(fs.readFileSync(process.env.POLICY_COUNT_PATH, "utf8")) || 0;
+  } catch {}
+  fs.writeFileSync(process.env.POLICY_COUNT_PATH, String(count + 1));
+  const decision = process.env.POLICY_DECISION;
+  if (decision === "allow") {
+    process.stdout.write(JSON.stringify({ protocolVersion: 1, decision }));
+    return;
+  }
+  process.stdout.write(JSON.stringify({
+    protocolVersion: 1,
+    decision,
+    reason: decision === "warn" ? "skill \\u001b[31mreview\\u001b[0m\\nrequired" : "skill blocked on re-evaluation",
+    findings: [{
+      ruleId: "proof.skill",
+      severity: decision === "warn" ? "warn" : "critical",
+      message: "Review the skill installer.",
+    }],
+  }));
+});
+`,
+    { mode: 0o700 },
+  );
+  return { scriptPath, countPath };
+}
+
+function decisionPolicyConfig(params: {
+  scriptPath: string;
+  countPath: string;
+  decision: "allow" | "warn" | "block";
+}): OpenClawConfig {
+  return {
+    security: {
+      installPolicy: {
+        enabled: true,
+        exec: {
+          source: "exec",
+          command: params.scriptPath,
+          env: {
+            POLICY_COUNT_PATH: params.countPath,
+            POLICY_DECISION: params.decision,
+          },
+          trustedDirs: [path.dirname(params.scriptPath)],
+        },
+      },
+    },
+  };
 }
 
 const workspaceSuite = createFixtureSuite("openclaw-skills-install-");
@@ -268,6 +338,87 @@ describe("installSkill before_install hooks", () => {
 
       expect(result.ok).toBe(true);
       expect(runCommandWithTimeoutMock).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("pauses recipe installs on warnings, reruns after acknowledgement, and keeps blocks terminal", async () => {
+    await withWorkspaceCase(async ({ workspaceDir }) => {
+      await writeInstallableSkill(workspaceDir, "reviewed-skill");
+      const policy = await writeDecisionPolicyScript(workspaceDir);
+      const warningConfig = decisionPolicyConfig({ ...policy, decision: "warn" });
+      const actualExec =
+        await vi.importActual<typeof import("../../process/exec.js")>("../../process/exec.js");
+      runCommandWithTimeoutMock.mockImplementation(async (args, options) => {
+        const commandArgs = args as Parameters<typeof actualExec.runCommandWithTimeout>[0];
+        const commandOptions = options as Parameters<typeof actualExec.runCommandWithTimeout>[1];
+        if (typeof commandOptions !== "number" && commandOptions.input !== undefined) {
+          return await actualExec.runCommandWithTimeout(commandArgs, commandOptions);
+        }
+        return {
+          code: 0,
+          stdout: "ok",
+          stderr: "",
+          signal: null,
+          killed: false,
+        };
+      });
+      const installerCommandCount = () =>
+        runCommandWithTimeoutMock.mock.calls.filter((call) => {
+          const options = call[1] as { input?: string } | number | undefined;
+          return typeof options === "number" || options?.input === undefined;
+        }).length;
+
+      const first = await installSkill({
+        workspaceDir,
+        skillName: "reviewed-skill",
+        installId: "deps",
+        config: warningConfig,
+      });
+
+      expect(first).toMatchObject({
+        ok: false,
+        message: "skill review\\nrequired",
+        installPolicyWarning: {
+          reason: "skill \u001b[31mreview\u001b[0m\nrequired",
+          findings: [
+            {
+              ruleId: "proof.skill",
+              severity: "warn",
+              message: "Review the skill installer.",
+            },
+          ],
+        },
+      });
+      expect(installerCommandCount()).toBe(0);
+      await expect(fs.readFile(policy.countPath, "utf8")).resolves.toBe("1");
+
+      const acknowledged = await installSkill({
+        workspaceDir,
+        skillName: "reviewed-skill",
+        installId: "deps",
+        config: warningConfig,
+        onInstallPolicyWarning: async () => true,
+      });
+
+      expect(acknowledged.ok).toBe(true);
+      expect(installerCommandCount()).toBe(1);
+      await expect(fs.readFile(policy.countPath, "utf8")).resolves.toBe("3");
+
+      runCommandWithTimeoutMock.mockClear();
+      const blocked = await installSkill({
+        workspaceDir,
+        skillName: "reviewed-skill",
+        installId: "deps",
+        config: decisionPolicyConfig({ ...policy, decision: "block" }),
+        onInstallPolicyWarning: async () => true,
+      });
+
+      expect(blocked).toMatchObject({
+        ok: false,
+        message: "blocked by install policy: skill blocked on re-evaluation",
+      });
+      expect(installerCommandCount()).toBe(0);
+      await expect(fs.readFile(policy.countPath, "utf8")).resolves.toBe("4");
     });
   });
 

@@ -23,6 +23,8 @@ type SkillsState = Parameters<typeof loadSkills>[0];
 
 type TestRequest = (method: string, payload?: unknown) => Promise<unknown>;
 
+const INSTALL_POLICY_ACKNOWLEDGEMENT_ID = `v1:${"a".repeat(43)}`;
+
 function createDeferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((resolvePromise) => {
@@ -1054,6 +1056,80 @@ describe("skill mutations", () => {
     });
   });
 
+  it("surfaces install-policy warnings and sends the exact token on retry", async () => {
+    const { state, request } = createState();
+    const warningError = new Error("Install policy warning") as Error & { details?: unknown };
+    warningError.details = {
+      installPolicyWarning: {
+        reason: "Manual review recommended.",
+        acknowledgementId: INSTALL_POLICY_ACKNOWLEDGEMENT_ID,
+        findings: [
+          {
+            ruleId: "dangerous-exec",
+            severity: "warn",
+            message: "The package launches a child process.",
+            file: "install.js",
+            line: 12,
+            evidence: "spawn(command, args)",
+          },
+        ],
+      },
+    };
+    request.mockImplementation(async (method, payload) => {
+      if (method === "skills.install") {
+        if (
+          (payload as { acknowledgeInstallPolicyWarning?: string })
+            .acknowledgeInstallPolicyWarning !== INSTALL_POLICY_ACKNOWLEDGEMENT_ID
+        ) {
+          throw warningError;
+        }
+        return { message: "Installed" };
+      }
+      return {
+        workspaceDir: "/tmp/workspace",
+        managedSkillsDir: "/tmp/skills",
+        skills: [],
+      };
+    });
+
+    await installSkill(state, "github", "GitHub", "install-123");
+
+    expect(state.skillMessages.github).toEqual({
+      kind: "error",
+      message:
+        "Manual review recommended.\n" +
+        "• [WARN · dangerous-exec · install.js:12] The package launches a child process.\n" +
+        "  ↳ spawn(command, args)",
+      acknowledgeInstallPolicyWarning: {
+        name: "GitHub",
+        installId: "install-123",
+        acknowledgementId: INSTALL_POLICY_ACKNOWLEDGEMENT_ID,
+      },
+    });
+    expect(request).toHaveBeenCalledTimes(1);
+
+    await installSkill(
+      state,
+      "github",
+      "GitHub",
+      "install-123",
+      false,
+      INSTALL_POLICY_ACKNOWLEDGEMENT_ID,
+    );
+
+    expect(request).toHaveBeenNthCalledWith(2, "skills.install", {
+      name: "GitHub",
+      installId: "install-123",
+      dangerouslyForceUnsafeInstall: false,
+      acknowledgeInstallPolicyWarning: INSTALL_POLICY_ACKNOWLEDGEMENT_ID,
+      timeoutMs: 120000,
+    });
+    expect(state.skillMessages.github).toEqual({
+      kind: "success",
+      message: "Installed",
+    });
+  });
+
   it("routes selected agent ClawHub installs through the selected workspace", async () => {
     const { state, request } = createState();
     state.skillsAgentId = "research";
@@ -1148,6 +1224,7 @@ describe("skill mutations", () => {
       acknowledgeSlug: "github",
       acknowledgeVersion: "1.2.3",
       acknowledgeLabel: "Acknowledge risk and install",
+      acknowledgeClawHubRisk: true,
     });
 
     await installFromClawHub(
@@ -1166,6 +1243,80 @@ describe("skill mutations", () => {
     expect(state.clawhubInstallMessage).toEqual({
       kind: "success",
       text: "Installed github@1.2.3",
+    });
+  });
+
+  it("preserves ClawHub trust acknowledgement when install policy also warns", async () => {
+    const { state, request } = createState();
+    state.clawhubDetailSlug = "github";
+    state.clawhubDetail = {
+      skill: null,
+      latestVersion: null,
+    };
+    const error = new Error("Install policy warning") as Error & { details?: unknown };
+    error.details = {
+      installPolicyWarning: {
+        reason: "Manual review recommended.",
+        acknowledgementId: INSTALL_POLICY_ACKNOWLEDGEMENT_ID,
+        findings: [
+          {
+            ruleId: "network-loader",
+            severity: "critical",
+            message: "The skill downloads executable code.",
+            file: "scripts/install.sh",
+            line: 8,
+            evidence: 'curl "$URL" | sh',
+          },
+        ],
+      },
+    };
+    request.mockImplementation(async (method, payload) => {
+      if (method === "skills.install") {
+        if (
+          (payload as { acknowledgeInstallPolicyWarning?: string })
+            .acknowledgeInstallPolicyWarning !== INSTALL_POLICY_ACKNOWLEDGEMENT_ID
+        ) {
+          throw error;
+        }
+        return { message: "Installed github@1.2.3" };
+      }
+      return {
+        workspaceDir: "/tmp/workspace",
+        managedSkillsDir: "/tmp/skills",
+        skills: [],
+      };
+    });
+
+    await installFromClawHub(state, "github", true, "1.2.3");
+
+    expect(state.clawhubInstallMessage).toEqual({
+      kind: "error",
+      text:
+        "Manual review recommended.\n" +
+        "• [CRITICAL · network-loader · scripts/install.sh:8] The skill downloads executable code.\n" +
+        '  ↳ curl "$URL" | sh',
+      acknowledgeSlug: "github",
+      acknowledgeVersion: "1.2.3",
+      acknowledgeClawHubRisk: true,
+      acknowledgeInstallPolicyWarning: INSTALL_POLICY_ACKNOWLEDGEMENT_ID,
+    });
+    expect(state.clawhubDetailSlug).toBeNull();
+    expect(state.clawhubDetail).toBeNull();
+
+    await installFromClawHub(
+      state,
+      "github",
+      state.clawhubInstallMessage?.acknowledgeClawHubRisk,
+      state.clawhubInstallMessage?.acknowledgeVersion,
+      state.clawhubInstallMessage?.acknowledgeInstallPolicyWarning,
+    );
+
+    expect(request).toHaveBeenNthCalledWith(2, "skills.install", {
+      source: "clawhub",
+      slug: "github",
+      version: "1.2.3",
+      acknowledgeClawHubRisk: true,
+      acknowledgeInstallPolicyWarning: INSTALL_POLICY_ACKNOWLEDGEMENT_ID,
     });
   });
 

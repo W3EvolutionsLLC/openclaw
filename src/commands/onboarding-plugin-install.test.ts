@@ -47,6 +47,16 @@ vi.mock("../plugins/install.js", () => ({
   installPluginFromNpmPackArchive,
 }));
 
+const scanBundleInstallSource = vi.hoisted(() =>
+  vi.fn<typeof import("../plugins/install-security-scan.js").scanBundleInstallSource>(
+    async () => undefined,
+  ),
+);
+vi.mock("../plugins/install-security-scan.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../plugins/install-security-scan.js")>()),
+  scanBundleInstallSource,
+}));
+
 const installPluginFromClawHub = vi.hoisted(() => vi.fn());
 vi.mock("../plugins/clawhub.js", () => ({
   CLAWHUB_INSTALL_ERROR_CODE: {
@@ -161,6 +171,10 @@ type NpmPackInstallCall = {
   config?: OpenClawConfig;
   expectedPluginId?: string;
   trustedSourceLinkedOfficialInstall?: boolean;
+  onInstallPolicyWarning?: (warning: {
+    reason: string;
+    acknowledgementId: string;
+  }) => boolean | Promise<boolean>;
 };
 
 type NpmSpecInstallCall = {
@@ -171,6 +185,10 @@ type NpmSpecInstallCall = {
   spec?: string;
   timeoutMs?: number;
   trustedSourceLinkedOfficialInstall?: boolean;
+  onInstallPolicyWarning?: (warning: {
+    reason: string;
+    acknowledgementId: string;
+  }) => boolean | Promise<boolean>;
 };
 
 type ClawHubInstallCall = {
@@ -187,6 +205,15 @@ type ClawHubInstallCall = {
     trust: unknown;
     version: string;
     warning: string;
+  }) => boolean | Promise<boolean>;
+  onInstallPolicyWarning?: (warning: {
+    reason: string;
+    findings?: Array<{
+      ruleId: string;
+      severity: "info" | "warn" | "critical";
+      message: string;
+    }>;
+    acknowledgementId: string;
   }) => boolean | Promise<boolean>;
   spec?: string;
   timeoutMs?: number;
@@ -646,6 +673,113 @@ describe("ensureOnboardingPluginInstalled", () => {
     );
   });
 
+  it("renders and confirms install policy warnings during onboarding", async () => {
+    installPluginFromClawHub.mockImplementation(async (params: ClawHubInstallCall) => {
+      const acknowledged =
+        (await params.onInstallPolicyWarning?.({
+          reason: "Scanner needs operator review",
+          findings: [
+            {
+              ruleId: "suspicious-script",
+              severity: "warn",
+              message: "Package contains an install script",
+            },
+          ],
+          acknowledgementId: "policy-warning-token",
+        })) ?? false;
+      return {
+        ok: false,
+        error: acknowledged ? "acknowledged for test" : "policy warning was not acknowledged",
+      };
+    });
+    const confirm = vi.fn(async () => true);
+    const log = vi.fn();
+
+    await ensureOnboardingPluginInstalled({
+      cfg: {},
+      entry: {
+        pluginId: "demo-plugin",
+        label: "Demo Provider",
+        install: {
+          clawhubSpec: "clawhub:demo-plugin@2026.5.2",
+          defaultChoice: "clawhub",
+        },
+      },
+      prompter: {
+        select: vi.fn(async () => "clawhub"),
+        note: vi.fn(),
+        confirm,
+        progress: vi.fn(() => ({ update: vi.fn(), stop: vi.fn() })),
+      } as never,
+      runtime: { log } as never,
+    });
+
+    expect(confirm).toHaveBeenCalledWith({
+      message: 'Install "Demo Provider" after reviewing the install policy warning above?',
+      initialValue: false,
+    });
+    const renderedWarning = log.mock.calls.map(([message]) => String(message)).join("\n");
+    expect(renderedWarning).toContain("Scanner needs operator review");
+    expect(renderedWarning).toContain("suspicious-script");
+    expect(renderedWarning).toContain("Package contains an install script");
+  });
+
+  it("does not let the install watchdog expire while policy consent is pending", async () => {
+    let rejectWatchdog: ((error: Error) => void) | undefined;
+    let finishReview: ((accepted: boolean) => void) | undefined;
+    let committed = false;
+    withTimeout.mockImplementation(
+      async <T>(promise: Promise<T>) =>
+        await Promise.race([
+          promise,
+          new Promise<T>((_resolve, reject) => {
+            rejectWatchdog = reject;
+          }),
+        ]),
+    );
+    installPluginFromNpmSpec.mockImplementation(async (params: NpmSpecInstallCall) => {
+      const accepted = await params.onInstallPolicyWarning?.({
+        reason: "Scanner needs a careful review",
+        acknowledgementId: `v1:${"w".repeat(43)}`,
+      });
+      committed = accepted === true;
+      return {
+        ok: true,
+        pluginId: "demo-plugin",
+        targetDir: "/tmp/demo-plugin",
+        version: "1.2.3",
+      };
+    });
+    const install = ensureOnboardingPluginInstalled({
+      cfg: {},
+      entry: {
+        pluginId: "demo-plugin",
+        label: "Demo Provider",
+        install: { npmSpec: "@demo/plugin@1.2.3" },
+      },
+      prompter: {
+        select: vi.fn(async () => "npm"),
+        confirm: vi.fn(
+          async () =>
+            await new Promise<boolean>((resolve) => {
+              finishReview = resolve;
+            }),
+        ),
+        progress: vi.fn(() => ({ update: vi.fn(), stop: vi.fn() })),
+      } as never,
+      runtime: { log: vi.fn() } as never,
+    });
+
+    await vi.waitFor(() => expect(finishReview).toBeDefined());
+    rejectWatchdog?.(new Error("timeout"));
+    await Promise.resolve();
+    expect(committed).toBe(false);
+
+    finishReview?.(true);
+    await expect(install).resolves.toMatchObject({ installed: true, status: "installed" });
+    expect(committed).toBe(true);
+  });
+
   it("passes npm specs and optional expected integrity to npm installs with progress", async () => {
     const cfg: OpenClawConfig = {
       security: {
@@ -717,6 +851,7 @@ describe("ensureOnboardingPluginInstalled", () => {
     expect(npmCall.expectedIntegrity).toBe("sha512-wecom");
     expect(npmCall.trustedSourceLinkedOfficialInstall).toBe(true);
     expect(npmCall.timeoutMs).toBe(300_000);
+    expect(npmCall.onInstallPolicyWarning).toEqual(expect.any(Function));
     expect(update).toHaveBeenCalledWith("Downloading");
     expect(stop).toHaveBeenCalledWith("Installed WeCom plugin");
     expect(buildNpmResolutionInstallFields).toHaveBeenCalledWith(npmResolution);
@@ -1358,6 +1493,79 @@ describe("ensureOnboardingPluginInstalled", () => {
     });
   });
 
+  it("does not enable a non-bundled local plugin when install policy warns or blocks", async () => {
+    await withTempDir({ prefix: "openclaw-onboarding-install-local-policy-" }, async (temp) => {
+      const workspaceDir = path.join(temp, "workspace");
+      const pluginDir = path.join(workspaceDir, "plugins", "demo");
+      await fs.mkdir(pluginDir, { recursive: true });
+      await fs.mkdir(path.join(workspaceDir, ".git"), { recursive: true });
+      const warning = {
+        reason: "Local plugin needs review.",
+        findings: [
+          {
+            ruleId: "dangerous-exec",
+            severity: "warn" as const,
+            message: "The plugin launches a child process.",
+          },
+        ],
+        acknowledgementId: `v1:${"a".repeat(43)}`,
+      };
+      scanBundleInstallSource.mockImplementationOnce(async (params) => {
+        expect(await params.onInstallPolicyWarning?.(warning)).toBe(false);
+        return { warning };
+      });
+      const note = vi.fn(async () => {});
+      const runtimeLog = vi.fn();
+      const runtimeError = vi.fn();
+
+      const warned = await ensureOnboardingPluginInstalled({
+        cfg: {},
+        entry: {
+          pluginId: "demo-plugin",
+          label: "Demo Plugin",
+          install: { localPath: "plugins/demo" },
+        },
+        prompter: {
+          select: vi.fn(async () => "local"),
+          confirm: vi.fn(async () => false),
+          note,
+        } as never,
+        runtime: { log: runtimeLog, error: runtimeError } as never,
+        workspaceDir,
+      });
+
+      expect(warned).toMatchObject({ cfg: {}, installed: false, status: "failed" });
+      expect(runtimeLog).toHaveBeenCalledWith(expect.stringContaining("dangerous-exec"));
+      expect(enablePluginInConfig).not.toHaveBeenCalled();
+      expect(recordPluginInstall).not.toHaveBeenCalled();
+
+      scanBundleInstallSource.mockResolvedValueOnce({
+        blocked: {
+          code: "security_scan_blocked",
+          reason: "blocked by install policy: local plugin rejected",
+        },
+      });
+      const blocked = await ensureOnboardingPluginInstalled({
+        cfg: {},
+        entry: {
+          pluginId: "demo-plugin",
+          label: "Demo Plugin",
+          install: { localPath: "plugins/demo" },
+        },
+        prompter: {
+          select: vi.fn(async () => "local"),
+          note,
+        } as never,
+        runtime: { error: runtimeError } as never,
+        workspaceDir,
+      });
+
+      expect(blocked).toMatchObject({ cfg: {}, installed: false, status: "failed" });
+      expect(enablePluginInConfig).not.toHaveBeenCalled();
+      expect(recordPluginInstall).not.toHaveBeenCalled();
+    });
+  });
+
   it("allows local installs for linked git worktrees", async () => {
     await withTempDir({ prefix: "openclaw-onboarding-install-worktree-" }, async (temp) => {
       const workspaceDir = path.join(temp, "workspace");
@@ -1477,9 +1685,9 @@ describe("ensureOnboardingPluginInstalled", () => {
       // pipeline must agree on the local path: the catalog-driven
       // resolver (used when an npm spec is present) and the pluginId
       // fallback. We stub both so the prompt sees a stable bundled path.
-      resolveBundledInstallPlanForCatalogEntry.mockReturnValue({
-        bundledSource: { localPath: realBundledDir },
-      });
+      resolveBundledInstallPlanForCatalogEntry
+        .mockReturnValueOnce({ bundledSource: { localPath: realBundledDir } })
+        .mockReturnValueOnce({ bundledSource: { localPath: realBundledDir } });
       findBundledPluginSourceInMap.mockReturnValue({ localPath: realBundledDir });
 
       let captured:
@@ -1574,6 +1782,68 @@ describe("ensureOnboardingPluginInstalled", () => {
       expect(result.cfg.plugins?.load?.paths).toBeUndefined();
       expect(result.cfg.plugins?.installs).toBeUndefined();
       expect(recordPluginInstall).not.toHaveBeenCalled();
+      expect(scanBundleInstallSource).toHaveBeenCalledWith(
+        expect.objectContaining({
+          pluginId: "discord",
+          source: { kind: "bundled", authority: "openclaw", mutable: false, network: false },
+        }),
+      );
+    });
+  });
+
+  it("keeps bundled plugin warnings and re-evaluated blocks ahead of config mutation", async () => {
+    await withTempDir({ prefix: "openclaw-onboarding-install-bundled-policy-" }, async (temp) => {
+      const bundledDir = path.join(temp, "dist", "extensions", "discord");
+      await fs.mkdir(bundledDir, { recursive: true });
+      const realBundledDir = await fs.realpath(bundledDir);
+      resolveBundledInstallPlanForCatalogEntry
+        .mockReturnValueOnce({ bundledSource: { localPath: realBundledDir } })
+        .mockReturnValueOnce({ bundledSource: { localPath: realBundledDir } });
+      const warning = {
+        reason: "Bundled plugin needs operator review.",
+        acknowledgementId: `v1:${"b".repeat(43)}`,
+      };
+      const beforePersistentEffect = vi.fn(async () => {});
+      scanBundleInstallSource
+        .mockImplementationOnce(async (params) => {
+          expect(await params.onInstallPolicyWarning?.(warning)).toBe(false);
+          return { warning };
+        })
+        .mockImplementationOnce(async (params) => {
+          expect(await params.onInstallPolicyWarning?.(warning)).toBe(true);
+          return {
+            blocked: {
+              code: "security_scan_blocked",
+              reason: "blocked by install policy after review",
+            },
+          };
+        });
+
+      const install = async (acknowledge: boolean) =>
+        await ensureOnboardingPluginInstalled({
+          cfg: {},
+          entry: {
+            pluginId: "discord",
+            label: "Discord",
+            install: { npmSpec: "@openclaw/discord" },
+          },
+          prompter: {
+            select: vi.fn(async () => "local"),
+            confirm: vi.fn(async () => acknowledge),
+            note: vi.fn(async () => {}),
+          } as never,
+          runtime: { log: vi.fn(), error: vi.fn() } as never,
+          promptInstall: false,
+          beforePersistentEffect,
+        });
+
+      await expect(install(false)).resolves.toMatchObject({ installed: false, status: "failed" });
+      await expect(install(true)).resolves.toMatchObject({ installed: false, status: "failed" });
+      expect(scanBundleInstallSource).toHaveBeenCalledTimes(2);
+      expect(enablePluginInConfig).not.toHaveBeenCalled();
+      expect(recordPluginInstall).not.toHaveBeenCalled();
+      expect(beforePersistentEffect).not.toHaveBeenCalled();
+      resolveBundledInstallPlanForCatalogEntry.mockReset();
     });
   });
 
@@ -1637,6 +1907,13 @@ describe("ensureOnboardingPluginInstalled", () => {
             spec: "@demo/plugin@1.2.3",
           },
         });
+        expect(scanBundleInstallSource).toHaveBeenCalledWith(
+          expect.objectContaining({
+            mode: "install",
+            pluginId: "demo-plugin",
+            source: { kind: "local-path", authority: "user", mutable: true, network: false },
+          }),
+        );
       },
     );
   });

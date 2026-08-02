@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
+import { PluginInstallCommandFailure } from "../cli/plugins-install-command.js";
+import { PLUGIN_INSTALL_ERROR_CODE } from "../plugins/install-types.js";
 import { digestClawPackageRef } from "./package-update-provenance.js";
 import { applyClawPackageUpdate } from "./package-update.js";
 import { installClawPackages } from "./packages.js";
@@ -279,6 +281,67 @@ describe("applyClawPackageUpdate", () => {
       ),
     ).rejects.toMatchObject({ partial: false });
     expect(installPackages).not.toHaveBeenCalled();
+  });
+
+  it("rolls back provenance without reporting partial state when a plugin warning is declined", async () => {
+    const integrity = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const policyAddPlan: ClawAddPlan = {
+      ...addPlan,
+      actions: addPlan.actions.map((action) =>
+        action.id === "plugin:audit"
+          ? { ...action, details: { ...action.details, integrity } }
+          : action,
+      ),
+    };
+    const replaceExpected = vi.fn();
+    const installPlugin = vi
+      .fn()
+      .mockRejectedValue(
+        new PluginInstallCommandFailure(
+          "install policy warning requires acknowledgement",
+          PLUGIN_INSTALL_ERROR_CODE.INSTALL_POLICY_ACKNOWLEDGEMENT_REQUIRED,
+        ),
+      );
+
+    await expect(
+      applyClawPackageUpdate(
+        plan([
+          {
+            kind: "package",
+            id: "plugin:audit",
+            action: "add",
+            target: "clawhub:audit@1.0.0",
+            blocked: false,
+            reason: "added",
+          },
+        ]),
+        manifest,
+        policyAddPlan,
+        {
+          readRefs: () => [],
+          replaceExpected,
+          onInstallPolicyWarning: vi.fn(async () => false),
+          packageDeps: {
+            installPlugin,
+            probePlugin: vi.fn().mockResolvedValue({
+              ok: true,
+              pluginId: "audit",
+              clawhub: { integrity },
+            }),
+            preflightPlugin: vi.fn().mockResolvedValue({ ok: true, action: "install" }),
+            acquirePackageLease: vi.fn(() => ({ heartbeat: vi.fn(), release: vi.fn() })),
+          },
+        },
+      ),
+    ).rejects.toMatchObject({
+      message: "install policy warning requires acknowledgement",
+      partial: false,
+    });
+    expect(replaceExpected).toHaveBeenLastCalledWith(
+      expect.objectContaining({ status: "failed" }),
+      undefined,
+      expect.any(Object),
+    );
   });
 
   it("rejects release when package provenance changed after planning", async () => {

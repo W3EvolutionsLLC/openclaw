@@ -9,6 +9,15 @@ const managementMocks = vi.hoisted(() => {
     readonly code?: string;
     readonly version?: string;
     readonly warning?: string;
+    readonly installPolicyWarning?: {
+      reason: string;
+      acknowledgementId?: string;
+      findings?: Array<{
+        ruleId: string;
+        severity: "info" | "warn" | "critical";
+        message: string;
+      }>;
+    };
 
     constructor(
       message: string,
@@ -17,6 +26,15 @@ const managementMocks = vi.hoisted(() => {
         code?: string;
         version?: string;
         warning?: string;
+        installPolicyWarning?: {
+          reason: string;
+          acknowledgementId?: string;
+          findings?: Array<{
+            ruleId: string;
+            severity: "info" | "warn" | "critical";
+            message: string;
+          }>;
+        };
       },
     ) {
       super(message);
@@ -24,6 +42,7 @@ const managementMocks = vi.hoisted(() => {
       this.code = details?.code;
       this.version = details?.version;
       this.warning = details?.warning;
+      this.installPolicyWarning = details?.installPolicyWarning;
     }
   }
   return {
@@ -35,6 +54,8 @@ const managementMocks = vi.hoisted(() => {
   };
 });
 const searchMock = vi.hoisted(() => vi.fn());
+const WARNING_A_ID = `v1:${"a".repeat(43)}`;
+const WARNING_B_ID = `v1:${"b".repeat(43)}`;
 
 vi.mock("../../plugins/management-service.js", () => ({
   ManagedPluginLifecycleError: managementMocks.ManagedPluginLifecycleError,
@@ -288,6 +309,7 @@ describe("plugin management Gateway handlers", () => {
       packageName: "@openclaw/diffs",
       version: "1.2.3",
       acknowledgeClawHubRisk: true,
+      acknowledgeInstallPolicyWarning: WARNING_A_ID,
     });
 
     expect(managementMocks.install).toHaveBeenCalledWith({
@@ -296,6 +318,7 @@ describe("plugin management Gateway handlers", () => {
         packageName: "@openclaw/diffs",
         version: "1.2.3",
         acknowledgeClawHubRisk: true,
+        acknowledgeInstallPolicyWarning: WARNING_A_ID,
       },
     });
   });
@@ -323,6 +346,50 @@ describe("plugin management Gateway handlers", () => {
         clawhubTrustCode: "clawhub_risk_acknowledgement_required",
         version: "1.2.3",
         warning: "Suspicious release",
+      },
+    });
+  });
+
+  it("returns structured install-policy warning details", async () => {
+    managementMocks.install.mockRejectedValue(
+      new managementMocks.ManagedPluginLifecycleError("Manual review recommended.", {
+        kind: "invalid-request",
+        code: "install_policy_acknowledgement_required",
+        installPolicyWarning: {
+          reason: "Manual review recommended.",
+          acknowledgementId: WARNING_B_ID,
+          findings: [
+            {
+              ruleId: "dangerous-exec",
+              severity: "warn",
+              message: "The package launches a child process.",
+            },
+          ],
+        },
+      }),
+    );
+
+    const result = await callHandler("plugins.install", {
+      source: "official",
+      pluginId: "workboard",
+      acknowledgeInstallPolicyWarning: WARNING_A_ID,
+    });
+
+    expect(result.error).toMatchObject({
+      code: "INVALID_REQUEST",
+      message: "Manual review recommended.",
+      details: {
+        installPolicyWarning: {
+          reason: "Manual review recommended.",
+          acknowledgementId: `${WARNING_A_ID}.${WARNING_B_ID.slice("v1:".length)}`,
+          findings: [
+            {
+              ruleId: "dangerous-exec",
+              severity: "warn",
+              message: "The package launches a child process.",
+            },
+          ],
+        },
       },
     });
   });

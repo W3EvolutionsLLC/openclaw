@@ -44,6 +44,7 @@ export type HooksCheckOptions = {
 type HooksUpdateOptions = {
   all?: boolean;
   dryRun?: boolean;
+  dangerouslyForceUnsafeInstall?: boolean;
 };
 
 function mergeHookEntries(pluginEntries: HookEntry[], workspaceEntries: HookEntry[]): HookEntry[] {
@@ -577,12 +578,27 @@ export function registerHooksCli(program: Command): void {
     .option("-l, --link", "Link a local path instead of copying", false)
     .option("--pin", "Record npm installs as exact resolved <name>@<version>", false)
     .option("--force", "Confirm non-ClawHub sources and overwrite an existing hook pack", false)
-    .action(async (raw: string, opts: { force?: boolean; link?: boolean; pin?: boolean }) => {
-      defaultRuntime.log(
-        theme.warn("`openclaw hooks install` is deprecated; use `openclaw plugins install`."),
-      );
-      await runPluginInstallCommand({ raw, opts, invalidateRuntimeCache: false });
-    });
+    .option(
+      "--dangerously-force-unsafe-install",
+      "Acknowledge reviewed install policy warnings",
+      false,
+    )
+    .action(
+      async (
+        raw: string,
+        opts: {
+          dangerouslyForceUnsafeInstall?: boolean;
+          force?: boolean;
+          link?: boolean;
+          pin?: boolean;
+        },
+      ) => {
+        defaultRuntime.log(
+          theme.warn("`openclaw hooks install` is deprecated; use `openclaw plugins install`."),
+        );
+        await runPluginInstallCommand({ raw, opts, invalidateRuntimeCache: false });
+      },
+    );
 
   hooks
     .command("update")
@@ -590,6 +606,11 @@ export function registerHooksCli(program: Command): void {
     .argument("[id]", "Hook pack id (omit with --all)")
     .option("--all", "Update all tracked hooks", false)
     .option("--dry-run", "Show what would change without writing", false)
+    .option(
+      "--dangerously-force-unsafe-install",
+      "Acknowledge reviewed install policy warnings",
+      false,
+    )
     .action(async (id: string | undefined, opts: HooksUpdateOptions) => {
       defaultRuntime.log(
         theme.warn("`openclaw hooks update` is deprecated; use `openclaw plugins update`."),

@@ -1,4 +1,6 @@
+import { formatInstallPolicyWarningDetails } from "../../../packages/gateway-protocol/src/install-policy-warning-details.js";
 import { stripAnsi } from "../../../packages/terminal-core/src/ansi.js";
+import { sanitizeTerminalText } from "../../../packages/terminal-core/src/safe-text.js";
 import { resolvePluginInstallSourcePlan } from "../../cli/plugin-install-plan.js";
 import { createPluginInstallLogger } from "../../cli/plugins-command-helpers.js";
 import { CLAWHUB_INSTALL_ERROR_CODE } from "../../plugins/clawhub.js";
@@ -8,6 +10,7 @@ import {
   NON_CLAWHUB_INSTALL_FORCE_FLAG,
   type NonClawHubInstallSourceClass,
 } from "../../plugins/install-provenance.js";
+import { PLUGIN_INSTALL_ERROR_CODE } from "../../plugins/install-types.js";
 import { installManagedPluginSource } from "../../plugins/management-service.js";
 
 function resolveNonClawHubChatInstallAcknowledgement(params: {
@@ -73,6 +76,15 @@ export async function installPluginFromPluginsCommand(params: {
       return {
         ok: false,
         error: `${warningPrefix}${result.error} The /plugins chat command cannot acknowledge ClawHub risk; run the local openclaw plugins install command with --acknowledge-clawhub-risk from a trusted shell after reviewing the warning.`,
+      };
+    }
+    if (result.code === PLUGIN_INSTALL_ERROR_CODE.INSTALL_POLICY_ACKNOWLEDGEMENT_REQUIRED) {
+      const details = result.installPolicyWarning
+        ? formatInstallPolicyWarningDetails(result.installPolicyWarning, sanitizeTerminalText)
+        : result.error;
+      return {
+        ok: false,
+        error: `${warningPrefix}${details} The /plugins chat command cannot acknowledge install policy warnings; run the local openclaw plugins install command with --dangerously-force-unsafe-install from a trusted shell after reviewing the warning.`,
       };
     }
     return { ok: false, error: `${warningPrefix}${result.error}` };

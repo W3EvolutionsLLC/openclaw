@@ -9,6 +9,7 @@ import {
   resetGlobalHookRunner,
 } from "../../plugins/hook-runner-global.js";
 import { createMockPluginRegistry } from "../../plugins/hooks.test-fixtures.js";
+import { createInstallPolicyWarningAcknowledger } from "../../plugins/install-security-scan.js";
 import { createTrackedTempDirs } from "../../test-utils/tracked-temp-dirs.js";
 import {
   CLAWHUB_SKILL_ARCHIVE_ROOT_MARKERS,
@@ -178,6 +179,87 @@ describe("skill archive install", () => {
       scannedFiles: 0,
       findings: [],
     });
+  });
+
+  it("keeps skill warning tokens stable from scan-only staging through install", async () => {
+    const root = await tempDirs.make("openclaw-skill-warning-staging-");
+    await fs.chmod(root, 0o700);
+    const workspaceDir = path.join(root, "workspace");
+    const extractedRoot = path.join(root, "extracted");
+    const targetDir = path.join(workspaceDir, "skills", "staged-warning");
+    const policyPath = path.join(root, "warn-policy.cjs");
+    await fs.mkdir(extractedRoot, { recursive: true });
+    await fs.writeFile(path.join(extractedRoot, "SKILL.md"), skillFileContent("Staged Warning"));
+    await fs.writeFile(
+      policyPath,
+      `#!${process.execPath}\nlet input = "";\nprocess.stdin.setEncoding("utf8");\nprocess.stdin.on("data", (chunk) => { input += chunk; });\nprocess.stdin.on("end", () => {\n  JSON.parse(input);\n  process.stdout.write(JSON.stringify({ protocolVersion: 1, decision: "warn", reason: "review staged skill" }));\n});\n`,
+      "utf8",
+    );
+    await fs.chmod(policyPath, 0o700);
+    const config = {
+      security: {
+        installPolicy: {
+          enabled: true,
+          exec: {
+            source: "exec" as const,
+            command: policyPath,
+            trustedDirs: [root],
+          },
+        },
+      },
+    };
+    let acknowledgementId: string | undefined;
+    const policy = {
+      config,
+      installId: "clawhub",
+      origin: { type: "clawhub" as const, slug: "staged-warning", version: "1.0.0" },
+      source: {
+        kind: "clawhub" as const,
+        authority: "openclaw" as const,
+        mutable: false,
+        network: true,
+      },
+      requestedSpecifier: "clawhub:staged-warning@1.0.0",
+    };
+
+    const planned = await installExtractedSkillRoot({
+      workspaceDir,
+      slug: "staged-warning",
+      extractedRoot,
+      mode: "install",
+      scanOnly: true,
+      policy: {
+        ...policy,
+        onInstallPolicyWarning: async (warning) => {
+          acknowledgementId = warning.acknowledgementId;
+          return true;
+        },
+      },
+    });
+
+    expect(planned.ok).toBe(true);
+    expect(acknowledgementId).toMatch(/^v1:/);
+    await expect(fs.stat(targetDir)).rejects.toMatchObject({ code: "ENOENT" });
+    const acknowledgeWarning = createInstallPolicyWarningAcknowledger(acknowledgementId);
+    if (!acknowledgeWarning) {
+      throw new Error("expected a staged skill policy acknowledgement");
+    }
+
+    const installed = await installExtractedSkillRoot({
+      workspaceDir,
+      slug: "staged-warning",
+      extractedRoot,
+      mode: "install",
+      policy: {
+        ...policy,
+        onInstallPolicyWarning: acknowledgeWarning,
+      },
+    });
+
+    expect(installed.ok).toBe(true);
+    await expect(fs.readFile(path.join(targetDir, "SKILL.md"), "utf8")).resolves.toContain(
+      "Staged Warning",
+    );
   });
 
   it("keeps legacy skill-upload origin for before_install hooks", async () => {

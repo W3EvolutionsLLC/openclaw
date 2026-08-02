@@ -1,5 +1,7 @@
 import { redactSensitiveUrlLikeString } from "@openclaw/net-policy/redact-sensitive-url";
 import { stableStringify } from "@openclaw/normalization-core";
+import { formatInstallPolicyWarningDetails } from "../../packages/gateway-protocol/src/install-policy-warning-details.js";
+import { sanitizeTerminalText } from "../../packages/terminal-core/src/safe-text.js";
 import {
   listAgentEntries,
   listAgentIds,
@@ -9,6 +11,7 @@ import {
   applyClawAddPlan,
   CLAW_ADD_RESULT_SCHEMA_VERSION,
   ClawAddMutationError,
+  readClawAddPlanInstallPolicyWarnings,
 } from "../claws/add.js";
 import { assertExperimentalClawsEnabled } from "../claws/experimental.js";
 import {
@@ -24,7 +27,7 @@ import {
   ClawRemoveError,
   readClawStatus,
 } from "../claws/lifecycle-state.js";
-import { buildClawAddPlan } from "../claws/lifecycle.js";
+import { buildClawAddPlan, type ClawAddPlanContext } from "../claws/lifecycle.js";
 import { preflightClawPackage } from "../claws/packages.js";
 import { readClawInstallRecord } from "../claws/provenance.js";
 import { readClawManifestFile } from "../claws/reader.js";
@@ -38,10 +41,6 @@ import {
 import { getRuntimeConfig } from "../config/config.js";
 import { listConfiguredMcpServers } from "../config/mcp-config.js";
 import { redactSensitiveArgv } from "../config/redact-argv.js";
-import {
-  loadCronJobsStoreWithConfigJobsReadOnly,
-  resolveCronJobsStorePath,
-} from "../cron/store.js";
 import { redactSensitiveText } from "../logging/redact.js";
 import { defaultRuntime, writeRuntimeJson, type RuntimeEnv } from "../runtime.js";
 import { waitUntilGatewayConfigApplied } from "./claws-cli.gateway-readiness.js";
@@ -53,6 +52,10 @@ import type {
   ClawsStatusOptions,
 } from "./claws-cli.js";
 import { callGatewayFromCli } from "./gateway-rpc.js";
+import {
+  buildInstallPolicyAcknowledgementRequiredError,
+  resolveInstallPolicyAcknowledgementCliOptions,
+} from "./install-policy-acknowledgement.js";
 
 type DiagnosticLike = { level: string; code: string; path: string; message: string };
 
@@ -102,6 +105,13 @@ function logClawAddPlanSummary(plan: ClawAddPlan, runtime: RuntimeEnv): void {
   }
   if (plan.summary.blockedActions > 0) {
     runtime.log(`Blocked actions: ${plan.summary.blockedActions}`);
+  }
+  const installPolicyWarnings = readClawAddPlanInstallPolicyWarnings(plan);
+  if (installPolicyWarnings.length > 0) {
+    runtime.log(`Install policy warnings (${installPolicyWarnings.length}):`);
+    for (const warning of installPolicyWarnings) {
+      runtime.log(formatInstallPolicyWarningDetails(warning, sanitizeTerminalText));
+    }
   }
 }
 
@@ -252,15 +262,14 @@ export async function runClawsAddCommand(
   const existingWorkspacePaths = existingAgentIds.map((agentId) =>
     resolveAgentWorkspaceDir(config, agentId),
   );
-  const cronStore = await loadCronJobsStoreWithConfigJobsReadOnly(resolveCronJobsStorePath());
-  const basePlanContext = {
+  const basePlanContext: ClawAddPlanContext = {
     ...(opts.agentId ? { agentId: opts.agentId } : {}),
     ...(opts.workspace ? { workspace: opts.workspace } : {}),
     existingAgentIds,
     existingWorkspacePaths,
     existingMcpServers: listedMcpServers.mcpServers,
-    existingCronJobIds: cronStore.store.jobs.map((job) => job.id),
-    packagePreflight: preflightClawPackage,
+    packagePreflight: async (pkg, workspace) =>
+      await preflightClawPackage(pkg, workspace, { config }),
   };
   let plan = await buildClawAddPlan({
     manifest: result.manifest,
@@ -342,10 +351,26 @@ export async function runClawsAddCommand(
   }
 
   let addResult;
+  let installPolicyAcknowledgementGuidance: string | undefined;
   try {
+    const installPolicyAcknowledgementOptions = resolveInstallPolicyAcknowledgementCliOptions({
+      dangerouslyForceUnsafeInstall: opts.dangerouslyForceUnsafeInstall,
+      action: "install",
+      allowPrompt: !opts.json,
+      reportError: (message) => {
+        if (opts.json) {
+          installPolicyAcknowledgementGuidance = message;
+        } else {
+          runtime.error(message);
+        }
+      },
+    });
     addResult = await applyClawAddPlan(plan, {
       consentPlanIntegrity: opts.planIntegrity,
       runtime: opts.json ? { ...runtime, log: () => undefined } : runtime,
+      config,
+      ...installPolicyAcknowledgementOptions,
+      acknowledgeUnplannedInstallPolicyWarnings: opts.dangerouslyForceUnsafeInstall === true,
       cronGateway: {
         add: async (input) => await callGatewayFromCli("cron.add", {}, input),
         list: async (agentId) =>
@@ -356,12 +381,18 @@ export async function runClawsAddCommand(
   } catch (error) {
     const code = error instanceof ClawAddMutationError ? error.code : "add_failed";
     const message = (error as Error).message;
+    const structuredError = installPolicyAcknowledgementGuidance
+      ? buildInstallPolicyAcknowledgementRequiredError(
+          message,
+          installPolicyAcknowledgementGuidance,
+        )
+      : { code, message };
     if (opts.json) {
       writeRuntimeJson(runtime, {
         schemaVersion: CLAW_ADD_RESULT_SCHEMA_VERSION,
         stability: CLAW_OUTPUT_STABILITY,
         status: "failed",
-        error: { code, message },
+        error: structuredError,
       });
     } else {
       runtime.error(message);
@@ -371,7 +402,18 @@ export async function runClawsAddCommand(
   }
 
   if (opts.json) {
-    writeRuntimeJson(runtime, addResult);
+    writeRuntimeJson(
+      runtime,
+      installPolicyAcknowledgementGuidance && addResult.status !== "complete"
+        ? {
+            ...addResult,
+            error: buildInstallPolicyAcknowledgementRequiredError(
+              addResult.error?.message ?? "Install paused by policy.",
+              installPolicyAcknowledgementGuidance,
+            ),
+          }
+        : addResult,
+    );
   } else {
     logExperimentalWarning(runtime);
     runtime.log(`Added agent: ${addResult.agent.finalId}`);

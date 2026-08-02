@@ -241,6 +241,12 @@ workspace files, installs or reuses declared skill and plugin artifacts, and
 records package, MCP, and cron provenance. Existing files are not overwritten,
 and retries fail closed when owned content drifted.
 
+If a declared skill or plugin returns an operator install-policy warning, an
+interactive add asks for confirmation before the package is committed. For a
+reviewed noninteractive run, add `--dangerously-force-unsafe-install`; OpenClaw
+reruns the policy before continuing, and the flag cannot override `block` or a
+policy failure.
+
 ## Inspect installed state
 
 ```bash
@@ -305,6 +311,10 @@ mutation, OpenClaw reports error code `update_partial` with structured
 `status: partial`, preserves uncertain provenance,
 and stops. Inspect `claws status`, the affected resource, and `openclaw doctor`;
 then preview again before retrying or removing anything.
+
+Claw updates use the same install-policy warning flow as adds. Interactive
+updates ask for confirmation; reviewed noninteractive updates can use
+`--dangerously-force-unsafe-install` and still rerun policy before commit.
 
 ## Remove an installed Claw
 

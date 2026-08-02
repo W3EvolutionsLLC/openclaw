@@ -23,6 +23,7 @@ import {
 import { cleanupStaleManagedServiceUpdateHandoffs } from "../infra/update-managed-service-handoff-cleanup.js";
 import type { UpdateRunResult } from "../infra/update-runner.js";
 import { CLAWHUB_INSTALL_ERROR_CODE } from "../plugins/clawhub-error-codes.js";
+import type { InstallPolicyWarning } from "../plugins/install-security-scan.js";
 import { captureEnv, withEnvAsync } from "../test-utils/env.js";
 import { VERSION } from "../version.js";
 import { createCliRuntimeCapture, getMockCallOutput } from "./test-runtime-capture.js";
@@ -37,6 +38,7 @@ const isCancel = (value: unknown) => value === "cancel";
 type ClawHubRiskHandler = (
   request: ClawHubRiskAcknowledgementRequest,
 ) => boolean | Promise<boolean>;
+type InstallPolicyWarningHandler = (warning: InstallPolicyWarning) => boolean | Promise<boolean>;
 
 const readPackageName = vi.fn();
 const readPackageVersion = vi.fn();
@@ -705,6 +707,12 @@ describe("update-cli", () => {
   ): call is Record<string, unknown> & { onClawHubRisk: ClawHubRiskHandler } =>
     typeof call?.onClawHubRisk === "function";
 
+  const hasInstallPolicyWarningHandler = (
+    call: Record<string, unknown> | undefined,
+  ): call is Record<string, unknown> & {
+    onInstallPolicyWarning: InstallPolicyWarningHandler;
+  } => typeof call?.onInstallPolicyWarning === "function";
+
   const getConfirmMessage = (): string => {
     const options = confirm.mock.calls[0]?.[0];
     if (!options || typeof options !== "object" || !("message" in options)) {
@@ -1005,7 +1013,26 @@ describe("update-cli", () => {
   const pluginSyncResult = (
     config: OpenClawConfig,
     changed = false,
-    overrides: { warnings?: string[]; errors?: string[] } = {},
+    overrides: {
+      warnings?: string[];
+      errors?: string[];
+      installPolicyWarnings?: Array<{
+        error: string;
+        pluginId: string;
+        warning: {
+          reason: string;
+          acknowledgementId?: string;
+          findings?: Array<{
+            ruleId: string;
+            severity: "info" | "warn" | "critical";
+            message: string;
+            file?: string;
+            line?: number;
+            evidence?: string;
+          }>;
+        };
+      }>;
+    } = {},
   ) => ({
     changed,
     config,
@@ -1867,6 +1894,33 @@ describe("update-cli", () => {
     ]);
   });
 
+  it("carries install policy acknowledgement into post-core resume", async () => {
+    const { entrypoints } = setupUpdatedRootRefresh({
+      gatewayUpdateImpl: async (root) =>
+        makeOkUpdateResult({
+          mode: "git",
+          root,
+          before: { sha: "old-sha", version: "2026.4.26" },
+          after: { sha: "new-sha", version: "2026.4.27" },
+        }),
+    });
+
+    await updateCommand({
+      channel: "dev",
+      yes: true,
+      restart: false,
+      dangerouslyForceUnsafeInstall: true,
+    });
+
+    expect(spawnCall()?.[1]).toEqual([
+      entrypoints[0],
+      "update",
+      "--no-restart",
+      "--yes",
+      "--dangerously-force-unsafe-install",
+    ]);
+  });
+
   it("keeps downgrade post-update work in the current process", async () => {
     const downgradedRoot = createCaseDir("openclaw-downgraded-root");
     setupUpdatedRootRefresh({
@@ -2439,6 +2493,104 @@ describe("update-cli", () => {
     );
     expect(jsonOutput?.postUpdate?.plugins?.npm.outcomes[0]?.message).toContain(
       "Run openclaw plugins inspect demo --runtime --json for details.",
+    );
+  });
+
+  it("includes install-policy acknowledgement guidance in json plugin warnings", async () => {
+    const policyWarning = {
+      reason: "Manual review required.",
+      acknowledgementId: "policy-warning-token",
+      findings: [
+        {
+          ruleId: "dangerous-exec",
+          severity: "critical" as const,
+          message: "Launches an executable.",
+          file: "index.js",
+          line: 12,
+          evidence: "exec(command)",
+        },
+      ],
+    };
+    const policyError = "Failed to update demo: Manual review required.";
+    const unrelatedError = "Failed to update unrelated: registry unavailable.";
+    syncPluginsForUpdateChannel.mockImplementationOnce(
+      async (params: {
+        config: OpenClawConfig;
+        onInstallPolicyWarning?: (warning: {
+          reason: string;
+          acknowledgementId: string;
+        }) => Promise<boolean>;
+      }) => {
+        await params.onInstallPolicyWarning?.(policyWarning);
+        return pluginSyncResult(params.config, false, {
+          errors: [policyError, unrelatedError],
+          installPolicyWarnings: [{ error: policyError, pluginId: "demo", warning: policyWarning }],
+        });
+      },
+    );
+
+    await updateCommand({ json: true, restart: false });
+
+    const jsonOutput = lastWriteJsonCall() as UpdateRunResult | undefined;
+    const policyOutput = jsonOutput?.postUpdate?.plugins?.warnings?.find(
+      (warning) => warning.pluginId === "demo",
+    );
+    const unrelatedOutput = jsonOutput?.postUpdate?.plugins?.warnings?.find((warning) =>
+      warning.reason.includes("registry unavailable"),
+    );
+    expect(policyOutput?.guidance).toContain(
+      "Review the install policy warning, then run openclaw update repair --dangerously-force-unsafe-install to acknowledge it and retry.",
+    );
+    expect(policyOutput?.message).toContain(
+      "openclaw update repair --dangerously-force-unsafe-install",
+    );
+    expect(policyOutput?.reason).toContain(
+      "• [CRITICAL · dangerous-exec · index.js:12] Launches an executable.",
+    );
+    expect(policyOutput?.reason).toContain("↳ exec(command)");
+    expect(unrelatedOutput?.guidance).not.toContain(
+      "Review the install policy warning, then run openclaw update repair --dangerously-force-unsafe-install to acknowledge it and retry.",
+    );
+  });
+
+  it("preserves install-policy findings from npm update outcomes in json", async () => {
+    updateNpmInstalledPlugins.mockImplementationOnce(async ({ config }) => ({
+      changed: false,
+      config,
+      outcomes: [
+        {
+          pluginId: "demo",
+          status: "error" as const,
+          code: "install_policy_acknowledgement_required",
+          message: "Failed to update demo: Manual review required.",
+          installPolicyWarning: {
+            reason: "Manual review required.",
+            findings: [
+              {
+                ruleId: "secret-material",
+                severity: "warn" as const,
+                message: "Contains a test credential.",
+                file: "fixture.env",
+                evidence: "TOKEN=redacted",
+              },
+            ],
+          },
+        },
+      ],
+    }));
+
+    await updateCommand({ json: true, restart: false });
+
+    const jsonOutput = lastWriteJsonCall() as UpdateRunResult | undefined;
+    const warning = jsonOutput?.postUpdate?.plugins?.warnings?.find(
+      (entry) => entry.pluginId === "demo",
+    );
+    expect(warning?.reason).toContain(
+      "• [WARN · secret-material · fixture.env] Contains a test credential.",
+    );
+    expect(warning?.reason).toContain("↳ TOKEN=redacted");
+    expect(warning?.guidance).toContain(
+      "Review the install policy warning, then run openclaw update repair --dangerously-force-unsafe-install to acknowledge it and retry.",
     );
   });
 
@@ -3269,6 +3421,40 @@ describe("update-cli", () => {
 
     expect(syncPluginCall()?.acknowledgeClawHubRisk).toBe(true);
     expect(npmPluginUpdateCall()?.acknowledgeClawHubRisk).toBe(true);
+  });
+
+  it("parses update --dangerously-force-unsafe-install as the update command option", async () => {
+    const tempDir = createCaseDir("openclaw-update");
+    mockPackageInstallStatus(tempDir);
+    const program = new Command();
+    program.name("openclaw");
+    program.exitOverride();
+    registerUpdateCli(program);
+
+    await program.parseAsync([
+      "node",
+      "openclaw",
+      "update",
+      "--channel",
+      "beta",
+      "--yes",
+      "--no-restart",
+      "--dangerously-force-unsafe-install",
+    ]);
+
+    const syncCall = syncPluginCall();
+    const updateCall = npmPluginUpdateCall();
+    expect(hasInstallPolicyWarningHandler(syncCall)).toBe(true);
+    expect(hasInstallPolicyWarningHandler(updateCall)).toBe(true);
+    if (!hasInstallPolicyWarningHandler(syncCall)) {
+      throw new Error("expected install policy warning handler");
+    }
+    await expect(
+      syncCall.onInstallPolicyWarning({
+        reason: "review required",
+        acknowledgementId: "policy-warning-token",
+      }),
+    ).resolves.toBe(true);
   });
 
   it.each([
@@ -5990,6 +6176,26 @@ describe("update-cli", () => {
     expect(lastNpmPluginUpdateCall()?.acknowledgeClawHubRisk).toBe(true);
     expect(runPostCorePluginConvergenceSpy).toHaveBeenCalledWith(
       expect.objectContaining({ acknowledgeClawHubRisk: true }),
+    );
+  });
+
+  it("forwards one install policy acknowledgement handler through post-update plugin work", async () => {
+    const tempDir = createCaseDir("openclaw-update");
+    mockPackageInstallStatus(tempDir);
+
+    await updateCommand({
+      channel: "beta",
+      yes: true,
+      restart: false,
+      dangerouslyForceUnsafeInstall: true,
+    });
+
+    const calls = [syncPluginCall(), npmPluginUpdateCall(), lastNpmPluginUpdateCall()];
+    for (const call of calls) {
+      expect(hasInstallPolicyWarningHandler(call)).toBe(true);
+    }
+    expect(runPostCorePluginConvergenceSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ onInstallPolicyWarning: expect.any(Function) }),
     );
   });
 

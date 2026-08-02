@@ -20,18 +20,10 @@ import { resolveDefaultPluginGitDir } from "./install-paths.js";
 import {
   preflightPluginGitInstallPolicy,
   type InstallSafetyOverrides,
-  type InstallSecurityScanResult,
 } from "./install-security-scan.js";
-import {
-  installPluginFromInstalledPackageDir,
-  PLUGIN_INSTALL_ERROR_CODE,
-  type InstallPluginResult,
-} from "./install.js";
-import {
-  emitPluginAuditSecurityEvent,
-  emitPluginInstallSecurityEvent,
-  pluginAuditOutcomeForReason,
-} from "./security-events.js";
+import { runInstallSourceScan } from "./install-shared.js";
+import { installPluginFromInstalledPackageDir, type InstallPluginResult } from "./install.js";
+import { emitPluginInstallSecurityEvent } from "./security-events.js";
 
 const GIT_SPEC_PREFIX = "git:";
 const DEFAULT_GIT_TIMEOUT_MS = 120_000;
@@ -310,20 +302,6 @@ function formatGitCommandFailure(params: {
   return `failed to ${params.action} ${sanitizeForLog(redactSensitiveUrlLikeString(params.source.label))}: ${detail}`;
 }
 
-function buildBlockedGitInstallResult(params: {
-  blocked: NonNullable<NonNullable<InstallSecurityScanResult>["blocked"]>;
-}): Extract<InstallPluginResult, { ok: false }> {
-  return {
-    ok: false,
-    error: params.blocked.reason,
-    ...(params.blocked.code === "security_scan_failed"
-      ? { code: PLUGIN_INSTALL_ERROR_CODE.SECURITY_SCAN_FAILED }
-      : params.blocked.code === "security_scan_blocked"
-        ? { code: PLUGIN_INSTALL_ERROR_CODE.SECURITY_SCAN_BLOCKED }
-        : {}),
-  };
-}
-
 async function runGitCommand(params: {
   argv: string[];
   action: string;
@@ -415,6 +393,17 @@ export async function installPluginFromGitSpec(
     if (!rev.ok) {
       return rev;
     }
+    try {
+      // The managed install is a checkout payload, not a mutable Git repository.
+      // Removing clone metadata keeps policy evidence and acknowledgement tokens
+      // stable across fresh clones of the same commit.
+      await fs.rm(path.join(repoDir, ".git"), { recursive: true, force: true });
+    } catch (err) {
+      return {
+        ok: false,
+        error: `failed to prepare git plugin checkout: ${String(err)}`,
+      };
+    }
 
     const installPolicyRequest = {
       kind: "plugin-git" as const,
@@ -426,28 +415,25 @@ export async function installPluginFromGitSpec(
         network: true,
       },
     };
-    const preflight = await preflightPluginGitInstallPolicy({
-      config: params.config,
-      logger: params.logger ?? {},
+    const preflight = await runInstallSourceScan({
+      subject: `Plugin "${params.expectedPluginId ?? parsed.label}"`,
+      pluginId: params.expectedPluginId,
       mode: effectiveMode,
-      pluginId: params.expectedPluginId ?? parsed.label,
-      requestedSpecifier: parsed.input,
-      source: installPolicyRequest.source,
-      sourcePath: repoDir,
+      sourceFamily: "git",
+      scan: async () =>
+        await preflightPluginGitInstallPolicy({
+          config: params.config,
+          logger: params.logger ?? {},
+          onInstallPolicyWarning: params.onInstallPolicyWarning,
+          mode: effectiveMode,
+          pluginId: params.expectedPluginId ?? parsed.label,
+          requestedSpecifier: parsed.input,
+          source: installPolicyRequest.source,
+          sourcePath: repoDir,
+        }),
     });
-    if (preflight?.blocked) {
-      const reason =
-        preflight.blocked.code === "security_scan_failed"
-          ? "security_scan_failed"
-          : "security_scan_blocked";
-      emitPluginAuditSecurityEvent({
-        outcome: pluginAuditOutcomeForReason(reason),
-        reason,
-        pluginId: params.expectedPluginId,
-        mode: effectiveMode,
-        sourceFamily: "git",
-      });
-      return buildBlockedGitInstallResult({ blocked: preflight.blocked });
+    if (preflight) {
+      return preflight;
     }
 
     if (!params.dryRun) {
@@ -490,6 +476,7 @@ export async function installPluginFromGitSpec(
       mode: effectiveMode,
       emitSuccessSecurityEvent: false,
       installPolicyRequest,
+      onInstallPolicyWarning: params.onInstallPolicyWarning,
     });
     if (!result.ok) {
       return result;

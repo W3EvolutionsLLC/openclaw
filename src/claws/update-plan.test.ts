@@ -170,6 +170,79 @@ describe("buildClawUpdatePlan", () => {
     expect((await stat(databasePath)).mtimeMs).toBe(beforeStat.mtimeMs);
   });
 
+  it("carries install-policy warnings only on package mutations", async () => {
+    const current = await fixture();
+    const warning = {
+      acknowledgementId: `v1:${"w".repeat(43)}`,
+      reason: "Review the plugin update.",
+    };
+    const pluginRecord = {
+      source: "clawhub" as const,
+      integrity: `sha256:${"a".repeat(64)}`,
+      installedAt: "2000-01-01T00:00:00.000Z",
+    };
+    const build = async (version: string, installPolicyWarning = warning) => {
+      const parsed = parseClawManifest({
+        ...current.manifest,
+        packages: current.manifest.packages
+          .filter((pkg) => pkg.kind === "plugin")
+          .map((pkg) => Object.assign({}, pkg, { version })),
+      });
+      if (!parsed.ok) {
+        throw new Error(JSON.stringify(parsed.diagnostics));
+      }
+      return await buildClawUpdatePlan({
+        agentId: "worker",
+        targetManifest: parsed.manifest,
+        targetSource: targetSource(current.root, "2.0.0", "sha256:target"),
+        config: current.config,
+        sourceMcpServers: current.config.mcp?.servers ?? {},
+        stateOptions: {
+          env: current.env,
+          packageDeps: {
+            resolvePlugin: async () => ({
+              status: "found" as const,
+              pluginId: "obsolete",
+              record: pluginRecord,
+              installedVersion: "1.0.0",
+            }),
+          },
+        },
+        packagePreflight: async () => ({
+          ok: true,
+          action: "install",
+          integrity: pluginRecord.integrity,
+          installId: "obsolete",
+          installPolicyWarning,
+        }),
+      });
+    };
+
+    const unchanged = (await build("1.0.0")).actions.find(
+      (action) => action.kind === "package" && action.id === "plugin:obsolete",
+    );
+    expect(unchanged).toMatchObject({ action: "unchanged" });
+    expect(unchanged?.installPolicyWarning).toBeUndefined();
+
+    const changedPlan = await build("2.0.0");
+    const changed = changedPlan.actions.find(
+      (action) => action.kind === "package" && action.id === "plugin:obsolete",
+    );
+    expect(changed).toMatchObject({ action: "change", installPolicyWarning: warning });
+
+    const transientWarning = {
+      ...warning,
+      reason: "Review the plugin update extracted under /tmp/openclaw-next/root.",
+    };
+    const repeatedPlan = await build("2.0.0", transientWarning);
+    expect(repeatedPlan.planIntegrity).toBe(changedPlan.planIntegrity);
+    expect(
+      repeatedPlan.actions.find(
+        (action) => action.kind === "package" && action.id === "plugin:obsolete",
+      )?.installPolicyWarning,
+    ).toEqual(transientWarning);
+  });
+
   it("resolves an unambiguous installed package name to its final local agent id", async () => {
     const current = await fixture();
 

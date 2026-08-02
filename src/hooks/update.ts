@@ -5,6 +5,7 @@ import {
   expectedIntegrityForUpdate,
   readInstalledPackageVersion,
 } from "../infra/package-update-utils.js";
+import type { InstallPolicyWarning } from "../plugins/install-security-scan.js";
 import {
   installHooksFromNpmSpec,
   type HookNpmIntegrityDriftParams,
@@ -80,6 +81,7 @@ export async function updateNpmInstalledHookPacks(params: {
   dryRun?: boolean;
   specOverrides?: Record<string, string>;
   onIntegrityDrift?: (params: HookPackUpdateIntegrityDriftParams) => boolean | Promise<boolean>;
+  onInstallPolicyWarning?: (warning: InstallPolicyWarning) => boolean | Promise<boolean>;
 }): Promise<HookPackUpdateSummary> {
   const logger = params.logger ?? {};
   const installs = readHookInstalls();
@@ -148,6 +150,7 @@ export async function updateNpmInstalledHookPacks(params: {
         logger,
         onIntegrityDrift: params.onIntegrityDrift,
       }),
+      onInstallPolicyWarning: params.onInstallPolicyWarning,
       logger,
     });
 

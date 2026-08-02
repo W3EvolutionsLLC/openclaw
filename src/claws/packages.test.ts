@@ -2,6 +2,9 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { PluginInstallCommandFailure } from "../cli/plugins-install-command.js";
+import type { InstallPolicyWarning } from "../plugins/install-security-scan.js";
+import { PLUGIN_INSTALL_ERROR_CODE } from "../plugins/install-types.js";
 import { installClawPackages, preflightClawPackage } from "./packages.js";
 import type { PersistedClawPackageRef } from "./provenance.js";
 import type { ClawAddPlan, ResolvedClawPackage } from "./types.js";
@@ -207,6 +210,95 @@ describe("preflightClawPackage plugin setup requirements", () => {
     ).resolves.not.toHaveProperty("requirements");
   });
 
+  it("keeps a dry-run policy warning in the plan without making it a blocker", async () => {
+    const warning: InstallPolicyWarning = {
+      reason: "Plugin source needs review.",
+      acknowledgementId: `v1:${"a".repeat(43)}`,
+    };
+    const probePluginWarning = vi.fn(
+      async (
+        params: Parameters<typeof import("../plugins/clawhub.js").installPluginFromClawHub>[0],
+      ) => {
+        expect(params.dryRun).toBe(true);
+        expect(await params.onInstallPolicyWarning?.(warning)).toBe(true);
+        return {
+          ok: true as const,
+          pluginId: "evidence",
+          packageName: "@owner/audit",
+          targetDir: "/tmp/plugin",
+          extensions: [],
+          setup,
+          clawhub: {
+            source: "clawhub" as const,
+            clawhubUrl: "https://clawhub.ai",
+            clawhubPackage: "@owner/audit",
+            clawhubFamily: "code-plugin" as const,
+            integrity,
+          },
+        };
+      },
+    );
+
+    await expect(
+      preflightClawPackage(pluginPackage, "/tmp/workspace", {
+        env: {},
+        deps: { preflightPlugin, probePlugin: probePluginWarning },
+      }),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        ok: true,
+        installPolicyWarning: warning,
+      }),
+    );
+  });
+
+  it("keeps a dry-run policy warning on an expected installed-version conflict", async () => {
+    const warning: InstallPolicyWarning = {
+      reason: "Plugin update needs review.",
+      acknowledgementId: `v1:${"b".repeat(43)}`,
+    };
+    const preflightPluginConflict = vi.fn().mockResolvedValue({
+      ok: false,
+      code: "plugin_version_conflict",
+      installedVersion: "1.0.0",
+    });
+    const probePluginWarning = vi.fn(
+      async (
+        params: Parameters<typeof import("../plugins/clawhub.js").installPluginFromClawHub>[0],
+      ) => {
+        expect(await params.onInstallPolicyWarning?.(warning)).toBe(true);
+        return {
+          ok: true as const,
+          pluginId: "evidence",
+          packageName: "@owner/audit",
+          targetDir: "/tmp/plugin",
+          extensions: [],
+          setup,
+          clawhub: {
+            source: "clawhub" as const,
+            clawhubUrl: "https://clawhub.ai",
+            clawhubPackage: "@owner/audit",
+            clawhubFamily: "code-plugin" as const,
+            integrity,
+          },
+        };
+      },
+    );
+
+    await expect(
+      preflightClawPackage(pluginPackage, "/tmp/workspace", {
+        env: {},
+        deps: { preflightPlugin: preflightPluginConflict, probePlugin: probePluginWarning },
+      }),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        ok: false,
+        code: "plugin_version_conflict",
+        installPolicyWarning: warning,
+      }),
+    );
+  });
+
   it("accepts declared local auth evidence", async () => {
     const credentialsDir = await mkdtemp(join(tmpdir(), "claw-auth-evidence-"));
     const credentialsPath = join(credentialsDir, "credentials.json");
@@ -265,6 +357,7 @@ describe("installClawPackages", () => {
     });
     const persistPackageRef = vi.fn().mockReturnValue(pending);
     const onExternalMutation = vi.fn();
+    const onInstallPolicyWarning = vi.fn(async () => true);
 
     await installClawPackages(
       plan([
@@ -287,6 +380,7 @@ describe("installClawPackages", () => {
           acquirePackageLease,
         },
         onExternalMutation,
+        onInstallPolicyWarning,
       },
     );
 
@@ -297,6 +391,7 @@ describe("installClawPackages", () => {
         version: "1.2.3",
         expectedIntegrity: skillIntegrity,
         clawManaged: true,
+        onInstallPolicyWarning,
       }),
     );
     expect(persistPackageRef).toHaveBeenCalledWith(
@@ -323,6 +418,7 @@ describe("installClawPackages", () => {
       integrity,
     });
     const preflightPlugin = vi.fn().mockResolvedValue({ ok: true, action: "install" });
+    const onInstallPolicyWarning = vi.fn(async () => true);
 
     await installClawPackages(plan([pluginPackage]), {
       deps: {
@@ -333,6 +429,7 @@ describe("installClawPackages", () => {
         completePackageRef,
         acquirePackageLease,
       },
+      onInstallPolicyWarning,
     });
 
     expect(installPlugin).toHaveBeenCalledWith(
@@ -343,6 +440,7 @@ describe("installClawPackages", () => {
           expectedIntegrity:
             "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           expectedPluginId: "audit",
+          onInstallPolicyWarning,
         },
         invalidateRuntimeCache: false,
         clawManaged: true,
@@ -360,6 +458,89 @@ describe("installClawPackages", () => {
         independentOwner: false,
       }),
     );
+    expect(probePlugin).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        dryRun: true,
+        onInstallPolicyWarning: expect.any(Function),
+      }),
+    );
+  });
+
+  it("does not report a declined plugin policy warning as an external mutation", async () => {
+    const onExternalMutation = vi.fn();
+    const installPlugin = vi
+      .fn()
+      .mockRejectedValue(
+        new PluginInstallCommandFailure(
+          "install policy warning requires acknowledgement",
+          PLUGIN_INSTALL_ERROR_CODE.INSTALL_POLICY_ACKNOWLEDGEMENT_REQUIRED,
+        ),
+      );
+
+    await expect(
+      installClawPackages(plan([pluginPackage]), {
+        deps: {
+          installPlugin,
+          probePlugin,
+          preflightPlugin: vi.fn().mockResolvedValue({ ok: true, action: "install" }),
+          persistPackageRef: vi.fn().mockReturnValue({
+            kind: "plugin",
+            ref: "@owner/audit",
+            status: "pending",
+            integrity,
+          }),
+          completePackageRef,
+          acquirePackageLease,
+        },
+        onExternalMutation,
+        onInstallPolicyWarning: vi.fn(async () => false),
+      }),
+    ).rejects.toThrow("install policy warning requires acknowledgement");
+    expect(onExternalMutation).not.toHaveBeenCalled();
+  });
+
+  it("does not report a terminal skill policy re-evaluation as an external mutation", async () => {
+    const onExternalMutation = vi.fn();
+    const installSkill = vi.fn().mockResolvedValue({
+      ok: false,
+      error: "blocked by install policy after acknowledgement",
+      installPolicyFailure: true,
+    });
+    const skillIntegrity = `sha256-${Buffer.from("a".repeat(64), "hex").toString("base64")}`;
+
+    await expect(
+      installClawPackages(
+        plan([
+          {
+            kind: "skill",
+            source: "clawhub",
+            ref: "@owner/triage",
+            version: "1.2.3",
+            integrity: skillIntegrity,
+          },
+        ]),
+        {
+          deps: {
+            installSkill,
+            preflightSkill: vi
+              .fn()
+              .mockResolvedValue({ ok: true, action: "install", integrity: skillIntegrity }),
+            persistPackageRef: vi.fn().mockReturnValue({
+              kind: "skill",
+              ref: "@owner/triage",
+              status: "pending",
+              integrity: skillIntegrity,
+            }),
+            completePackageRef,
+            acquirePackageLease,
+          },
+          onExternalMutation,
+          onInstallPolicyWarning: vi.fn(async () => true),
+        },
+      ),
+    ).rejects.toThrow("blocked by install policy after acknowledgement");
+
+    expect(onExternalMutation).not.toHaveBeenCalled();
   });
 
   it("records a dependency ref without reinstalling an exact reused plugin", async () => {

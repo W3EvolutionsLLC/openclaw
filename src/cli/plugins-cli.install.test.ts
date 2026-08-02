@@ -363,6 +363,7 @@ type MockWithCalls = {
 };
 
 type PluginInstallCall = {
+  onInstallPolicyWarning?: (warning: { reason: string }) => boolean | Promise<boolean>;
   allowSourceTypeScriptEntries?: boolean;
   archivePath?: string;
   dangerouslyForceUnsafeInstall?: boolean;
@@ -638,8 +639,11 @@ describe("plugins cli install", () => {
     const helpText = installCommand?.helpInformation() ?? "";
 
     expect(helpText.match(/--force/g)).toHaveLength(1);
-    expect(helpText).toContain("Confirm non-ClawHub sources and overwrite");
-    expect(helpText).toContain("an existing plugin or hook pack");
+    expect(helpText).toMatch(/Confirm non-ClawHub sources and\s+overwrite/u);
+    expect(helpText).toMatch(/an existing plugin or hook\s+pack/u);
+    expect(helpText).toContain("--dangerously-force-unsafe-install");
+    expect(helpText).toMatch(/Acknowledge operator install policy\s+warnings/u);
+    expect(helpText).not.toContain("--acknowledge-install-policy-warning");
   });
 
   it("refuses plugin installs in Nix mode before installer side effects", async () => {
@@ -1617,7 +1621,7 @@ describe("plugins cli install", () => {
     expect(reportClawHubPluginInstallTelemetry).not.toHaveBeenCalled();
   });
 
-  it("passes ClawHub risk acknowledgement to explicit ClawHub installs", async () => {
+  it("passes explicit acknowledgements to ClawHub installs", async () => {
     primeSuccessfulClawHubPluginInstall({
       trust: {
         disposition: "review-required",
@@ -1628,12 +1632,19 @@ describe("plugins cli install", () => {
       },
     });
 
-    await runPluginsCommand(["plugins", "install", "clawhub:demo", "--acknowledge-clawhub-risk"]);
+    await runPluginsCommand([
+      "plugins",
+      "install",
+      "clawhub:demo",
+      "--acknowledge-clawhub-risk",
+      "--dangerously-force-unsafe-install",
+    ]);
 
     expect(installPluginFromClawHub).toHaveBeenCalledWith(
       expect.objectContaining({
         spec: "clawhub:demo",
         acknowledgeClawHubRisk: true,
+        onInstallPolicyWarning: expect.any(Function),
       }),
     );
     const record = persistedInstallRecord("demo");
@@ -2139,11 +2150,7 @@ describe("plugins cli install", () => {
     expect(npmInstallCall().spec).toBe("demo");
     expect(npmInstallCall().mode).toBe("update");
     expect(npmInstallCall().dangerouslyForceUnsafeInstall).toBe(true);
-    expect(
-      runtimeLogsContain(
-        "--dangerously-force-unsafe-install is deprecated and no longer affects plugin installs",
-      ),
-    ).toBe(true);
+    expect(npmInstallCall().onInstallPolicyWarning).toEqual(expect.any(Function));
     expect(installPluginFromClawHub).not.toHaveBeenCalled();
   });
 
@@ -2166,6 +2173,25 @@ describe("plugins cli install", () => {
     expect(installPluginFromClawHub).not.toHaveBeenCalled();
     expect(runtimeErrors.at(-1)).toContain("npm install failed");
     expect(runtimeErrors.at(-1)).not.toContain("Also not a valid hook pack");
+  });
+
+  it("prints the terminal-safe error without leaking raw structured warning controls", async () => {
+    loadConfig.mockReturnValue({} as OpenClawConfig);
+    const reason = "manual \u001b[31mreview\u001b[0m\nrequired";
+    installPluginFromNpmSpec.mockResolvedValue({
+      ok: false,
+      error: "manual review\\nrequired",
+      code: "install_policy_acknowledgement_required",
+      installPolicyWarning: { reason },
+    });
+
+    await expect(
+      runAcknowledgedPluginsInstallCommand(["plugins", "install", "npm:demo"]),
+    ).rejects.toThrow("__exit__:1");
+
+    expect(runtimeErrors.at(-1)).toBe("manual review\\nrequired");
+    expect(runtimeErrors.join("\n")).not.toContain("\u001b");
+    expect(runtimeErrors.join("\n")).not.toContain(reason);
   });
 
   it("keeps actionable hook-pack fallback details", async () => {
@@ -2570,14 +2596,10 @@ describe("plugins cli install", () => {
     expect(pathInstallCall().dryRun).toBe(true);
     expect(pathInstallCall().allowSourceTypeScriptEntries).toBe(true);
     expect(pathInstallCall().dangerouslyForceUnsafeInstall).toBe(true);
+    expect(pathInstallCall().onInstallPolicyWarning).toEqual(expect.any(Function));
     expect(typeof pathInstallCall().logger?.info).toBe("function");
     expect(typeof pathInstallCall().logger?.warn).toBe("function");
     expect(runtimeLogsContain("installer warning from dry-run probe")).toBe(true);
-    expect(
-      runtimeLogsContain(
-        "--dangerously-force-unsafe-install is deprecated and no longer affects plugin installs",
-      ),
-    ).toBe(true);
   });
 
   it.each([
@@ -2649,6 +2671,13 @@ describe("plugins cli install", () => {
       spec: "demo",
       flags: ["--dangerously-force-unsafe-install"],
     },
+    {
+      name: "managed npm rollback fails",
+      code: "install_rollback_failed",
+      error: "managed npm rollback failed closed",
+      spec: "demo",
+      flags: [],
+    },
   ] as const)("does not fall back to hook pack for npm installs when $name", async (testCase) => {
     loadConfig.mockReturnValue({} as OpenClawConfig);
     mockClawHubPackageNotFound(testCase.spec);
@@ -2715,7 +2744,17 @@ describe("plugins cli install", () => {
     ]);
 
     expect(hookNpmInstallCall().spec).toBe("@acme/demo-hooks");
+    expect(hookNpmInstallCall().onInstallPolicyWarning).toEqual(expect.any(Function));
     expect(runtimeLogsContain("Installed hook pack: demo-hooks")).toBe(true);
+  });
+
+  it("passes interactive install-policy acknowledgement to npm hook-pack fallback", async () => {
+    setTty(true);
+    primeHookPackNpmFallback();
+
+    await runAcknowledgedPluginsInstallCommand(["plugins", "install", "@acme/demo-hooks"]);
+
+    expect(hookNpmInstallCall().onInstallPolicyWarning).toEqual(expect.any(Function));
   });
 
   it("does not fall back to npm when explicit ClawHub rejects a real package", async () => {

@@ -8,6 +8,8 @@ import { isContainerEnvironment as defaultIsContainerEnvironment } from "../../i
 import { formatErrorMessage } from "../../infra/errors.js";
 import {
   evaluateSkillInstallPolicy,
+  formatInstallPolicyWarningReasonForTerminal,
+  type InstallPolicyWarning,
   type SkillInstallSpecMetadata,
 } from "../../plugins/install-security-scan.js";
 import { runCommandWithTimeout, type CommandOptions } from "../../process/exec.js";
@@ -29,6 +31,7 @@ type SkillInstallRequest = {
   installId: string;
   timeoutMs?: number;
   config?: OpenClawConfig;
+  onInstallPolicyWarning?: (warning: InstallPolicyWarning) => boolean | Promise<boolean>;
 };
 export type { SkillInstallSkipReason } from "./install-types.js";
 
@@ -708,6 +711,7 @@ export async function installSkill(params: SkillInstallRequest): Promise<SkillIn
       skillName: params.skillName,
       installId: params.installId,
     },
+    onInstallPolicyWarning: params.onInstallPolicyWarning,
     source:
       skillSource === "openclaw-bundled"
         ? { kind: "bundled", authority: "openclaw", mutable: false, network: false }
@@ -726,6 +730,19 @@ export async function installSkill(params: SkillInstallRequest): Promise<SkillIn
         stdout: "",
         stderr: "",
         code: null,
+      },
+      warnings,
+    );
+  }
+  if (scanResult?.warning) {
+    return withWarnings(
+      {
+        ok: false,
+        message: formatInstallPolicyWarningReasonForTerminal(scanResult.warning),
+        stdout: "",
+        stderr: "",
+        code: null,
+        installPolicyWarning: scanResult.warning,
       },
       warnings,
     );

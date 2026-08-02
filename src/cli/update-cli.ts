@@ -41,6 +41,7 @@ function inheritedUpdateTimeout(
 type CommanderUpdateOptions = Record<string, unknown> & {
   acknowledgeClawhubRisk?: boolean;
   acknowledgeClawHubRisk?: boolean;
+  dangerouslyForceUnsafeInstall?: boolean;
   channel?: string;
   dryRun?: boolean;
   json?: boolean;
@@ -86,6 +87,11 @@ function registerUpdateFinalizationCommand(update: Command, name: string, hidden
       "Acknowledge ClawHub release trust warnings during post-update plugin sync",
       false,
     )
+    .option(
+      "--dangerously-force-unsafe-install",
+      "Acknowledge reviewed install policy warnings during post-update plugin sync",
+      false,
+    )
     .option("--no-restart", "Accepted for update command parity; repair never restarts")
     .addHelpText(
       "after",
@@ -116,6 +122,11 @@ function registerUpdateFinalizationCommand(update: Command, name: string, hidden
           restart: false,
           acknowledgeClawHubRisk:
             normalizeCommanderClawHubRiskOption(opts) || inheritedUpdateClawHubRisk(actionCommand),
+          dangerouslyForceUnsafeInstall:
+            Boolean(opts.dangerouslyForceUnsafeInstall) ||
+            Boolean(
+              inheritOptionFromParent<boolean>(actionCommand, "dangerouslyForceUnsafeInstall"),
+            ),
         });
       } catch (err) {
         defaultRuntime.error(String(err));
@@ -145,6 +156,11 @@ export function registerUpdateCli(program: Command) {
       "Acknowledge ClawHub release trust warnings during post-update plugin sync",
       false,
     )
+    .option(
+      "--dangerously-force-unsafe-install",
+      "Acknowledge reviewed install policy warnings during post-update plugin sync",
+      false,
+    )
     .addHelpText("after", () => {
       const examples = [
         ["openclaw update", "Update a source checkout (git)"],
@@ -162,6 +178,10 @@ export function registerUpdateCli(program: Command) {
         ["openclaw update --yes", "Non-interactive (accept downgrade prompts)"],
         ["openclaw update repair", "Repair stranded post-update plugin state"],
         ["openclaw update --acknowledge-clawhub-risk", "Acknowledge ClawHub plugin trust warnings"],
+        [
+          "openclaw update --dangerously-force-unsafe-install",
+          "Acknowledge reviewed install policy warnings",
+        ],
         ["openclaw update wizard", "Interactive update wizard"],
         ["openclaw --update", "Shorthand for openclaw update"],
       ] as const;
@@ -182,6 +202,7 @@ ${theme.heading("Switch channels:")}
 ${theme.heading("Non-interactive:")}
   - Use --yes to accept downgrade prompts
   - Use --acknowledge-clawhub-risk only after reviewing ClawHub plugin trust warnings
+  - Use --dangerously-force-unsafe-install only after reviewing install policy warnings
   - Combine with --channel/--tag/--no-restart/--json/--timeout as needed
   - Use --dry-run to preview actions without writing config/installing/restarting
 
@@ -207,6 +228,7 @@ ${theme.muted("Docs:")} ${formatDocsLink("/cli/update", "docs.openclaw.ai/cli/up
           timeout: opts.timeout,
           yes: Boolean(opts.yes),
           acknowledgeClawHubRisk: normalizeCommanderClawHubRiskOption(opts),
+          dangerouslyForceUnsafeInstall: Boolean(opts.dangerouslyForceUnsafeInstall),
         });
       } catch (err) {
         defaultRuntime.error(String(err));

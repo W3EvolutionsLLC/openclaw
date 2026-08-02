@@ -181,7 +181,7 @@ export function registerPluginsCli(program: Command) {
     .option("--pin", "Record npm installs as exact resolved <name>@<version>", false)
     .option(
       "--dangerously-force-unsafe-install",
-      "Deprecated no-op; security.installPolicy may still block",
+      "Acknowledge operator install policy warnings; never overrides blocks",
       false,
     )
     .option(
@@ -220,7 +220,7 @@ export function registerPluginsCli(program: Command) {
     .option("--dry-run", "Show what would change without writing", false)
     .option(
       "--dangerously-force-unsafe-install",
-      "Deprecated no-op; security.installPolicy may still block",
+      "Acknowledge operator install policy warnings; never overrides blocks",
       false,
     )
     .option(

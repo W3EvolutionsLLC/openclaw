@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { formatInstallPolicyWarningDetails } from "../../../../packages/gateway-protocol/src/install-policy-warning-details.js";
 import { stripAnsi } from "../../../../packages/terminal-core/src/ansi.js";
 import { sanitizeTerminalText } from "../../../../packages/terminal-core/src/safe-text.js";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
@@ -22,6 +23,8 @@ import {
   resolveDefaultPluginNpmDir,
   resolvePluginInstallDir,
 } from "../../../plugins/install-paths.js";
+import type { InstallPolicyWarning } from "../../../plugins/install-security-scan.js";
+import { PLUGIN_INSTALL_ERROR_CODE } from "../../../plugins/install-types.js";
 import { installPluginFromNpmSpec } from "../../../plugins/install.js";
 import {
   buildNpmResolutionInstallFields,
@@ -62,6 +65,16 @@ export function appendClawHubRiskAcknowledgementGuidance(params: {
   const sanitizedSpec = sanitizeTerminalText(params.spec);
   const shellSpec = shellQuotePosixArg(sanitizedSpec);
   return `${params.message} To review and acknowledge this ClawHub package, run \`openclaw plugins install ${shellSpec} --acknowledge-clawhub-risk\` from a trusted shell, then rerun repair.`;
+}
+
+export function appendInstallPolicyAcknowledgementGuidance(params: {
+  code?: string;
+  message: string;
+}): string {
+  if (params.code !== PLUGIN_INSTALL_ERROR_CODE.INSTALL_POLICY_ACKNOWLEDGEMENT_REQUIRED) {
+    return params.message;
+  }
+  return `${params.message} Review the warning, then run \`openclaw update repair --dangerously-force-unsafe-install\` from a trusted shell to retry.`;
 }
 
 function shellQuotePosixArg(value: string): string {
@@ -124,6 +137,7 @@ export async function installCandidate(params: {
   repairReason?: InstallCandidateRepairReason;
   acknowledgeClawHubRisk?: boolean;
   onClawHubRisk?: (request: ClawHubRiskAcknowledgementRequest) => boolean | Promise<boolean>;
+  onInstallPolicyWarning?: (warning: InstallPolicyWarning) => boolean | Promise<boolean>;
 }): Promise<{
   records: Record<string, PluginInstallRecord>;
   changes: string[];
@@ -203,6 +217,9 @@ export async function installCandidate(params: {
       },
       ...(params.acknowledgeClawHubRisk ? { acknowledgeClawHubRisk: true } : {}),
       ...(params.onClawHubRisk ? { onClawHubRisk: params.onClawHubRisk } : {}),
+      ...(params.onInstallPolicyWarning
+        ? { onInstallPolicyWarning: params.onInstallPolicyWarning }
+        : {}),
     });
     if (clawhubResult.ok) {
       const pluginId = clawhubResult.pluginId;
@@ -231,7 +248,10 @@ export async function installCandidate(params: {
       !npmInstallSpec ||
       !shouldFallbackClawHubToNpm({ result: clawhubResult, npmSpec: npmInstallSpec })
     ) {
-      const failure = `Failed to install missing configured plugin "${candidate.pluginId}" from ${clawhubInstallSpecLabel}: ${clawhubResult.error}`;
+      const failure = appendInstallPolicyAcknowledgementGuidance({
+        code: clawhubResult.code,
+        message: `Failed to install missing configured plugin "${candidate.pluginId}" from ${clawhubInstallSpecLabel}: ${clawhubResult.error}`,
+      });
       return {
         records: params.records,
         changes: [],
@@ -275,6 +295,9 @@ export async function installCandidate(params: {
       ? { trustedSourceLinkedOfficialInstall: true }
       : {}),
     mode: npmInstallMode,
+    ...(params.onInstallPolicyWarning
+      ? { onInstallPolicyWarning: params.onInstallPolicyWarning }
+      : {}),
   });
   if (!result.ok && npmInstallMode === "install" && isPluginAlreadyExistsError(result.error)) {
     result = await installPluginFromNpmSpec({
@@ -288,17 +311,24 @@ export async function installCandidate(params: {
         ? { trustedSourceLinkedOfficialInstall: true }
         : {}),
       mode: "update",
+      ...(params.onInstallPolicyWarning
+        ? { onInstallPolicyWarning: params.onInstallPolicyWarning }
+        : {}),
     });
   }
   if (!result.ok) {
+    const failureDetails = result.installPolicyWarning
+      ? formatInstallPolicyWarningDetails(result.installPolicyWarning, sanitizeTerminalText)
+      : result.error;
+    const failure = appendInstallPolicyAcknowledgementGuidance({
+      code: result.code,
+      message: `Failed to install missing configured plugin "${candidate.pluginId}" from ${npmInstallSpec}: ${failureDetails}`,
+    });
     return {
       records: params.records,
       changes: [],
       notices: [],
-      warnings: [
-        ...warnings,
-        `Failed to install missing configured plugin "${candidate.pluginId}" from ${npmInstallSpec}: ${result.error}`,
-      ],
+      warnings: [...warnings, failure],
       failedPluginId: candidate.pluginId,
     };
   }

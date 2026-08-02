@@ -51,10 +51,14 @@ export async function validatePackagePluginInstallSource(params: {
   dangerouslyForceUnsafeInstall?: boolean;
   trustedSourceLinkedOfficialInstall?: boolean;
   config?: OpenClawConfig;
+  onInstallPolicyWarning?: PackageInstallCommonParams["onInstallPolicyWarning"];
   installPolicyRequest?: PluginInstallPolicyRequest;
+  logicalSourcePath?: string;
+  compatibilityHostVersion?: string;
   logger: PluginInstallLogger;
   mode: "install" | "update";
   resolveEffectiveMode?: (pluginId: string) => Promise<"install" | "update">;
+  scanInstallSource?: boolean;
 }): Promise<
   | {
       ok: true;
@@ -119,6 +123,7 @@ export async function validatePackagePluginInstallSource(params: {
     runtime: params.runtime,
     pluginId,
     packageMetadata,
+    currentHostVersion: params.compatibilityHostVersion,
   });
   if (compatibilityError) {
     return compatibilityError;
@@ -150,38 +155,42 @@ export async function validatePackagePluginInstallSource(params: {
     };
   }
 
-  const scanMode = params.resolveEffectiveMode
-    ? await params.resolveEffectiveMode(pluginId)
-    : params.mode;
-  const scanResult = await runInstallSourceScan({
-    subject: `Plugin "${pluginId}"`,
-    pluginId,
-    mode: scanMode,
-    sourceFamily: sourceFamilyForInstallPolicySource(
-      params.installPolicyRequest?.source,
-      sourceFamilyForInstallPolicyKind(params.installPolicyRequest?.kind, "installed-package"),
-    ),
-    scan: async () =>
-      await params.runtime.scanPackageInstallSource({
-        dangerouslyForceUnsafeInstall: params.dangerouslyForceUnsafeInstall,
-        trustedSourceLinkedOfficialInstall: params.trustedSourceLinkedOfficialInstall,
-        packageDir: params.packageDir,
-        config: params.config,
-        pluginId,
-        logger: params.logger,
-        extensions,
-        ...(packageMetadata ? { packageMetadata } : {}),
-        requestKind: params.installPolicyRequest?.kind,
-        requestedSpecifier: params.installPolicyRequest?.requestedSpecifier,
-        source: params.installPolicyRequest?.source,
-        mode: scanMode,
-        packageName: pkgName || undefined,
-        manifestId: manifestPluginId,
-        version: typeof manifest.version === "string" ? manifest.version : undefined,
-      }),
-  });
-  if (scanResult) {
-    return scanResult;
+  if (params.scanInstallSource !== false) {
+    const scanMode = params.resolveEffectiveMode
+      ? await params.resolveEffectiveMode(pluginId)
+      : params.mode;
+    const scanResult = await runInstallSourceScan({
+      subject: `Plugin "${pluginId}"`,
+      pluginId,
+      mode: scanMode,
+      sourceFamily: sourceFamilyForInstallPolicySource(
+        params.installPolicyRequest?.source,
+        sourceFamilyForInstallPolicyKind(params.installPolicyRequest?.kind, "installed-package"),
+      ),
+      scan: async () =>
+        await params.runtime.scanPackageInstallSource({
+          dangerouslyForceUnsafeInstall: params.dangerouslyForceUnsafeInstall,
+          trustedSourceLinkedOfficialInstall: params.trustedSourceLinkedOfficialInstall,
+          packageDir: params.packageDir,
+          logicalSourcePath: params.logicalSourcePath,
+          config: params.config,
+          onInstallPolicyWarning: params.onInstallPolicyWarning,
+          pluginId,
+          logger: params.logger,
+          extensions,
+          ...(packageMetadata ? { packageMetadata } : {}),
+          requestKind: params.installPolicyRequest?.kind,
+          requestedSpecifier: params.installPolicyRequest?.requestedSpecifier,
+          source: params.installPolicyRequest?.source,
+          mode: scanMode,
+          packageName: pkgName || undefined,
+          manifestId: manifestPluginId,
+          version: typeof manifest.version === "string" ? manifest.version : undefined,
+        }),
+    });
+    if (scanResult) {
+      return scanResult;
+    }
   }
 
   return {
@@ -201,22 +210,26 @@ export async function validatePackagePluginInstallSource(params: {
   };
 }
 
-export async function scanAndLinkInstalledPackage(params: {
-  runtime: Awaited<ReturnType<typeof loadPluginInstallRuntime>>;
+type InstalledPluginDependencyScanParams = {
   installedDir: string;
   additionalDependencyPackageDirs?: string[];
   dependencyScanRootDir?: string;
   pluginId: string;
-  peerDependencies: Record<string, string>;
   dangerouslyForceUnsafeInstall?: boolean;
   trustedSourceLinkedOfficialInstall?: boolean;
   mode?: "install" | "update";
   requestKind?: PluginInstallPolicyRequest["kind"];
   requestedSpecifier?: string;
   config?: OpenClawConfig;
+  onInstallPolicyWarning?: PackageInstallCommonParams["onInstallPolicyWarning"];
   source?: InstallPolicySource;
   logger: PluginInstallLogger;
-}): Promise<Extract<InstallPluginResult, { ok: false }> | null> {
+};
+
+async function scanInstalledPluginDependencyTreeWithRuntime(
+  runtime: Awaited<ReturnType<typeof loadPluginInstallRuntime>>,
+  params: InstalledPluginDependencyScanParams,
+): Promise<Extract<InstallPluginResult, { ok: false }> | null> {
   const scanResult = await runInstallSourceScan({
     subject: `Plugin "${params.pluginId}"`,
     pluginId: params.pluginId,
@@ -226,7 +239,7 @@ export async function scanAndLinkInstalledPackage(params: {
       sourceFamilyForInstallPolicyKind(params.requestKind, "installed-package"),
     ),
     scan: async () =>
-      await params.runtime.scanInstalledPackageDependencyTree({
+      await runtime.scanInstalledPackageDependencyTree({
         ...(params.additionalDependencyPackageDirs
           ? { additionalPackageDirs: params.additionalDependencyPackageDirs }
           : {}),
@@ -240,12 +253,26 @@ export async function scanAndLinkInstalledPackage(params: {
         packageDir: params.installedDir,
         pluginId: params.pluginId,
         config: params.config,
+        onInstallPolicyWarning: params.onInstallPolicyWarning,
         ...(params.requestKind ? { requestKind: params.requestKind } : {}),
         requestedSpecifier: params.requestedSpecifier,
         source: params.source,
         trustedSourceLinkedOfficialInstall: params.trustedSourceLinkedOfficialInstall,
       }),
   });
+  if (scanResult) {
+    return scanResult;
+  }
+  return null;
+}
+
+export async function scanAndLinkInstalledPackage(
+  params: InstalledPluginDependencyScanParams & {
+    runtime: Awaited<ReturnType<typeof loadPluginInstallRuntime>>;
+    peerDependencies: Record<string, string>;
+  },
+): Promise<Extract<InstallPluginResult, { ok: false }> | null> {
+  const scanResult = await scanInstalledPluginDependencyTreeWithRuntime(params.runtime, params);
   if (scanResult) {
     return scanResult;
   }
@@ -293,6 +320,7 @@ async function installPluginFromInstalledPackageDirInternal(
     dangerouslyForceUnsafeInstall: params.dangerouslyForceUnsafeInstall,
     trustedSourceLinkedOfficialInstall: params.trustedSourceLinkedOfficialInstall,
     config: params.config,
+    onInstallPolicyWarning: params.onInstallPolicyWarning,
     installPolicyRequest: params.installPolicyRequest,
     logger,
     mode: params.mode ?? "install",
@@ -312,6 +340,7 @@ async function installPluginFromInstalledPackageDirInternal(
     dangerouslyForceUnsafeInstall: params.dangerouslyForceUnsafeInstall,
     trustedSourceLinkedOfficialInstall: params.trustedSourceLinkedOfficialInstall,
     config: params.config,
+    onInstallPolicyWarning: params.onInstallPolicyWarning,
     mode: params.mode ?? "install",
     ...(params.installPolicyRequest?.kind ? { requestKind: params.installPolicyRequest.kind } : {}),
     requestedSpecifier: params.installPolicyRequest?.requestedSpecifier,

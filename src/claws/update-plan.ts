@@ -1,14 +1,13 @@
-// Builds read-only, agent-centric Claw update plans from grouped manifests and ownership state.
-import { createHash } from "node:crypto";
 import { lstat } from "node:fs/promises";
-import { stableStringify } from "@openclaw/normalization-core";
 import { normalizeConfiguredMcpServers } from "../config/mcp-config-normalize.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { root as fsSafeRoot } from "../infra/fs-safe.js";
+import type { InstallPolicyWarning } from "../plugins/install-security-scan.js";
 import {
   openExistingOpenClawStateDatabaseReadOnly,
   type OpenClawStateDatabaseOptions,
 } from "../state/openclaw-state-db.js";
+import { digestClawPlanValue as digest } from "./install-policy.js";
 import { readClawStatus } from "./lifecycle-state.js";
 import { buildClawAddPlan } from "./lifecycle.js";
 import { digestClawMcpServer, readClawMcpServerRefsByName } from "./mcp.js";
@@ -38,15 +37,8 @@ import {
   type ClawUpdatePlan,
 } from "./update-plan-types.js";
 
-export {
-  CLAW_UPDATE_PLAN_SCHEMA_VERSION,
-  type ClawUpdateAction,
-  type ClawUpdatePlan,
-} from "./update-plan-types.js";
-
-function digest(value: unknown): string {
-  return `sha256:${createHash("sha256").update(stableStringify(value)).digest("hex")}`;
-}
+export { CLAW_UPDATE_PLAN_SCHEMA_VERSION } from "./update-plan-types.js";
+export type { ClawUpdateAction, ClawUpdatePlan } from "./update-plan-types.js";
 
 function diagnostic(code: string, path: string, message: string): ClawDiagnostic {
   return { level: "error", code, phase: "plan", path, message };
@@ -77,6 +69,7 @@ export async function buildClawUpdatePlan(params: {
     integrity?: string;
     installId?: string;
     warning?: string;
+    installPolicyWarning?: InstallPolicyWarning;
   }>;
   diagnostics?: ClawDiagnostic[];
 }): Promise<ClawUpdatePlan> {
@@ -201,6 +194,7 @@ export async function buildClawUpdatePlan(params: {
         integrity?: string;
         installId?: string;
         warning?: string;
+        installPolicyWarning?: InstallPolicyWarning;
       }
     >();
     const targetPlan = await buildClawAddPlan({
@@ -458,7 +452,13 @@ export async function buildClawUpdatePlan(params: {
           integrity: preflight?.integrity,
           installId: preflight?.installId,
           riskWarning: preflight?.warning,
+          ...(preflight?.installPolicyWarning
+            ? { installPolicyWarning: preflight.installPolicyWarning }
+            : {}),
         }),
+        ...((action === "add" || action === "change") && preflight?.installPolicyWarning
+          ? { installPolicyWarning: preflight.installPolicyWarning }
+          : {}),
       });
       const capabilityChange = packageCapabilityChange({
         pkg: target,

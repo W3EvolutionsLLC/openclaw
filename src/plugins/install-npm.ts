@@ -208,13 +208,15 @@ export async function installPluginFromNpmSpec(
   const policyTempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-npm-policy-"));
   try {
     const policyMetadataPath = path.join(policyTempDir, "npm-package-metadata.json");
+    const stablePolicyResolution = { ...npmResolution };
+    delete stablePolicyResolution.resolvedAt;
     await fs.writeFile(
       policyMetadataPath,
       `${JSON.stringify(
         {
           packageName: parsedSpec.name,
           requestedSpecifier: spec,
-          resolution: npmResolution,
+          resolution: stablePolicyResolution,
         },
         null,
         2,
@@ -230,6 +232,7 @@ export async function installPluginFromNpmSpec(
         await preflightPluginNpmInstallPolicy({
           config: params.config,
           logger,
+          onInstallPolicyWarning: params.onInstallPolicyWarning,
           mode: policyMode,
           packageName: parsedSpec.name,
           ...(expectedPluginId ? { pluginId: expectedPluginId } : {}),
@@ -250,6 +253,7 @@ export async function installPluginFromNpmSpec(
     dangerouslyForceUnsafeInstall: params.dangerouslyForceUnsafeInstall,
     trustedSourceLinkedOfficialInstall: params.trustedSourceLinkedOfficialInstall,
     config: params.config,
+    onInstallPolicyWarning: params.onInstallPolicyWarning,
     packageName: parsedSpec.name,
     dependencySpec: resolveManagedNpmRootDependencySpec({
       parsedSpec,

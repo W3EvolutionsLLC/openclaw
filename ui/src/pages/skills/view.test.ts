@@ -11,6 +11,7 @@ import { renderSkills } from "./view.ts";
 type SkillsProps = Parameters<typeof renderSkills>[0];
 
 const dialogRestores: Array<() => void> = [];
+const INSTALL_POLICY_ACKNOWLEDGEMENT_ID = `v1:${"a".repeat(43)}`;
 
 function normalizeText(node: Element | DocumentFragment): string {
   return node.textContent?.replace(/\s+/g, " ").trim() ?? "";
@@ -318,6 +319,56 @@ describe("renderSkills", () => {
     expect(installButton).toBeInstanceOf(HTMLButtonElement);
     installButton?.click();
     expect(onInstall).toHaveBeenCalledWith("coding-agent", "Coding Agent", "node-codex");
+  });
+
+  it("retries a skill install warning with the exact acknowledgement token", async () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    dialogRestores.push(() => container.remove());
+    const onInstall = vi.fn();
+    const skill = createSkill({
+      missing: { anyBins: [], bins: ["repo-cli"], env: [], config: [], os: [] },
+      install: [{ id: "repo-cli", kind: "node", label: "Install repo-cli", bins: ["repo-cli"] }],
+    });
+
+    render(
+      renderSkills(
+        createProps({
+          report: {
+            workspaceDir: "/tmp/workspace",
+            managedSkillsDir: "/tmp/skills",
+            skills: [skill],
+          },
+          detailKey: "repo-skill",
+          messages: {
+            "repo-skill": {
+              kind: "error",
+              message: "Manual review recommended.",
+              acknowledgeInstallPolicyWarning: {
+                name: "Repo Skill",
+                installId: "repo-cli",
+                acknowledgementId: INSTALL_POLICY_ACKNOWLEDGEMENT_ID,
+              },
+            },
+          },
+          onInstall,
+        }),
+      ),
+      container,
+    );
+
+    const retryButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (button) => normalizeText(button) === "Acknowledge risk and install",
+    );
+    expect(retryButton).toBeInstanceOf(HTMLButtonElement);
+    retryButton?.click();
+
+    expect(onInstall).toHaveBeenCalledWith(
+      "repo-skill",
+      "Repo Skill",
+      "repo-cli",
+      INSTALL_POLICY_ACKNOWLEDGEMENT_ID,
+    );
   });
 
   it("does not offer an installer that cannot satisfy a missing alternative", async () => {
@@ -777,6 +828,8 @@ describe("renderSkills", () => {
             text: "REVIEW REQUIRED - ClawHub found suspicious behavior.",
             acknowledgeSlug: "github",
             acknowledgeVersion: "1.2.3",
+            acknowledgeClawHubRisk: true,
+            acknowledgeInstallPolicyWarning: INSTALL_POLICY_ACKNOWLEDGEMENT_ID,
           },
           onClawHubInstall,
         }),
@@ -792,7 +845,12 @@ describe("renderSkills", () => {
     retryButton!.click();
 
     expect(onClawHubInstall).toHaveBeenCalledTimes(1);
-    expect(onClawHubInstall).toHaveBeenCalledWith("github", true, "1.2.3");
+    expect(onClawHubInstall).toHaveBeenCalledWith(
+      "github",
+      true,
+      "1.2.3",
+      INSTALL_POLICY_ACKNOWLEDGEMENT_ID,
+    );
   });
 
   it("renders installed ClawHub verdicts and the local Skill Card tab", async () => {

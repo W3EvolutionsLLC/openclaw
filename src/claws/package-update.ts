@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { stableStringify } from "@openclaw/normalization-core";
+import type { InstallPolicyWarning } from "../plugins/install-security-scan.js";
 import { preflightPluginInstall } from "../plugins/plugin-install-preflight.js";
 import type { OpenClawStateDatabaseOptions } from "../state/openclaw-state-db.js";
 import {
@@ -51,6 +52,7 @@ export async function applyClawPackageUpdate(
     readRefs?: typeof readClawPackageRefs;
     replaceExpected?: typeof replaceClawPackageRefExpected;
     packageDeps?: PackageInstallerDeps;
+    onInstallPolicyWarning?: (warning: InstallPolicyWarning) => boolean | Promise<boolean>;
     nowMs?: number;
   },
 ): Promise<ClawPackageUpdateExecution> {

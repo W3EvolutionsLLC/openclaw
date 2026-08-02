@@ -19,6 +19,7 @@ import {
   type SkillInstallSkipReason,
 } from "../skills/lifecycle/install.js";
 import { t } from "../wizard/i18n/index.js";
+import { confirmWizardInstallPolicyWarning } from "../wizard/install-policy-warning.js";
 import type { WizardPrompter } from "../wizard/prompts.js";
 import { detectBinary } from "./onboard-helpers.js";
 import { isNodeManagerChoice, type NodeManagerChoice } from "./onboard-types.js";
@@ -302,6 +303,10 @@ export async function setupSkills(
         skillName: target.name,
         installId,
         config: next,
+        onInstallPolicyWarning: async (warning) => {
+          spin.stop("Review install policy warning");
+          return await confirmWizardInstallPolicyWarning({ prompter, warning });
+        },
       });
       const warnings = result.warnings ?? [];
       if (result.ok) {

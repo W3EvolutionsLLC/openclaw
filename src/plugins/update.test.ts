@@ -44,6 +44,7 @@ const installPluginFromNpmSpecMock = vi.fn();
 const installPluginFromMarketplaceMock = vi.fn();
 const installPluginFromClawHubMock = vi.fn();
 const installPluginFromGitSpecMock = vi.fn();
+const scanBundleInstallSourceMock = vi.fn();
 const resolveBundledPluginSourcesMock = vi.fn();
 const runCommandWithTimeoutMock = vi.fn();
 const validatePackageExtensionEntriesForInstallMock = vi.fn();
@@ -63,6 +64,10 @@ vi.mock("./install.js", () => ({
   PLUGIN_INSTALL_ERROR_CODE: {
     NPM_METADATA_FAILURE: "npm_metadata_failure",
     NPM_PACKAGE_NOT_FOUND: "npm_package_not_found",
+    INSTALL_POLICY_ACKNOWLEDGEMENT_REQUIRED: "install_policy_acknowledgement_required",
+    INSTALL_ROLLBACK_FAILED: "install_rollback_failed",
+    SECURITY_SCAN_BLOCKED: "security_scan_blocked",
+    SECURITY_SCAN_FAILED: "security_scan_failed",
   },
 }));
 
@@ -72,6 +77,11 @@ vi.mock("./git-install.js", () => ({
 
 vi.mock("./marketplace.js", () => ({
   installPluginFromMarketplace: (...args: unknown[]) => installPluginFromMarketplaceMock(...args),
+}));
+
+vi.mock("./install-security-scan.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./install-security-scan.js")>()),
+  scanBundleInstallSource: (...args: unknown[]) => scanBundleInstallSourceMock(...args),
 }));
 
 vi.mock("./clawhub.js", () => ({
@@ -269,6 +279,7 @@ function createEnabledDemoClawHubInstallConfig(): OpenClawConfig {
   const installPath = createInstalledPackageDir({
     name: "demo",
     version: "1.2.3",
+    runnable: true,
   });
   const config = createClawHubInstallConfig({ installPath });
   config.plugins = {
@@ -723,6 +734,7 @@ describe("updateNpmInstalledPlugins", () => {
     installPluginFromMarketplaceMock.mockReset();
     installPluginFromClawHubMock.mockReset();
     installPluginFromGitSpecMock.mockReset();
+    scanBundleInstallSourceMock.mockReset();
     resolveBundledPluginSourcesMock.mockReset();
     resolveBundledPluginSourcesMock.mockReturnValue(new Map());
     runCommandWithTimeoutMock.mockReset();
@@ -2814,6 +2826,43 @@ describe("updateNpmInstalledPlugins", () => {
     ]);
   });
 
+  it("keeps a missing plugin eligible for repair when install policy requires acknowledgement", async () => {
+    installPluginFromClawHubMock.mockResolvedValue({
+      ok: false,
+      code: "install_policy_acknowledgement_required",
+      error: "Manual review recommended.",
+      installPolicyWarning: {
+        reason: "Manual review recommended.",
+      },
+    });
+    const config = createEnabledDemoClawHubInstallConfig();
+    const installPath = expectDefined(
+      config.plugins?.installs?.demo?.installPath,
+      "demo install path test invariant",
+    );
+    fs.rmSync(installPath, { recursive: true, force: true });
+
+    const result = await updatePlugin(config, "demo", { disableOnFailure: true });
+
+    expect(result.outcomes).toEqual([
+      {
+        pluginId: "demo",
+        status: "error",
+        code: "install_policy_acknowledgement_required",
+        installPolicyWarning: {
+          reason: "Manual review recommended.",
+        },
+        message: "Failed to update demo: Manual review recommended. (ClawHub clawhub:demo).",
+      },
+    ]);
+    expect(result.changed).toBe(false);
+    expect(result.config).toBe(config);
+    expect(result.config.plugins?.entries?.demo).toEqual({
+      enabled: true,
+      config: { preserved: true },
+    });
+  });
+
   it("does not skip a risk-gated ClawHub update when the installed package is missing", async () => {
     installPluginFromClawHubMock.mockResolvedValue({
       ok: false,
@@ -3347,6 +3396,43 @@ describe("updateNpmInstalledPlugins", () => {
       reason: "failed",
       message: "plugin channel fallback: openclaw-codex-app-server used @latest after @beta failed",
     });
+  });
+
+  it.each([
+    {
+      code: "install_policy_acknowledgement_required",
+      error: "Manual review recommended.",
+    },
+    {
+      code: "security_scan_blocked",
+      error: "Install policy blocked this package.",
+    },
+    {
+      code: "security_scan_failed",
+      error: "Install policy could not evaluate this package.",
+    },
+    {
+      code: "install_rollback_failed",
+      error: "Managed npm rollback failed closed.",
+    },
+  ] as const)("does not bypass $code through npm beta fallback", async ({ code, error }) => {
+    installPluginFromNpmSpecMock.mockResolvedValueOnce({ ok: false, code, error });
+
+    const result = await updatePlugin(
+      createCodexAppServerInstallConfig({ spec: "openclaw-codex-app-server" }),
+      "openclaw-codex-app-server",
+      { updateChannel: "beta" },
+    );
+
+    expect(installPluginFromNpmSpecMock).toHaveBeenCalledTimes(1);
+    expect(npmInstallCall()?.spec).toBe("openclaw-codex-app-server@beta");
+    expect(result.changed).toBe(false);
+    expect(result.outcomes[0]).toMatchObject({
+      pluginId: "openclaw-codex-app-server",
+      status: "error",
+      message: `Failed to update openclaw-codex-app-server: ${error}`,
+    });
+    expect(result.outcomes[0]?.channelFallback).toBeUndefined();
   });
 
   it.each([
@@ -4220,6 +4306,79 @@ describe("updateNpmInstalledPlugins", () => {
     expect(npmInstallCall()?.expectedPluginId).toBe("openclaw-codex-app-server");
   });
 
+  it("forwards install-policy acknowledgement to every recorded update source", async () => {
+    const onInstallPolicyWarning = vi.fn(async () => true);
+    installPluginFromNpmSpecMock.mockResolvedValue(
+      createSuccessfulNpmUpdateResult({
+        pluginId: "openclaw-codex-app-server",
+        targetDir: "/tmp/openclaw-codex-app-server",
+        version: "0.2.0-beta.4",
+      }),
+    );
+    installPluginFromClawHubMock.mockResolvedValue(
+      createSuccessfulClawHubUpdateResult({
+        pluginId: "demo",
+        targetDir: "/tmp/demo",
+        version: "1.3.0",
+        clawhubPackage: "demo",
+      }),
+    );
+    installPluginFromMarketplaceMock.mockResolvedValue({
+      ok: true,
+      pluginId: "demo",
+      targetDir: "/tmp/demo",
+      version: "1.3.0",
+      extensions: ["index.ts"],
+      marketplaceName: "Acme Plugins",
+      marketplaceSource: "acme/plugins",
+      marketplacePlugin: "demo",
+    });
+    installPluginFromGitSpecMock.mockResolvedValue({
+      ok: true,
+      pluginId: "demo",
+      targetDir: "/tmp/demo",
+      version: "1.3.0",
+      extensions: ["index.ts"],
+      git: {
+        url: "https://github.com/acme/demo.git",
+        ref: "main",
+        commit: "def456",
+        resolvedAt: "2026-04-30T00:00:00.000Z",
+      },
+    });
+
+    await updatePlugin(
+      createCodexAppServerInstallConfig({ spec: "openclaw-codex-app-server@beta" }),
+      "openclaw-codex-app-server",
+      { onInstallPolicyWarning },
+    );
+    await updatePlugin(createClawHubInstallConfig(), "demo", { onInstallPolicyWarning });
+    await updatePlugin(
+      createMarketplaceInstallConfig({
+        pluginId: "demo",
+        installPath: "/tmp/demo",
+        marketplaceSource: "acme/plugins",
+        marketplacePlugin: "demo",
+      }),
+      "demo",
+      { onInstallPolicyWarning },
+    );
+    await updatePlugin(
+      createGitInstallConfig({
+        pluginId: "demo",
+        installPath: "/tmp/demo",
+        spec: "git:github.com/acme/demo@main",
+      }),
+      "demo",
+      { onInstallPolicyWarning },
+    );
+
+    expect(npmInstallCall()?.onInstallPolicyWarning).toBe(onInstallPolicyWarning);
+    expect(clawHubInstallCall()?.onInstallPolicyWarning).toBe(onInstallPolicyWarning);
+    expect(marketplaceInstallCall()?.onInstallPolicyWarning).toBe(onInstallPolicyWarning);
+    expect(gitInstallCall()?.onInstallPolicyWarning).toBe(onInstallPolicyWarning);
+  });
+
   it("reuses the recorded managed extensions root when updating external plugins", async () => {
     const installPath = "/var/openclaw/extensions/demo";
     const extensionsDir = "/var/openclaw/extensions";
@@ -4373,6 +4532,102 @@ describe("syncPluginsForUpdateChannel", () => {
       workspaceDir: "/workspace",
       env,
     });
+  });
+
+  it.each([
+    {
+      name: "warns",
+      policyResult: {
+        warning: {
+          reason: "bundled source needs review",
+          acknowledgementId: `v1:${"a".repeat(43)}`,
+        },
+      },
+      expectedError: "Failed to update feishu: bundled source needs review",
+    },
+    {
+      name: "blocks",
+      policyResult: {
+        blocked: {
+          code: "security_scan_blocked" as const,
+          reason: "blocked by install policy: bundled source rejected",
+        },
+      },
+      expectedError: "Failed to update feishu: blocked by install policy: bundled source rejected",
+    },
+  ])(
+    "does not activate a bundled dev source when policy $name",
+    async ({ policyResult, expectedError }) => {
+      mockBundledSources(createBundledSource());
+      scanBundleInstallSourceMock.mockResolvedValue(policyResult);
+      const config = createBundledPathInstallConfig({
+        loadPaths: [],
+        sourcePath: "/tmp/old-feishu",
+        installPath: "/tmp/old-feishu",
+        spec: "@openclaw/feishu",
+      });
+
+      const result = await syncPluginsForUpdateChannel({
+        channel: "dev",
+        config,
+      });
+
+      expect(scanBundleInstallSourceMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config,
+          mode: "update",
+          pluginId: "feishu",
+          requestedSpecifier: "@openclaw/feishu",
+          source: { kind: "bundled", authority: "openclaw", mutable: false, network: false },
+          sourceDir: appBundledPluginRoot("feishu"),
+        }),
+      );
+      expect(result).toEqual({
+        config,
+        changed: false,
+        summary: {
+          switchedToBundled: [],
+          switchedToClawHub: [],
+          switchedToNpm: [],
+          warnings: [],
+          errors: [expectedError],
+          ...(policyResult.warning
+            ? {
+                installPolicyWarnings: [
+                  {
+                    error: expectedError,
+                    pluginId: "feishu",
+                    warning: policyResult.warning,
+                  },
+                ],
+              }
+            : {}),
+        },
+      });
+    },
+  );
+
+  it("forwards acknowledgement before activating a bundled dev source", async () => {
+    mockBundledSources(createBundledSource());
+    const onInstallPolicyWarning = vi.fn(async () => true);
+    scanBundleInstallSourceMock.mockImplementationOnce(async (params) => {
+      expect(params.onInstallPolicyWarning).toBe(onInstallPolicyWarning);
+      return undefined;
+    });
+
+    const result = await syncPluginsForUpdateChannel({
+      channel: "dev",
+      config: createBundledPathInstallConfig({
+        loadPaths: [],
+        sourcePath: "/tmp/old-feishu",
+        installPath: "/tmp/old-feishu",
+      }),
+      onInstallPolicyWarning,
+    });
+
+    expect(result.changed).toBe(true);
+    expect(result.summary.switchedToBundled).toEqual(["feishu"]);
+    expect(result.config.plugins?.load?.paths).toEqual([appBundledPluginRoot("feishu")]);
   });
 
   it("uses the provided env when matching bundled load and install paths", async () => {

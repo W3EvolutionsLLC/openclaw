@@ -135,6 +135,7 @@ export function resolvePluginInstallSourcePlan(params: {
         source: "bundled",
         rawSpec: params.raw,
         bundledSource: bundledPlan.bundledSource,
+        mode: params.mode,
         warning: bundledPlan.warning,
       },
       params.raw,

@@ -87,6 +87,27 @@ describe("collectInstallPolicyHealthLines", () => {
     expect(lines.join("\n")).toContain("Deep probe allowed the synthetic install request");
   });
 
+  it("sanitizes policy warning reasons in deep mode", async () => {
+    const dir = await makeTempDir();
+    const scriptPath = await writePolicyScript(
+      dir,
+      JSON.stringify({
+        protocolVersion: 1,
+        decision: "warn",
+        reason: "review \u001b[31mthis\u001b[0m\nrequest",
+      }),
+    );
+
+    const lines = await collectInstallPolicyHealthLines(configWithPolicy(scriptPath), {
+      deep: true,
+    });
+
+    expect(lines.join("\n")).toContain(
+      "policy warned on the synthetic request: review this\\nrequest",
+    );
+    expect(lines.join("\n")).not.toContain("\u001b");
+  });
+
   it("reports unavailable enabled policy as fail-closed", async () => {
     const lines = await collectInstallPolicyHealthLines({
       security: {

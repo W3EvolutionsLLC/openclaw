@@ -36,6 +36,7 @@ export type UpdateCommandOptions = {
   timeout?: string;
   yes?: boolean;
   acknowledgeClawHubRisk?: boolean;
+  dangerouslyForceUnsafeInstall?: boolean;
 };
 
 export type UpdateStatusOptions = {
@@ -50,6 +51,7 @@ export type UpdateFinalizeOptions = {
   yes?: boolean;
   restart?: boolean;
   acknowledgeClawHubRisk?: boolean;
+  dangerouslyForceUnsafeInstall?: boolean;
 };
 
 export type UpdateWizardOptions = {

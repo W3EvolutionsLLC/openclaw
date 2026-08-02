@@ -1,3 +1,5 @@
+import { formatInstallPolicyWarningDetails } from "../../packages/gateway-protocol/src/install-policy-warning-details.js";
+import { sanitizeTerminalText } from "../../packages/terminal-core/src/safe-text.js";
 import type { ClawUpdatePlan } from "../claws/update-plan.js";
 import { redactSensitiveText } from "../logging/redact.js";
 import type { RuntimeEnv } from "../runtime.js";
@@ -24,6 +26,19 @@ export function logClawUpdatePlanSummary(plan: ClawUpdatePlan, runtime: RuntimeE
       `  ${change.requiresDistinctConsent ? "!" : "-"} ${change.path}: ${current} -> ${desired} (${change.action})`,
     );
     runtime.log(redactSensitiveText(`      effect: ${JSON.stringify(change.effect)}`));
+  }
+  const installPolicyWarnings = plan.actions.flatMap((action) =>
+    action.kind === "package" &&
+    (action.action === "add" || action.action === "change") &&
+    action.installPolicyWarning
+      ? [action.installPolicyWarning]
+      : [],
+  );
+  if (installPolicyWarnings.length > 0) {
+    runtime.log(`Install policy warnings (${installPolicyWarnings.length}):`);
+    for (const warning of installPolicyWarnings) {
+      runtime.log(formatInstallPolicyWarningDetails(warning, sanitizeTerminalText));
+    }
   }
   if (plan.blockers.length > 0) {
     runtime.error(

@@ -2,6 +2,8 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
+import type { InstallPolicyWarningFinding } from "../../packages/gateway-protocol/src/install-policy-warning-details.js";
+import { sanitizeTerminalText } from "../../packages/terminal-core/src/safe-text.js";
 import type { OpenClawConfig, SecurityConfig } from "../config/types.openclaw.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import { runCommandWithTimeout } from "../process/exec.js";
@@ -68,14 +70,7 @@ export type InstallPolicySource = {
   network: boolean;
 };
 
-export type InstallPolicyFinding = {
-  ruleId: string;
-  severity: "info" | "warn" | "critical";
-  message: string;
-  file?: string;
-  line?: number;
-  evidence?: string;
-};
+export type InstallPolicyFinding = InstallPolicyWarningFinding;
 
 type InstallPolicyRequest = {
   targetType: InstallPolicyTarget;
@@ -118,12 +113,12 @@ type InstallPolicyRequest = {
 };
 
 type InstallPolicyResult =
-  | { blocked?: undefined; findings?: InstallPolicyFinding[] }
+  | { decision: "allow"; findings?: InstallPolicyFinding[] }
+  | { decision: "warn"; reason: string; findings?: InstallPolicyFinding[] }
   | {
-      blocked: {
-        code: "security_scan_blocked" | "security_scan_failed";
-        reason: string;
-      };
+      decision: "block";
+      code: "security_scan_blocked" | "security_scan_failed";
+      reason: string;
       findings?: InstallPolicyFinding[];
     };
 
@@ -267,7 +262,7 @@ async function assertSecureCommandAncestorDirs(params: {
     }
     if (process.platform === "win32" && perms.source === "unknown") {
       throw new Error(
-        `${params.label} parent directory ACL verification unavailable on Windows for ${dir}. Set allowInsecurePath=true for this policy to bypass this check when the path is trusted.`,
+        `${params.label} parent directory ACL verification unavailable on Windows for ${dir}.`,
       );
     }
   }
@@ -277,31 +272,15 @@ async function assertSecureCommandPath(params: {
   targetPath: string;
   label: string;
   trustedDirs?: string[];
-  allowInsecurePath?: boolean;
-  allowSymlinkPath?: boolean;
 }): Promise<string> {
   if (!isAbsolutePathname(params.targetPath)) {
     throw new Error(`${params.label} must be an absolute path.`);
   }
 
-  let effectivePath = params.targetPath;
-  let stat = await readFileStatOrThrow(effectivePath, params.label);
+  const effectivePath = params.targetPath;
+  const stat = await readFileStatOrThrow(effectivePath, params.label);
   if (stat.isSymlink) {
-    if (!params.allowSymlinkPath) {
-      throw new Error(`${params.label} must not be a symlink: ${effectivePath}`);
-    }
-    try {
-      effectivePath = await fs.realpath(effectivePath);
-    } catch {
-      throw new Error(`${params.label} symlink target is not readable: ${params.targetPath}`);
-    }
-    if (!isAbsolutePathname(effectivePath)) {
-      throw new Error(`${params.label} resolved symlink target must be an absolute path.`);
-    }
-    stat = await readFileStatOrThrow(effectivePath, params.label);
-    if (stat.isSymlink) {
-      throw new Error(`${params.label} symlink target must not be a symlink: ${effectivePath}`);
-    }
+    throw new Error(`${params.label} must not be a symlink: ${effectivePath}`);
   }
 
   if (params.trustedDirs && params.trustedDirs.length > 0) {
@@ -311,10 +290,6 @@ async function assertSecureCommandPath(params: {
       throw new Error(`${params.label} is outside trustedDirs: ${effectivePath}`);
     }
   }
-  if (params.allowInsecurePath) {
-    return effectivePath;
-  }
-
   const perms = await inspectPathPermissions(effectivePath);
   if (!perms.ok) {
     throw new Error(`${params.label} permissions could not be verified: ${effectivePath}`);
@@ -326,7 +301,7 @@ async function assertSecureCommandPath(params: {
 
   if (process.platform === "win32" && perms.source === "unknown") {
     throw new Error(
-      `${params.label} ACL verification unavailable on Windows for ${effectivePath}. Set allowInsecurePath=true for this policy to bypass this check when the path is trusted.`,
+      `${params.label} ACL verification unavailable on Windows for ${effectivePath}.`,
     );
   }
 
@@ -345,8 +320,6 @@ async function assertSecurePolicyScriptArg(params: {
   command: string;
   args: string[];
   trustedDirs?: string[];
-  allowInsecurePath?: boolean;
-  allowSymlinkPath?: boolean;
 }): Promise<void> {
   const scriptArg = resolvePolicyScriptArg({ command: params.command, args: params.args });
   if (!scriptArg) {
@@ -360,8 +333,6 @@ async function assertSecurePolicyScriptArg(params: {
       targetPath: script.path,
       label: `security.installPolicy.exec.args[${script.index}]`,
       trustedDirs: params.trustedDirs,
-      allowInsecurePath: params.allowInsecurePath,
-      allowSymlinkPath: false,
     });
   }
 }
@@ -387,19 +358,29 @@ function readPassEnvValue(env: NodeJS.ProcessEnv, key: string): string | undefin
 
 function blockedByFailure(message: string): InstallPolicyResult {
   return {
-    blocked: {
-      code: "security_scan_failed",
-      reason: `install policy failed closed: ${truncateText(message, MAX_REASON_CHARS)}`,
-    },
+    decision: "block",
+    code: "security_scan_failed",
+    reason: sanitizeTerminalText(
+      `install policy failed closed: ${truncateText(message, MAX_REASON_CHARS)}`,
+    ),
   };
 }
 
 function blockedByPolicy(reason: string, findings?: InstallPolicyFinding[]): InstallPolicyResult {
   return {
-    blocked: {
-      code: "security_scan_blocked",
-      reason: `blocked by install policy: ${truncateText(reason, MAX_REASON_CHARS)}`,
-    },
+    decision: "block",
+    code: "security_scan_blocked",
+    reason: sanitizeTerminalText(
+      `blocked by install policy: ${truncateText(reason, MAX_REASON_CHARS)}`,
+    ),
+    ...(findings && findings.length > 0 ? { findings } : {}),
+  };
+}
+
+function warnedByPolicy(reason: string, findings?: InstallPolicyFinding[]): InstallPolicyResult {
+  return {
+    decision: "warn",
+    reason: truncateText(reason, MAX_REASON_CHARS),
     ...(findings && findings.length > 0 ? { findings } : {}),
   };
 }
@@ -476,7 +457,6 @@ export async function validateInstallPolicyStatic(
       targetPath: policy.exec.command,
       label: "security.installPolicy.exec.command",
       trustedDirs: policy.exec.trustedDirs,
-      allowSymlinkPath: false,
     });
   } catch (err) {
     issues.push({
@@ -489,7 +469,6 @@ export async function validateInstallPolicyStatic(
       command: policy.exec.command,
       args: policy.exec.args ?? [],
       trustedDirs: policy.exec.trustedDirs,
-      allowSymlinkPath: false,
     });
   } catch (err) {
     issues.push({
@@ -551,24 +530,30 @@ function parsePolicyResponse(stdout: string): InstallPolicyResult {
     return blockedByFailure("policy response protocolVersion must be 1");
   }
   const decision = record.decision;
-  if (decision !== "allow" && decision !== "block") {
-    return blockedByFailure('policy response decision must be "allow" or "block"');
+  if (decision !== "allow" && decision !== "warn" && decision !== "block") {
+    return blockedByFailure('policy response decision must be "allow", "warn", or "block"');
   }
   const findings = Array.isArray(record.findings)
     ? record.findings.slice(0, MAX_FINDINGS).map(normalizeFinding).filter(Boolean)
     : [];
   const normalizedFindings = findings as InstallPolicyFinding[];
   if (decision === "allow") {
-    return normalizedFindings.length > 0 ? { findings: normalizedFindings } : {};
+    return {
+      decision: "allow",
+      ...(normalizedFindings.length > 0 ? { findings: normalizedFindings } : {}),
+    };
   }
   const reason = typeof record.reason === "string" ? record.reason.trim() : "";
   if (!reason) {
-    return blockedByFailure('policy response decision "block" requires a non-empty reason');
+    return blockedByFailure(`policy response decision "${decision}" requires a non-empty reason`);
   }
-  return blockedByPolicy(reason, normalizedFindings);
+  return decision === "warn"
+    ? warnedByPolicy(reason, normalizedFindings)
+    : blockedByPolicy(reason, normalizedFindings);
 }
 
 export async function runInstallPolicy(params: {
+  artifactDigest?: () => Promise<string>;
   config?: OpenClawConfig;
   env?: NodeJS.ProcessEnv;
   logger?: {
@@ -580,8 +565,8 @@ export async function runInstallPolicy(params: {
 }): Promise<InstallPolicyResult | undefined> {
   const decisionContext = formatDecisionContext(params.request);
   const logBlocked = (result: InstallPolicyResult): InstallPolicyResult => {
-    if (result.blocked) {
-      params.logger?.warn?.(`Install policy ${decisionContext}: ${result.blocked.reason}`);
+    if (result.decision === "block") {
+      params.logger?.warn?.(`Install policy ${decisionContext}: ${result.reason}`);
     }
     return result;
   };
@@ -625,7 +610,6 @@ export async function runInstallPolicy(params: {
       targetPath: commandPath,
       label: "security.installPolicy.exec.command",
       trustedDirs: policy.exec.trustedDirs,
-      allowSymlinkPath: false,
     });
   } catch (err) {
     return failClosed(formatErrorMessage(err));
@@ -635,7 +619,6 @@ export async function runInstallPolicy(params: {
       command: secureCommandPath,
       args: policy.exec.args ?? [],
       trustedDirs: policy.exec.trustedDirs,
-      allowSymlinkPath: false,
     });
   } catch (err) {
     return failClosed(formatErrorMessage(err));
@@ -659,6 +642,7 @@ export async function runInstallPolicy(params: {
   const cwd = path.dirname(secureCommandPath);
   let result: Awaited<ReturnType<typeof runCommandWithTimeout>>;
   try {
+    const artifactDigestBefore = await params.artifactDigest?.();
     result = await runCommandWithTimeout([secureCommandPath, ...(policy.exec.args ?? [])], {
       baseEnv: {},
       cwd,
@@ -672,6 +656,12 @@ export async function runInstallPolicy(params: {
       terminateOnOutputLimit: true,
       timeoutMs,
     });
+    if (artifactDigestBefore !== undefined) {
+      const artifactDigestAfter = await params.artifactDigest?.();
+      if (artifactDigestAfter !== artifactDigestBefore) {
+        return failClosed("install policy artifact changed while the policy command was running");
+      }
+    }
   } catch (err) {
     return failClosed(formatErrorMessage(err));
   }
@@ -689,10 +679,10 @@ export async function runInstallPolicy(params: {
   }
 
   const parsed = parsePolicyResponse(result.stdout);
-  if (parsed.blocked) {
+  if (parsed.decision === "block") {
     return logBlocked(parsed);
   }
-  params.logger?.debug?.(`Install policy ${decisionContext}: allowed`);
+  params.logger?.debug?.(`Install policy ${decisionContext}: ${parsed.decision}`);
   return parsed;
 }
 
@@ -746,4 +736,3 @@ export async function probeInstallPolicy(params: {
     },
   });
 }
-/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

@@ -720,6 +720,32 @@ describe("retired runtime config migrations", () => {
     expect(result.raw).not.toHaveProperty("memory.qmd");
   });
 
+  it("strips retired install-policy path bypasses", () => {
+    const result = applyAll({
+      security: {
+        installPolicy: {
+          enabled: true,
+          exec: {
+            source: "exec",
+            command: "/usr/local/bin/install-policy",
+            allowInsecurePath: true,
+            allowSymlinkCommand: true,
+          },
+        },
+      },
+    });
+
+    expect(result.raw).toHaveProperty("security.installPolicy.exec", {
+      source: "exec",
+      command: "/usr/local/bin/install-policy",
+    });
+    expect(result.raw).not.toHaveProperty("security.installPolicy.exec.allowInsecurePath");
+    expect(result.raw).not.toHaveProperty("security.installPolicy.exec.allowSymlinkCommand");
+    expect(result.changes).toContain(
+      "Applied tier-eval tranche retirements; canonical settings and built-in defaults now apply.",
+    );
+  });
+
   it("keeps evidence mismatches while stripping canonical conflict aliases", () => {
     const result = applyAll({
       session: { threadBindings: { enabled: true } },

@@ -7,7 +7,9 @@ import { stableStringify } from "@openclaw/normalization-core";
 import { resolvePathViaExistingAncestorSync } from "../infra/boundary-path.js";
 import { assertNoSymlinkParents } from "../infra/fs-safe-advanced.js";
 import { FsSafeError, root as fsSafeRoot, type Root } from "../infra/fs-safe.js";
+import type { InstallPolicyWarning } from "../plugins/install-security-scan.js";
 import { resolveUserPath } from "../utils.js";
+import { digestClawPlanValue } from "./install-policy.js";
 import { digestClawMcpServer } from "./mcp.js";
 import { clawManifestWorkspaceConflictsWithPath } from "./schema.js";
 import { MAX_MANAGED_FILE_BYTES, MAX_MANAGED_WORKSPACE_BYTES } from "./source-limits.js";
@@ -56,6 +58,7 @@ export type ClawAddPlanContext = {
     integrity?: string;
     installId?: string;
     warning?: string;
+    installPolicyWarning?: InstallPolicyWarning;
     requirements?: ClawLocalPrerequisite[];
     installedVersion?: string;
     code?: string;
@@ -474,6 +477,9 @@ export async function buildClawAddPlan(params: {
         ...(preflight.integrity ? { integrity: preflight.integrity } : {}),
         ...(preflight.installId ? { installId: preflight.installId } : {}),
         ...(preflight.warning ? { riskWarning: preflight.warning } : {}),
+        ...(preflight.installPolicyWarning
+          ? { installPolicyWarning: preflight.installPolicyWarning }
+          : {}),
         ...(preflight.requirements ? { prerequisites: preflight.requirements } : {}),
         expectedState: !preflight.ok
           ? "unresolved"
@@ -596,19 +602,15 @@ export async function buildClawAddPlan(params: {
     `${left.kind}:${left.id}:${left.path}`.localeCompare(`${right.kind}:${right.id}:${right.path}`),
   );
 
-  const planIntegrity = `sha256:${createHash("sha256")
-    .update(
-      stableStringify({
-        manifestSchemaVersion: params.manifest.schemaVersion,
-        clawIntegrity: source.integrity,
-        finalId,
-        workspace,
-        actions,
-        capabilityChanges,
-        blockers,
-      }),
-    )
-    .digest("hex")}`;
+  const planIntegrity = digestClawPlanValue({
+    manifestSchemaVersion: params.manifest.schemaVersion,
+    clawIntegrity: source.integrity,
+    finalId,
+    workspace,
+    actions,
+    capabilityChanges,
+    blockers,
+  });
 
   return {
     schemaVersion: CLAW_ADD_PLAN_SCHEMA_VERSION,

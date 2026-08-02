@@ -255,6 +255,28 @@ describe("dead config keys", () => {
     }
   });
 
+  it.each(["allowInsecurePath", "allowSymlinkCommand"] as const)(
+    "rejects retired install-policy bypass %s",
+    (key) => {
+      expectUnknownKey({
+        config: {
+          security: {
+            installPolicy: {
+              enabled: true,
+              exec: {
+                source: "exec",
+                command: "/bin/echo",
+                [key]: true,
+              },
+            },
+          },
+        },
+        path: "security.installPolicy.exec",
+        key,
+      });
+    },
+  );
+
   it.each([
     ["Discord root", "discord", { dm: { policy: "pairing" } }, "channels.discord.dm", "policy"],
     [

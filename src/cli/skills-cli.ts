@@ -65,6 +65,7 @@ import type {
 import { CONFIG_DIR } from "../utils.js";
 import { resolveClawHubRiskAcknowledgementCliOptions } from "./clawhub-risk-acknowledgement.js";
 import { resolveOptionFromCommand } from "./cli-utils.js";
+import { resolveInstallPolicyAcknowledgementCliOptions } from "./install-policy-acknowledgement.js";
 import { parseStrictPositiveIntOption } from "./program/helpers.js";
 import { setCommandJsonMode } from "./program/json-mode.js";
 import { applyParentDefaultHelpAction } from "./program/parent-default-help.js";
@@ -625,6 +626,11 @@ export function registerSkillsCli(program: Command) {
       "Acknowledge ClawHub release trust warnings without prompting",
       false,
     )
+    .option(
+      "--dangerously-force-unsafe-install",
+      "Acknowledge operator install policy warnings; never overrides blocks",
+      false,
+    )
     .option("--global", "Install into the shared managed skills directory", false)
     .option("--agent <id>", "Target agent workspace (defaults to cwd-inferred, then default agent)")
     .option("--as <slug>", "Install a git/local skill under this slug")
@@ -641,6 +647,7 @@ export function registerSkillsCli(program: Command) {
           forceInstall?: boolean;
           acknowledgeClawhubRisk?: boolean;
           acknowledgeClawHubRisk?: boolean;
+          dangerouslyForceUnsafeInstall?: boolean;
           global?: boolean;
           agent?: string;
           as?: string;
@@ -672,6 +679,11 @@ export function registerSkillsCli(program: Command) {
                 info: (message) => defaultRuntime.log(message),
                 warn: (message) => defaultRuntime.log(formatSkillWarning(message)),
               },
+              ...resolveInstallPolicyAcknowledgementCliOptions({
+                dangerouslyForceUnsafeInstall: opts.dangerouslyForceUnsafeInstall,
+                action: "install",
+                reportError: (message) => defaultRuntime.error(message),
+              }),
             });
             if (!result.ok) {
               defaultRuntime.error(result.error);
@@ -705,6 +717,11 @@ export function registerSkillsCli(program: Command) {
               opts.acknowledgeClawhubRisk === true || opts.acknowledgeClawHubRisk === true,
               "installing",
             ),
+            ...resolveInstallPolicyAcknowledgementCliOptions({
+              dangerouslyForceUnsafeInstall: opts.dangerouslyForceUnsafeInstall,
+              action: "install",
+              reportError: (message) => defaultRuntime.error(message),
+            }),
             logger: {
               info: (message) => defaultRuntime.log(message),
               warn: (message) => defaultRuntime.log(formatSkillWarning(message)),
@@ -740,6 +757,11 @@ export function registerSkillsCli(program: Command) {
       "Acknowledge ClawHub release trust warnings without prompting",
       false,
     )
+    .option(
+      "--dangerously-force-unsafe-install",
+      "Acknowledge operator install policy warnings; never overrides blocks",
+      false,
+    )
     .option("--global", "Update skills in the shared managed skills directory", false)
     .option("--agent <id>", "Target agent workspace (defaults to cwd-inferred, then default agent)")
     .action(
@@ -750,6 +772,7 @@ export function registerSkillsCli(program: Command) {
           forceInstall?: boolean;
           acknowledgeClawhubRisk?: boolean;
           acknowledgeClawHubRisk?: boolean;
+          dangerouslyForceUnsafeInstall?: boolean;
           global?: boolean;
           agent?: string;
         },
@@ -783,6 +806,11 @@ export function registerSkillsCli(program: Command) {
               opts.acknowledgeClawhubRisk === true || opts.acknowledgeClawHubRisk === true,
               "updating",
             ),
+            ...resolveInstallPolicyAcknowledgementCliOptions({
+              dangerouslyForceUnsafeInstall: opts.dangerouslyForceUnsafeInstall,
+              action: "update",
+              reportError: (message) => defaultRuntime.error(message),
+            }),
             logger: {
               info: (message) => defaultRuntime.log(message),
               warn: (message) => defaultRuntime.log(formatSkillWarning(message)),

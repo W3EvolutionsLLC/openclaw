@@ -9,6 +9,7 @@ import { sanitizeHostExecEnv } from "../../infra/host-env-security.js";
 import { withTempDir } from "../../infra/install-source-utils.js";
 import { writeJson } from "../../infra/json-files.js";
 import { isImmutableGitCommitRef, parseGitPluginSpec } from "../../plugins/git-install.js";
+import type { InstallPolicyWarning } from "../../plugins/install-security-scan.js";
 import { runCommandWithTimeout } from "../../process/exec.js";
 import { resolveUserPath } from "../../utils.js";
 import { parseFrontmatter } from "../loading/frontmatter.js";
@@ -42,7 +43,7 @@ type SkillSourceInstallResult =
       source: "path" | "git";
       git?: SkillSourceOrigin["git"];
     }
-  | { ok: false; error: string };
+  | { ok: false; error: string; installPolicyWarning?: InstallPolicyWarning };
 
 const SKILL_SOURCE_ORIGIN_RELATIVE_PATH = path.join(".openclaw", "source-origin.json");
 const DEFAULT_GIT_TIMEOUT_MS = 120_000;
@@ -203,6 +204,7 @@ async function installLocalSkillDir(params: {
   timeoutMs?: number;
   logger?: Logger;
   config?: OpenClawConfig;
+  onInstallPolicyWarning?: (warning: InstallPolicyWarning) => boolean | Promise<boolean>;
   git?: SkillSourceOrigin["git"];
 }): Promise<SkillSourceInstallResult> {
   const slug = await resolveSkillInstallSlug({
@@ -236,10 +238,17 @@ async function installLocalSkillDir(params: {
             }
           : { kind: "local-path", authority: "user", mutable: true, network: false },
       requestedSpecifier: params.sourceSpec,
+      onInstallPolicyWarning: params.onInstallPolicyWarning,
     },
   });
   if (!install.ok) {
-    return { ok: false, error: install.error };
+    return {
+      ok: false,
+      error: install.error,
+      ...(install.installPolicyWarning
+        ? { installPolicyWarning: install.installPolicyWarning }
+        : {}),
+    };
   }
 
   await removeClawHubInstallMetadata(install.targetDir);
@@ -270,6 +279,7 @@ async function installGitSkill(params: {
   timeoutMs?: number;
   logger?: Logger;
   config?: OpenClawConfig;
+  onInstallPolicyWarning?: (warning: InstallPolicyWarning) => boolean | Promise<boolean>;
 }): Promise<SkillSourceInstallResult> {
   const parsed = parseGitPluginSpec(params.spec);
   if (!parsed) {
@@ -350,6 +360,7 @@ async function installGitSkill(params: {
       timeoutMs: params.timeoutMs,
       logger: params.logger,
       config: params.config,
+      onInstallPolicyWarning: params.onInstallPolicyWarning,
       git,
     });
   });
@@ -363,6 +374,7 @@ async function installPathSkill(params: {
   timeoutMs?: number;
   logger?: Logger;
   config?: OpenClawConfig;
+  onInstallPolicyWarning?: (warning: InstallPolicyWarning) => boolean | Promise<boolean>;
 }): Promise<SkillSourceInstallResult> {
   const sourceDir = resolveUserPath(params.spec);
   let stat;
@@ -385,6 +397,7 @@ async function installPathSkill(params: {
     timeoutMs: params.timeoutMs,
     logger: params.logger,
     config: params.config,
+    onInstallPolicyWarning: params.onInstallPolicyWarning,
   });
 }
 
@@ -407,6 +420,7 @@ export async function installSkillFromSource(params: {
   timeoutMs?: number;
   logger?: Logger;
   config?: OpenClawConfig;
+  onInstallPolicyWarning?: (warning: InstallPolicyWarning) => boolean | Promise<boolean>;
 }): Promise<SkillSourceInstallResult> {
   const spec = params.spec.trim();
   if (spec.toLowerCase().startsWith("git:")) {

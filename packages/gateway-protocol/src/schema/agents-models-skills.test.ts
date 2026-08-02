@@ -15,12 +15,14 @@ import {
   SkillProposalEvaluationSchema,
   SkillProposalLifecycleEventSchema,
   SkillsDetailResultSchema,
+  SkillsInstallParamsSchema,
   SkillsProposalEvaluateParamsSchema,
   SkillsProposalEvaluateResultSchema,
   SkillsProposalEventsListParamsSchema,
   SkillsProposalEventsListResultSchema,
   SkillsProposalInspectResultSchema,
   SkillsProposalRequestRevisionResultSchema,
+  SkillsUpdateParamsSchema,
   ToolsEffectiveResultSchema,
   ToolsInvokeParamsSchema,
 } from "./agents-models-skills.js";
@@ -82,6 +84,63 @@ const proposalEvaluation = (overrides: Record<string, unknown> = {}) => ({
   completedAt: "2026-05-30T00:01:01.000Z",
   outcomes: [],
   ...overrides,
+});
+
+describe("SkillsInstallParamsSchema", () => {
+  it("keeps install-policy acknowledgement optional for every install source", () => {
+    expectAccepted(
+      SkillsInstallParamsSchema,
+      { name: "weather", installId: "node" },
+      { source: "clawhub", slug: "weather" },
+      { source: "upload", uploadId: "upload-1", slug: "weather" },
+    );
+  });
+
+  it("accepts request-scoped install-policy acknowledgement", () => {
+    expectAccepted(
+      SkillsInstallParamsSchema,
+      {
+        name: "weather",
+        installId: "node",
+        acknowledgeInstallPolicyWarning: "v1:warning-token",
+      },
+      {
+        source: "clawhub",
+        slug: "weather",
+        acknowledgeInstallPolicyWarning: "v1:warning-token",
+      },
+      {
+        source: "upload",
+        uploadId: "upload-1",
+        slug: "weather",
+        acknowledgeInstallPolicyWarning: "v1:warning-token",
+      },
+    );
+    expectRejected(SkillsInstallParamsSchema, {
+      name: "weather",
+      installId: "node",
+      acknowledgeInstallPolicyWarning: true,
+    });
+  });
+});
+
+describe("SkillsUpdateParamsSchema", () => {
+  it("keeps install-policy acknowledgement optional for ClawHub updates", () => {
+    expectAccepted(SkillsUpdateParamsSchema, { source: "clawhub", slug: "weather" });
+  });
+
+  it("accepts a request-scoped install-policy acknowledgement for ClawHub updates", () => {
+    expectAccepted(SkillsUpdateParamsSchema, {
+      source: "clawhub",
+      slug: "weather",
+      acknowledgeInstallPolicyWarning: "v1:warning-token",
+    });
+    expectRejected(SkillsUpdateParamsSchema, {
+      source: "clawhub",
+      slug: "weather",
+      acknowledgeInstallPolicyWarning: true,
+    });
+  });
 });
 
 describe("AgentsDeleteResultSchema", () => {

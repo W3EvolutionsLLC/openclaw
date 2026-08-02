@@ -1,6 +1,7 @@
 // Gateway control-plane handlers for cold plugin catalog and lifecycle operations.
 import {
   buildClawHubTrustErrorDetails,
+  buildInstallPolicyWarningDetails,
   ErrorCodes,
   errorShape,
   isClawHubTrustErrorCode,
@@ -13,6 +14,7 @@ import {
 } from "../../../packages/gateway-protocol/src/index.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { searchInstallablePluginPackages } from "../../plugins/catalog-search.js";
+import { accumulateInstallPolicyWarningAcknowledgement } from "../../plugins/install-security-scan.js";
 import {
   formatManagedPluginLifecycleError,
   installManagedPlugin,
@@ -135,13 +137,25 @@ export const pluginsHandlers: GatewayRequestHandlers = {
         lifecycleError?.code && isClawHubTrustErrorCode(lifecycleError.code)
           ? lifecycleError.code
           : undefined;
-      const details = lifecycleError
+      const trustDetails = lifecycleError
         ? buildClawHubTrustErrorDetails({
             ...(trustCode ? { code: trustCode } : {}),
             ...(lifecycleError.version ? { version: lifecycleError.version } : {}),
             ...(lifecycleError.warning ? { warning: lifecycleError.warning } : {}),
           })
         : undefined;
+      const installPolicyDetails = buildInstallPolicyWarningDetails({
+        warning: lifecycleError?.installPolicyWarning
+          ? accumulateInstallPolicyWarningAcknowledgement(
+              params.acknowledgeInstallPolicyWarning,
+              lifecycleError.installPolicyWarning,
+            )
+          : undefined,
+      });
+      const details =
+        trustDetails || installPolicyDetails
+          ? { ...trustDetails, ...installPolicyDetails }
+          : undefined;
       respond(
         false,
         undefined,

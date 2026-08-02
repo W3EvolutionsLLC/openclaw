@@ -36,6 +36,7 @@ import {
 } from "../../lib/skills-shared.ts";
 import {
   clawhubVerdictKey,
+  type ClawHubInstallMessage,
   type ClawHubSkillSecurityVerdict,
   type ClawHubSearchResult,
   type ClawHubSkillDetail,
@@ -82,13 +83,7 @@ type SkillsProps = {
   clawhubDetailSlug: string | null;
   clawhubDetailLoading: boolean;
   clawhubDetailError: string | null;
-  clawhubInstallMessage: {
-    kind: "success" | "error";
-    text: string;
-    acknowledgeSlug?: string;
-    acknowledgeVersion?: string;
-    acknowledgeLabel?: string;
-  } | null;
+  clawhubInstallMessage: ClawHubInstallMessage | null;
   onFilterChange: (next: string) => void;
   onAgentChange: (agentId: string) => void;
   onStatusFilterChange: (next: SkillsStatusFilter) => void;
@@ -96,14 +91,24 @@ type SkillsProps = {
   onToggle: (skillKey: string, enabled: boolean) => void;
   onEdit: (skillKey: string, value: string) => void;
   onSaveKey: (skillKey: string) => void;
-  onInstall: (skillKey: string, name: string, installId: string) => void;
+  onInstall: (
+    skillKey: string,
+    name: string,
+    installId: string,
+    acknowledgeInstallPolicyWarning?: string,
+  ) => void;
   onDetailOpen: (skillKey: string) => void;
   onDetailClose: () => void;
   onDetailTabChange: (tab: SkillDetailTab) => void;
   onClawHubQueryChange: (query: string) => void;
   onClawHubDetailOpen: (slug: string) => void;
   onClawHubDetailClose: () => void;
-  onClawHubInstall: (slug: string, acknowledgeClawHubRisk?: boolean, version?: string) => void;
+  onClawHubInstall: (
+    slug: string,
+    acknowledgeClawHubRisk?: boolean,
+    version?: string,
+    acknowledgeInstallPolicyWarning?: string,
+  ) => void;
 };
 
 type StatusTabDef = { id: SkillsStatusFilter; labelKey: string };
@@ -419,8 +424,9 @@ function renderClawHubSection(props: SkillsProps) {
                   @click=${() =>
                     props.onClawHubInstall(
                       props.clawhubInstallMessage?.acknowledgeSlug ?? "",
-                      true,
+                      props.clawhubInstallMessage?.acknowledgeClawHubRisk,
                       props.clawhubInstallMessage?.acknowledgeVersion,
+                      props.clawhubInstallMessage?.acknowledgeInstallPolicyWarning,
                     )}
                 >
                   ${props.clawhubInstallMessage.acknowledgeLabel ?? t("skillsPage.acknowledgeRisk")}
@@ -722,7 +728,26 @@ function renderSkillDetail(skill: SkillStatusEntry, props: SkillsProps) {
 
           ${message
             ? html`<div class="callout ${message.kind === "error" ? "danger" : "success"}">
-                ${message.message}
+                <div style="white-space: pre-wrap;">${message.message}</div>
+                ${message.acknowledgeInstallPolicyWarning
+                  ? html`<button
+                      type="button"
+                      class="btn btn--sm"
+                      style="margin-top: 10px;"
+                      ?disabled=${locked}
+                      @click=${() =>
+                        message.acknowledgeInstallPolicyWarning
+                          ? props.onInstall(
+                              skill.skillKey,
+                              message.acknowledgeInstallPolicyWarning.name,
+                              message.acknowledgeInstallPolicyWarning.installId,
+                              message.acknowledgeInstallPolicyWarning.acknowledgementId,
+                            )
+                          : undefined}
+                    >
+                      ${t("skillsPage.acknowledgeRisk")}
+                    </button>`
+                  : nothing}
               </div>`
             : nothing}
           ${skill.primaryEnv

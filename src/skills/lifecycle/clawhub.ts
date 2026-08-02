@@ -6,12 +6,21 @@ import type {
 } from "../../infra/clawhub-install-trust.js";
 import {
   downloadClawHubSkillArchive,
+  isDefaultClawHubBaseUrl,
   normalizeClawHubSha256Integrity,
+  resolveClawHubBaseUrl,
 } from "../../infra/clawhub.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import { pathExists } from "../../infra/fs-safe.js";
+import { withExtractedArchiveRoot } from "../../infra/install-flow.js";
+import {
+  accumulateInstallPolicyWarningsForSingleConsent,
+  type InstallPolicyWarning,
+} from "../../plugins/install-security-scan.js";
 import { withClawPackageLifecycleLease } from "../../state/claw-package-lifecycle-lease.js";
 import {
+  CLAWHUB_SKILL_ARCHIVE_ROOT_MARKERS,
+  installExtractedSkillRoot,
   normalizeTrackedSkillSlug,
   resolveWorkspaceSkillInstallDir,
   validateRequestedSkillSlug,
@@ -62,7 +71,14 @@ type UpdateClawHubSkillResult =
       targetDir: string;
       warning?: string;
     }
-  | { ok: false; error: string; code?: ClawHubTrustErrorCode; version?: string; warning?: string };
+  | {
+      ok: false;
+      error: string;
+      code?: ClawHubTrustErrorCode;
+      version?: string;
+      warning?: string;
+      installPolicyWarning?: InstallPolicyWarning;
+    };
 
 type TrackedUpdateTarget =
   | {
@@ -77,7 +93,13 @@ type TrackedUpdateTarget =
   | { ok: false; slug: string; error: string };
 
 type ClawHubSkillInstallPreflightResult =
-  | { ok: true; action: "install" | "reuse"; integrity: string; warning?: string }
+  | {
+      ok: true;
+      action: "install" | "reuse";
+      integrity: string;
+      warning?: string;
+      installPolicyWarning?: InstallPolicyWarning;
+    }
   | { ok: false; code: string; error: string };
 
 async function resolveRequestedUpdateSlug(params: {
@@ -190,6 +212,7 @@ export async function preflightSkillFromClawHub(params: {
   baseUrl?: string;
   acknowledgeClawHubRisk?: boolean;
   onClawHubRisk?: (request: ClawHubRiskAcknowledgementRequest) => boolean | Promise<boolean>;
+  config?: OpenClawConfig;
   logger?: Logger;
 }): Promise<ClawHubSkillInstallPreflightResult> {
   try {
@@ -263,7 +286,87 @@ export async function preflightSkillFromClawHub(params: {
         version: resolved.version,
         integrity,
       });
-      return owner.ok && trust.warning ? { ...owner, warning: trust.warning } : owner;
+      if (!owner.ok || owner.action === "reuse") {
+        return owner.ok && trust.warning ? { ...owner, warning: trust.warning } : owner;
+      }
+      let installPolicyWarning: InstallPolicyWarning | undefined;
+      const policyPreflight = await withExtractedArchiveRoot<
+        { ok: true } | { ok: false; code: string; error: string }
+      >({
+        archivePath: archive.archivePath,
+        tempDirPrefix: "openclaw-skill-clawhub-preflight-",
+        timeoutMs: 120_000,
+        logger: params.logger,
+        rootMarkers: CLAWHUB_SKILL_ARCHIVE_ROOT_MARKERS,
+        onExtracted: async (rootDir) => {
+          const scanResult = await installExtractedSkillRoot({
+            workspaceDir: params.workspaceDir,
+            slug: requested.slug,
+            extractedRoot: rootDir,
+            mode: "install",
+            scanOnly: true,
+            logger: params.logger,
+            policy: {
+              config: params.config,
+              installId: "clawhub",
+              origin: {
+                type: "clawhub",
+                registry: resolveClawHubBaseUrl(params.baseUrl),
+                slug: requested.slug,
+                ...(requested.ownerHandle ? { ownerHandle: requested.ownerHandle } : {}),
+                version: resolved.version,
+              },
+              requestedSpecifier: `clawhub:${params.slug}@${resolved.version}`,
+              source: {
+                kind: "clawhub",
+                authority: isDefaultOfficialClawHubSkillSource({
+                  baseUrl: params.baseUrl,
+                  detail: resolved.detail,
+                })
+                  ? "official"
+                  : isDefaultClawHubBaseUrl(params.baseUrl)
+                    ? "openclaw"
+                    : "third-party",
+                mutable: false,
+                network: true,
+              },
+              onInstallPolicyWarning: async (warning) => {
+                installPolicyWarning = accumulateInstallPolicyWarningsForSingleConsent(
+                  installPolicyWarning,
+                  warning,
+                );
+                return true;
+              },
+            },
+          });
+          if (!scanResult.ok) {
+            return {
+              ok: false,
+              code: scanResult.installPolicyFailure
+                ? scanResult.failureKind === "unavailable"
+                  ? "security_scan_failed"
+                  : scanResult.failureKind === "acknowledgement-required"
+                    ? "install_policy_acknowledgement_required"
+                    : "security_scan_blocked"
+                : "skill_preflight_failed",
+              error: scanResult.error,
+            };
+          }
+          return { ok: true };
+        },
+      });
+      if (!policyPreflight.ok) {
+        return {
+          ok: false,
+          code: "code" in policyPreflight ? policyPreflight.code : "skill_preflight_failed",
+          error: policyPreflight.error,
+        };
+      }
+      return {
+        ...owner,
+        ...(trust.warning ? { warning: trust.warning } : {}),
+        ...(installPolicyWarning ? { installPolicyWarning } : {}),
+      };
     } finally {
       await archive.cleanup().catch(() => undefined);
     }
@@ -312,6 +415,7 @@ export async function installSkillFromClawHub(params: {
   force?: boolean;
   forceInstall?: boolean;
   acknowledgeClawHubRisk?: boolean;
+  onInstallPolicyWarning?: (warning: InstallPolicyWarning) => boolean | Promise<boolean>;
   onClawHubRisk?: (request: ClawHubRiskAcknowledgementRequest) => boolean | Promise<boolean>;
   logger?: Logger;
   config?: OpenClawConfig;
@@ -333,6 +437,7 @@ export async function updateSkillsFromClawHub(params: {
   baseUrl?: string;
   forceInstall?: boolean;
   acknowledgeClawHubRisk?: boolean;
+  onInstallPolicyWarning?: (warning: InstallPolicyWarning) => boolean | Promise<boolean>;
   onClawHubRisk?: (request: ClawHubRiskAcknowledgementRequest) => boolean | Promise<boolean>;
   logger?: Logger;
   config?: OpenClawConfig;
@@ -373,6 +478,7 @@ export async function updateSkillsFromClawHub(params: {
           forceInstall: params.forceInstall,
           acknowledgeClawHubRisk: params.acknowledgeClawHubRisk,
           onClawHubRisk: params.onClawHubRisk,
+          onInstallPolicyWarning: params.onInstallPolicyWarning,
           logger: params.logger,
           config: params.config,
         }),

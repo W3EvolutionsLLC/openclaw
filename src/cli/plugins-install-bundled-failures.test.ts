@@ -39,11 +39,42 @@ describe("plugin install bundled failure propagation", () => {
 
     expect(installManagedPluginSourceMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        request: expect.objectContaining({ source: "bundled" }),
+        logger: expect.objectContaining({ warn: expect.any(Function) }),
+        request: expect.objectContaining({ source: "bundled", mode: "install" }),
+        safetyOverrides: expect.any(Object),
       }),
     );
     expect(runtimeErrors.at(-1)).toContain("bundled plugin installation failed");
     expect(writeConfigFile).not.toHaveBeenCalled();
+  });
+
+  it("passes policy warning acknowledgement to direct bundled installs", async () => {
+    findBundledPluginSourceMock.mockReturnValue({
+      pluginId: "bundled-demo",
+      localPath: "/app/dist/extensions/bundled-demo",
+    });
+    installManagedPluginSourceMock.mockResolvedValue({
+      ok: true,
+      pluginId: "bundled-demo",
+      config: {},
+    });
+
+    await runPluginsCommand([
+      "plugins",
+      "install",
+      "bundled-demo",
+      "--force",
+      "--dangerously-force-unsafe-install",
+    ]);
+
+    expect(installManagedPluginSourceMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        request: expect.objectContaining({ source: "bundled", mode: "update" }),
+        safetyOverrides: expect.objectContaining({
+          onInstallPolicyWarning: expect.any(Function),
+        }),
+      }),
+    );
   });
 
   it("fails when an npm package-not-found bundled fallback fails", async () => {
@@ -77,13 +108,15 @@ describe("plugin install bundled failure propagation", () => {
     expect(installManagedPluginSourceMock).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({
-        request: expect.objectContaining({ source: "npm" }),
+        request: expect.objectContaining({ source: "npm", mode: "update" }),
       }),
     );
     expect(installManagedPluginSourceMock).toHaveBeenNthCalledWith(
       2,
       expect.objectContaining({
-        request: expect.objectContaining({ source: "bundled" }),
+        logger: expect.objectContaining({ warn: expect.any(Function) }),
+        request: expect.objectContaining({ source: "bundled", mode: "update" }),
+        safetyOverrides: expect.any(Object),
       }),
     );
     expect(runtimeErrors.at(-1)).toContain("bundled fallback installation failed");

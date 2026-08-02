@@ -462,8 +462,14 @@ h3.plugins-subheader {
   color: var(--danger);
 }
 
+.plugins-row-message > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .plugins-row-message .btn {
   flex: 0 0 auto;
+  min-height: 44px;
   color: var(--text-strong);
 }
 

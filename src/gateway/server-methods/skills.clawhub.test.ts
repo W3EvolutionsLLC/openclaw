@@ -15,6 +15,8 @@ const fetchClawHubSkillSecurityVerdictsMock = vi.fn();
 const installSkillFromClawHubMock = vi.fn();
 const installSkillMock = vi.fn();
 const updateSkillsFromClawHubMock = vi.fn();
+const WARNING_A_ID = `v1:${"a".repeat(43)}`;
+const WARNING_B_ID = `v1:${"b".repeat(43)}`;
 
 vi.mock("../../config/config.js", () => ({
   getRuntimeConfig: () => loadConfigMock(),
@@ -323,6 +325,42 @@ describe("skills gateway handlers (clawhub)", () => {
     expect(retryResult.ok).toBe(true);
   });
 
+  it("does not deduplicate concurrent ClawHub installs with different warning tokens", async () => {
+    const finishInstalls: Array<(value: unknown) => void> = [];
+    installSkillFromClawHubMock.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishInstalls.push(resolve);
+        }),
+    );
+    const baseParams = {
+      source: "clawhub",
+      slug: "calendar",
+      version: "1.2.3",
+    } as const;
+    const first = callSkillsHandler("skills.install", {
+      ...baseParams,
+      acknowledgeInstallPolicyWarning: WARNING_A_ID,
+    });
+    const second = callSkillsHandler("skills.install", {
+      ...baseParams,
+      acknowledgeInstallPolicyWarning: WARNING_B_ID,
+    });
+
+    await vi.waitFor(() => expect(installSkillFromClawHubMock).toHaveBeenCalledTimes(2));
+    for (const finishInstall of finishInstalls) {
+      finishInstall({
+        ok: true,
+        slug: "calendar",
+        version: "1.2.3",
+        targetDir: "/tmp/workspace/skills/calendar",
+      });
+    }
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+    expect(firstResult.ok).toBe(true);
+    expect(secondResult.ok).toBe(true);
+  });
+
   it("returns ClawHub skill install trust warnings in Gateway error details", async () => {
     installSkillFromClawHubMock.mockResolvedValue({
       ok: false,
@@ -369,6 +407,7 @@ describe("skills gateway handlers (clawhub)", () => {
       slug: "calendar",
       version: "1.2.3",
       acknowledgeClawHubRisk: true,
+      acknowledgeInstallPolicyWarning: WARNING_A_ID,
     });
 
     expect(installSkillFromClawHubMock).toHaveBeenCalledWith({
@@ -377,11 +416,55 @@ describe("skills gateway handlers (clawhub)", () => {
       version: "1.2.3",
       force: false,
       acknowledgeClawHubRisk: true,
+      onInstallPolicyWarning: expect.any(Function),
       logger: expect.objectContaining({ warn: expect.any(Function) }),
       config: {},
     });
     expect(ok).toBe(true);
     expect(error).toBeUndefined();
+  });
+
+  it("returns install-policy warnings in Gateway error details", async () => {
+    installSkillFromClawHubMock.mockResolvedValue({
+      ok: false,
+      error: "Manual review recommended.",
+      installPolicyWarning: {
+        reason: "Manual review recommended.",
+        acknowledgementId: WARNING_B_ID,
+        findings: [
+          {
+            ruleId: "dangerous-exec",
+            severity: "warn",
+            message: "The package launches a child process.",
+          },
+        ],
+      },
+    });
+
+    const { ok, error } = await callSkillsHandler("skills.install", {
+      source: "clawhub",
+      slug: "calendar",
+      acknowledgeInstallPolicyWarning: WARNING_A_ID,
+    });
+
+    expect(ok).toBe(false);
+    expect(error).toMatchObject({
+      code: "INVALID_REQUEST",
+      message: "Manual review recommended.",
+      details: {
+        installPolicyWarning: {
+          reason: "Manual review recommended.",
+          acknowledgementId: `${WARNING_A_ID}.${WARNING_B_ID.slice("v1:".length)}`,
+          findings: [
+            {
+              ruleId: "dangerous-exec",
+              severity: "warn",
+              message: "The package launches a child process.",
+            },
+          ],
+        },
+      },
+    });
   });
 
   it("routes explicit agent ClawHub installs through that agent workspace", async () => {
@@ -446,6 +529,41 @@ describe("skills gateway handlers (clawhub)", () => {
     expect(result?.message).toBe("Installed");
   });
 
+  it("classifies legacy skill install-policy warnings as invalid requests", async () => {
+    installSkillMock.mockResolvedValue({
+      ok: false,
+      message: "Manual review recommended.",
+      stdout: "",
+      stderr: "",
+      code: 1,
+      installPolicyWarning: {
+        reason: "Manual review recommended.",
+        findings: [
+          {
+            ruleId: "dangerous-exec",
+            severity: "warn",
+            message: "The installer launches a child process.",
+          },
+        ],
+      },
+    });
+
+    const { ok, error } = await callSkillsHandler("skills.install", {
+      name: "calendar",
+      installId: "deps",
+    });
+
+    expect(ok).toBe(false);
+    expect(error).toMatchObject({
+      code: "INVALID_REQUEST",
+      details: {
+        installPolicyWarning: {
+          reason: "Manual review recommended.",
+        },
+      },
+    });
+  });
+
   it("updates ClawHub skills through skills.update", async () => {
     updateSkillsFromClawHubMock.mockResolvedValue([
       {
@@ -494,7 +612,7 @@ describe("skills gateway handlers (clawhub)", () => {
     );
   });
 
-  it("forwards ClawHub skill update risk acknowledgements", async () => {
+  it("forwards ClawHub skill update acknowledgements", async () => {
     updateSkillsFromClawHubMock.mockResolvedValue([
       {
         ok: true,
@@ -510,12 +628,14 @@ describe("skills gateway handlers (clawhub)", () => {
       source: "clawhub",
       slug: "calendar",
       acknowledgeClawHubRisk: true,
+      acknowledgeInstallPolicyWarning: WARNING_A_ID,
     });
 
     expect(updateSkillsFromClawHubMock).toHaveBeenCalledWith({
       workspaceDir: "/tmp/workspace",
       slug: "calendar",
       acknowledgeClawHubRisk: true,
+      onInstallPolicyWarning: expect.any(Function),
       logger: expect.objectContaining({ warn: expect.any(Function) }),
       config: {},
     });
@@ -567,6 +687,48 @@ describe("skills gateway handlers (clawhub)", () => {
           },
         ],
         warnings: ["Latest skill version is marked malicious; OpenClaw will not download it."],
+      },
+    });
+  });
+
+  it("returns install-policy warnings from skill updates in Gateway error details", async () => {
+    updateSkillsFromClawHubMock.mockResolvedValue([
+      {
+        ok: false,
+        error: "Manual review recommended.",
+        installPolicyWarning: {
+          reason: "Manual review recommended.",
+          findings: [
+            {
+              ruleId: "dangerous-exec",
+              severity: "warn",
+              message: "The skill launches a child process.",
+            },
+          ],
+        },
+      },
+    ]);
+
+    const { ok, error } = await callSkillsHandler("skills.update", {
+      source: "clawhub",
+      slug: "calendar",
+    });
+
+    expect(ok).toBe(false);
+    expect(error).toMatchObject({
+      code: "INVALID_REQUEST",
+      message: "Manual review recommended.",
+      details: {
+        installPolicyWarning: {
+          reason: "Manual review recommended.",
+          findings: [
+            {
+              ruleId: "dangerous-exec",
+              severity: "warn",
+              message: "The skill launches a child process.",
+            },
+          ],
+        },
       },
     });
   });

@@ -1,6 +1,7 @@
 // Covers plugin install flows, manifests, and install records.
 import fs from "node:fs";
 import fsPromises from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
@@ -14,6 +15,10 @@ import { resolveOpenClawPackageRootSync } from "../infra/openclaw-root.js";
 import { runCommandWithTimeout } from "../process/exec.js";
 import { initializeGlobalHookRunner, resetGlobalHookRunner } from "./hook-runner-global.js";
 import { createMockPluginRegistry } from "./hooks.test-helpers.js";
+import {
+  resolveManagedNpmRootForInstall,
+  rollbackManagedNpmPluginInstall,
+} from "./install-managed-npm-state.js";
 import {
   resolvePluginNpmGenerationProjectDir,
   resolvePluginNpmProjectDir,
@@ -67,6 +72,9 @@ vi.mock("./install.runtime.js", async () => {
     scanPackageInstallSource: (
       ...args: Parameters<typeof installSecurityScan.scanPackageInstallSource>
     ) => installSecurityScan.scanPackageInstallSource(...args),
+    scanInstalledPackageDependencyTree: (
+      ...args: Parameters<typeof installSecurityScan.scanInstalledPackageDependencyTree>
+    ) => installSecurityScan.scanInstalledPackageDependencyTree(...args),
   };
 });
 
@@ -380,6 +388,80 @@ process.stdin.on("end", () => {
     protocolVersion: 1,
     decision: "block",
     reason: "npm installs are disabled by policy",
+  }));
+});
+`,
+    "utf-8",
+  );
+  fs.chmodSync(scriptPath, 0o700);
+  return { scriptPath, logPath };
+}
+
+function writeWarningInstallPolicyScript(
+  dir: string,
+  options?: {
+    deleteRollbackSnapshotForPackage?: string;
+    warnContentType?: "package" | "dependency-tree";
+    warnPathKind?: "file" | "directory";
+  },
+) {
+  fs.chmodSync(dir, 0o700);
+  const scriptPath = path.join(dir, "warn-policy.cjs");
+  const logPath = path.join(dir, "policy-requests.jsonl");
+  fs.writeFileSync(
+    scriptPath,
+    `#!${process.execPath}
+const fs = require("node:fs");
+const path = require("node:path");
+
+let input = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  input += chunk;
+});
+process.stdin.on("end", () => {
+  fs.appendFileSync(process.env.OPENCLAW_POLICY_LOG, input + "\\n");
+  const request = JSON.parse(input);
+  const warnContentType = ${JSON.stringify(options?.warnContentType ?? null)};
+  if (warnContentType && request.plugin?.contentType !== warnContentType) {
+    process.stdout.write(JSON.stringify({
+      protocolVersion: 1,
+      decision: "allow",
+    }));
+    return;
+  }
+  const warnPathKind = ${JSON.stringify(options?.warnPathKind ?? null)};
+  if (warnPathKind && request.sourcePathKind !== warnPathKind) {
+    process.stdout.write(JSON.stringify({
+      protocolVersion: 1,
+      decision: "allow",
+    }));
+    return;
+  }
+  const rollbackPackage = ${JSON.stringify(options?.deleteRollbackSnapshotForPackage ?? null)};
+  const rollbackSnapshotRoot = ${JSON.stringify(os.tmpdir())};
+  if (rollbackPackage) {
+    for (const entry of fs.readdirSync(rollbackSnapshotRoot)) {
+      if (!entry.startsWith("openclaw-npm-plugin-rollback-")) {
+        continue;
+      }
+      const backupRoot = path.join(rollbackSnapshotRoot, entry, "node_modules");
+      const packageBackup = path.join(backupRoot, ...rollbackPackage.split("/"));
+      if (fs.existsSync(packageBackup)) {
+        fs.rmSync(backupRoot, { recursive: true, force: true });
+        break;
+      }
+    }
+  }
+  process.stdout.write(JSON.stringify({
+    protocolVersion: 1,
+    decision: "warn",
+    reason: "operator review required",
+    findings: [{
+      ruleId: "proof.warning",
+      severity: "warn",
+      message: "Review the staged plugin before installing.",
+    }],
   }));
 });
 `,
@@ -1101,6 +1183,64 @@ describe("installPluginFromArchive", () => {
       { kind: "archive", authority: "user", mutable: true, network: false },
     ]);
     expect(requests[0]?.request.requestedSpecifier).toBe(archivePath);
+  });
+
+  it("keeps native ClawHub archive warning tokens stable across extraction retries", async () => {
+    const stateDir = suiteTempRootTracker.makeTempDir();
+    const extensionsDir = path.join(stateDir, "extensions");
+    const { scriptPath, logPath } = writeWarningInstallPolicyScript(stateDir, {
+      warnContentType: "package",
+    });
+    const archivePath = await ensureDynamicArchiveTemplate({
+      outName: "clawhub-policy-warning-archive.tgz",
+      packageJson: {
+        name: "clawhub-policy-warning-archive",
+        version: "1.0.0",
+        openclaw: { extensions: ["./dist/index.js"] },
+      },
+      withDistIndex: true,
+    });
+    const installPolicyRequest = {
+      kind: "plugin-archive" as const,
+      requestedSpecifier: "clawhub:policy-warning-archive@1.0.0",
+      source: {
+        kind: "clawhub" as const,
+        authority: "official" as const,
+        mutable: false,
+        network: true,
+      },
+    };
+    const config = configWithInstallPolicy(scriptPath, logPath);
+
+    const first = await installPluginFromArchive({
+      archivePath,
+      extensionsDir,
+      config,
+      installPolicyRequest,
+      trustedSourceLinkedOfficialInstall: true,
+    });
+    expect(first).toMatchObject({
+      ok: false,
+      code: PLUGIN_INSTALL_ERROR_CODE.INSTALL_POLICY_ACKNOWLEDGEMENT_REQUIRED,
+      installPolicyWarning: { acknowledgementId: expect.stringMatching(/^v1:/) },
+    });
+    if (first.ok || !first.installPolicyWarning) {
+      throw new Error("expected a ClawHub archive policy warning");
+    }
+
+    const second = await installPluginFromArchive({
+      archivePath,
+      extensionsDir,
+      config,
+      installPolicyRequest,
+      trustedSourceLinkedOfficialInstall: true,
+      onInstallPolicyWarning: installSecurityScan.createInstallPolicyWarningAcknowledger(
+        first.installPolicyWarning.acknowledgementId,
+      ),
+    });
+
+    expect(second.ok).toBe(true);
+    expect(readCapturedInstallPolicyRequests(logPath)).toHaveLength(4);
   });
 
   it("allows archive installs with dangerous code patterns without built-in scanner blocking", async () => {
@@ -1910,7 +2050,8 @@ describe("installPluginFromArchive", () => {
     expect(payload.targetName).toBe("hook-findings-plugin");
     expect(payload.targetType).toBe("plugin");
     expect(payload.origin).toBe("plugin-package");
-    expect(payload.sourcePath).toBe(pluginDir);
+    expect(payload.sourcePath).toContain(".openclaw-install-stage-");
+    expect(payload.sourcePath).not.toBe(pluginDir);
     expect(payload.sourcePathKind).toBe("directory");
     expectHookRequest(payload, { kind: "plugin-dir", mode: "install" });
     const builtinScan = requireRecord(payload.builtinScan, "builtin scan");
@@ -1957,6 +2098,76 @@ describe("installPluginFromArchive", () => {
     expect(requests.map((request) => request.source?.kind)).toEqual(["local-path", "local-path"]);
     expect(requests[0]?.request.requestedSpecifier).toBe(pluginDir);
     expect(requests[1]?.request.requestedSpecifier).toBe(pluginDir);
+  });
+
+  it("runs dependency-tree policy during linked-source dry-run probes", async () => {
+    const { pluginDir, extensionsDir } = setupPluginInstallDirs();
+    writeMinimalPackagePlugin(pluginDir, "linked-policy-plugin");
+    const dependencyScan = vi
+      .spyOn(installSecurityScan, "scanInstalledPackageDependencyTree")
+      .mockResolvedValueOnce({
+        blocked: {
+          code: "security_scan_blocked",
+          reason: "blocked linked dependency tree",
+        },
+      });
+
+    try {
+      const result = await installPluginFromDir({
+        dirPath: pluginDir,
+        extensionsDir,
+        dryRun: true,
+        allowSourceTypeScriptEntries: true,
+      });
+
+      expect(result).toEqual({
+        ok: false,
+        code: PLUGIN_INSTALL_ERROR_CODE.SECURITY_SCAN_BLOCKED,
+        error: "blocked linked dependency tree",
+      });
+      expect(dependencyScan).toHaveBeenCalledWith(
+        expect.objectContaining({
+          packageDir: expect.stringContaining(".openclaw-install-stage-"),
+          pluginId: "linked-policy-plugin",
+          requestKind: "plugin-dir",
+        }),
+      );
+      expect(fs.existsSync(path.join(extensionsDir, "linked-policy-plugin"))).toBe(false);
+    } finally {
+      dependencyScan.mockRestore();
+    }
+  });
+
+  it("preserves install-policy warning details from the staged dependency tree", async () => {
+    const { pluginDir, extensionsDir } = setupPluginInstallDirs();
+    writeMinimalPackagePlugin(pluginDir, "dependency-warning-plugin");
+    const warning = {
+      reason: "Manual \u001b[31mreview\u001b[0m\nrecommended.",
+      findings: [
+        {
+          ruleId: "dangerous-exec",
+          severity: "warn" as const,
+          message: "The package launches a child process.",
+        },
+      ],
+    };
+    const dependencyScan = vi
+      .spyOn(installSecurityScan, "scanInstalledPackageDependencyTree")
+      .mockResolvedValueOnce({ warning });
+
+    try {
+      const { result } = await installFromDirWithWarnings({ pluginDir, extensionsDir });
+
+      expect(result).toEqual({
+        ok: false,
+        error: "Manual review\\nrecommended.",
+        code: PLUGIN_INSTALL_ERROR_CODE.INSTALL_POLICY_ACKNOWLEDGEMENT_REQUIRED,
+        installPolicyWarning: warning,
+      });
+      expect(fs.existsSync(path.join(extensionsDir, "dependency-warning-plugin"))).toBe(false);
+    } finally {
+      dependencyScan.mockRestore();
+    }
   });
 
   it("blocks plugin install when before_install rejects the staged source", async () => {
@@ -2509,6 +2720,248 @@ describe("installPluginFromNpmSpec", () => {
         mode: "install",
       },
     });
+  });
+
+  it("pauses npm preflight warnings before mutation and reruns every stage after acknowledgement", async () => {
+    const root = suiteTempRootTracker.makeTempDir();
+    const npmDir = path.join(root, "npm");
+    const extensionsDir = path.join(root, "extensions");
+    const { scriptPath, logPath } = writeWarningInstallPolicyScript(root);
+    const packageName = "@acme/policy-warning-plugin";
+    mockNpmViewMetadata({ name: packageName });
+
+    const first = await installPluginFromNpmSpec({
+      spec: `${packageName}@1.0.0`,
+      extensionsDir,
+      npmDir,
+      config: configWithInstallPolicy(scriptPath, logPath),
+    });
+
+    expect(first).toMatchObject({
+      ok: false,
+      code: PLUGIN_INSTALL_ERROR_CODE.INSTALL_POLICY_ACKNOWLEDGEMENT_REQUIRED,
+      error: "operator review required",
+      installPolicyWarning: {
+        reason: "operator review required",
+        findings: [
+          {
+            ruleId: "proof.warning",
+            severity: "warn",
+            message: "Review the staged plugin before installing.",
+          },
+        ],
+      },
+    });
+    expect(countMockedCommands("npm")).toBe(1);
+    await expect(fsPromises.stat(npmDir)).rejects.toThrow();
+
+    mockNpmViewMetadata({ name: packageName });
+    mockSuccessfulManagedNpmInstall({ packageName });
+    const acknowledgeWarning = vi.fn(async () => true);
+    const second = await installPluginFromNpmSpec({
+      spec: `${packageName}@1.0.0`,
+      extensionsDir,
+      npmDir,
+      config: configWithInstallPolicy(scriptPath, logPath),
+      onInstallPolicyWarning: acknowledgeWarning,
+    });
+
+    expect(second.ok).toBe(true);
+    const requests = readCapturedInstallPolicyRequests(logPath);
+    expect(requests.map((request) => request.plugin?.contentType)).toEqual([
+      "package",
+      "package",
+      "package",
+      "package",
+      "package",
+      "dependency-tree",
+      "dependency-tree",
+    ]);
+    expect(requests.map((request) => request.request.kind)).toEqual(
+      Array.from({ length: 7 }, () => "plugin-npm"),
+    );
+    expect(acknowledgeWarning).toHaveBeenCalledTimes(3);
+    if (!second.ok) {
+      throw new Error(second.error);
+    }
+    expect(fs.existsSync(path.join(second.targetDir, "package.json"))).toBe(true);
+  });
+
+  it("keeps npm preflight warning tokens stable across separate requests", async () => {
+    const root = suiteTempRootTracker.makeTempDir();
+    const npmDir = path.join(root, "npm");
+    const extensionsDir = path.join(root, "extensions");
+    const { scriptPath, logPath } = writeWarningInstallPolicyScript(root, {
+      warnPathKind: "file",
+    });
+    const packageName = "@acme/policy-warning-retry-plugin";
+    const toISOString = vi
+      .spyOn(Date.prototype, "toISOString")
+      .mockReturnValueOnce("2026-08-01T00:00:00.000Z")
+      .mockReturnValueOnce("2026-08-02T00:00:00.000Z");
+
+    try {
+      mockNpmViewMetadata({ name: packageName });
+      const first = await installPluginFromNpmSpec({
+        spec: `${packageName}@1.0.0`,
+        extensionsDir,
+        npmDir,
+        config: configWithInstallPolicy(scriptPath, logPath),
+        trustedSourceLinkedOfficialInstall: true,
+      });
+      expect(first).toMatchObject({
+        ok: false,
+        code: PLUGIN_INSTALL_ERROR_CODE.INSTALL_POLICY_ACKNOWLEDGEMENT_REQUIRED,
+        installPolicyWarning: { acknowledgementId: expect.stringMatching(/^v1:/) },
+      });
+      if (first.ok || !first.installPolicyWarning) {
+        throw new Error("expected an npm preflight policy warning");
+      }
+
+      mockNpmViewMetadata({ name: packageName });
+      mockSuccessfulManagedNpmInstall({ packageName });
+      const second = await installPluginFromNpmSpec({
+        spec: `${packageName}@1.0.0`,
+        extensionsDir,
+        npmDir,
+        config: configWithInstallPolicy(scriptPath, logPath),
+        trustedSourceLinkedOfficialInstall: true,
+        onInstallPolicyWarning: installSecurityScan.createInstallPolicyWarningAcknowledger(
+          first.installPolicyWarning.acknowledgementId,
+        ),
+      });
+
+      expect(second.ok).toBe(true);
+    } finally {
+      toISOString.mockRestore();
+    }
+  });
+
+  it("removes a newly created managed npm root when a staged package warning is rejected", async () => {
+    const root = suiteTempRootTracker.makeTempDir();
+    const npmDir = path.join(root, "npm");
+    const extensionsDir = path.join(root, "extensions");
+    const { scriptPath, logPath } = writeWarningInstallPolicyScript(root, {
+      warnPathKind: "directory",
+    });
+    const packageName = "@acme/staged-policy-warning-plugin";
+    mockNpmViewMetadata({ name: packageName });
+    mockSuccessfulManagedNpmInstall({ packageName });
+
+    const result = await installPluginFromNpmSpec({
+      spec: `${packageName}@1.0.0`,
+      extensionsDir,
+      npmDir,
+      config: configWithInstallPolicy(scriptPath, logPath),
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      code: PLUGIN_INSTALL_ERROR_CODE.INSTALL_POLICY_ACKNOWLEDGEMENT_REQUIRED,
+      error: "operator review required",
+    });
+    expect(countMockedCommands("npm")).toBeGreaterThan(1);
+    const npmRoot = resolvePluginNpmProjectDir({ npmDir, packageName });
+    await expect(fsPromises.stat(npmRoot)).rejects.toThrow();
+    expect(
+      readCapturedInstallPolicyRequests(logPath).map((request) => request.sourcePathKind),
+    ).toEqual(["file", "directory"]);
+  });
+
+  it("reports a failed fallback rollback instead of hiding cleanup errors", async () => {
+    const npmRoot = suiteTempRootTracker.makeTempDir();
+    const packageName = "openclaw";
+    const targetDir = path.join(npmRoot, "node_modules", packageName);
+    fs.mkdirSync(targetDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(npmRoot, "package.json"),
+      JSON.stringify({ private: true, dependencies: { [packageName]: "1.0.0" } }),
+    );
+    vi.mocked(runCommandWithTimeout).mockResolvedValue({
+      code: 1,
+      killed: false,
+      signal: null,
+      stderr: "cleanup failed",
+      stdout: "",
+      termination: "exit",
+    });
+
+    const result = await rollbackManagedNpmPluginInstall({
+      npmRoot,
+      packageName,
+      targetDir,
+      timeoutMs: 1000,
+      logger: {},
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      error: "npm uninstall rollback for openclaw exited 1: cleanup failed",
+    });
+  });
+
+  it("quarantines an unacknowledged candidate when the managed npm snapshot cannot be restored", async () => {
+    const root = suiteTempRootTracker.makeTempDir();
+    const npmDir = path.join(root, "npm");
+    const extensionsDir = path.join(root, "extensions");
+    const packageName = "@acme/rollback-warning-plugin";
+    const npmRoot = resolveManagedNpmRootForInstall({
+      npmBaseDir: npmDir,
+      packageName,
+      npmResolution: {
+        name: packageName,
+        version: "2.0.0",
+        resolvedSpec: `${packageName}@2.0.0`,
+        integrity: "sha512-test",
+        shasum: "abc123",
+      },
+      useGeneration: true,
+    });
+    const targetDir = path.join(npmRoot, "node_modules", ...packageName.split("/"));
+    fs.mkdirSync(targetDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(npmRoot, "package.json"),
+      JSON.stringify({ private: true, dependencies: { [packageName]: "1.0.0" } }),
+    );
+    fs.writeFileSync(
+      path.join(targetDir, "package.json"),
+      JSON.stringify({
+        name: packageName,
+        version: "1.0.0",
+        openclaw: { extensions: ["index.js"] },
+      }),
+    );
+    fs.writeFileSync(path.join(targetDir, "index.js"), "export const version = 1;\n");
+    const { scriptPath, logPath } = writeWarningInstallPolicyScript(root, {
+      deleteRollbackSnapshotForPackage: packageName,
+      warnPathKind: "directory",
+    });
+    mockNpmViewMetadata({ name: packageName, version: "2.0.0" });
+    mockSuccessfulManagedNpmInstall({ packageName, version: "2.0.0" });
+
+    const result = await installPluginFromNpmSpec({
+      spec: `${packageName}@2.0.0`,
+      extensionsDir,
+      npmDir,
+      config: configWithInstallPolicy(scriptPath, logPath),
+      mode: "update",
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      code: PLUGIN_INSTALL_ERROR_CODE.INSTALL_ROLLBACK_FAILED,
+    });
+    if (!result.ok) {
+      expect(result.error).toContain("Managed npm rollback failed closed");
+      expect(result.error).toContain("Quarantined package-lock.json");
+    }
+    await expect(fsPromises.stat(targetDir)).rejects.toThrow();
+    const quarantineParent = path.join(npmRoot, "_openclaw-quarantined-npm-projects");
+    const quarantineEntries = await fsPromises.readdir(quarantineParent);
+    expect(quarantineEntries).toHaveLength(1);
+    expect(
+      fs.existsSync(path.join(quarantineParent, quarantineEntries[0]!, "package-lock.json")),
+    ).toBe(true);
   });
 
   it("reports effective install mode to policy when requested npm update has no installed target", async () => {
@@ -3575,7 +4028,7 @@ describe("installPluginFromDir", () => {
   });
 
   it("checks package plugin API before current-host extension shape validation", async () => {
-    resolveCompatibilityHostVersionMock.mockReturnValueOnce("2026.5.27-beta.1");
+    resolveCompatibilityHostVersionMock.mockReturnValue("2026.5.27-beta.1");
     const { pluginDir, extensionsDir } = setupInstallPluginFromDirFixture();
     const packageJsonPath = path.join(pluginDir, "package.json");
     const manifest = JSON.parse(fs.readFileSync(packageJsonPath, "utf-8")) as {
@@ -3648,7 +4101,7 @@ describe("installPluginFromDir", () => {
       extensionsDir,
     });
 
-    expect(result.ok).toBe(true);
+    expect(result.ok, result.ok ? "" : result.error).toBe(true);
     if (!result.ok) {
       return;
     }
@@ -3796,6 +4249,76 @@ describe("installPluginFromDir", () => {
       return;
     }
     expectInstalledFiles(res.targetDir, expectedFiles);
+  });
+
+  it("runs bundle policy against the staged directory that is published", async () => {
+    const { pluginDir, extensionsDir } = setupBundleInstallFixture({
+      bundleFormat: "codex",
+      name: "Staged Bundle",
+    });
+    const policyDir = suiteTempRootTracker.makeTempDir();
+    const { scriptPath, logPath } = writeAllowingInstallPolicyScript(policyDir);
+
+    const result = await installPluginFromDir({
+      dirPath: pluginDir,
+      extensionsDir,
+      config: configWithInstallPolicy(scriptPath, logPath),
+    });
+
+    expect(result.ok).toBe(true);
+    const requests = readCapturedInstallPolicyRequests(logPath);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({
+      request: { kind: "plugin-dir", mode: "install", requestedSpecifier: pluginDir },
+      plugin: { contentType: "bundle" },
+    });
+    expect(requests[0]?.sourcePath).not.toBe(await fsPromises.realpath(pluginDir));
+    expect(path.basename(requests[0]?.sourcePath ?? "")).toMatch(/^\.openclaw-install-stage-/);
+  });
+
+  it("keeps bundle warning tokens stable from dry-run staging through install", async () => {
+    const { pluginDir, extensionsDir } = setupBundleInstallFixture({
+      bundleFormat: "codex",
+      name: "Warning Bundle",
+    });
+    const policyDir = suiteTempRootTracker.makeTempDir();
+    const { scriptPath, logPath } = writeWarningInstallPolicyScript(policyDir);
+    const config = configWithInstallPolicy(scriptPath, logPath);
+
+    const planned = await installPluginFromDir({
+      dirPath: pluginDir,
+      extensionsDir,
+      config,
+      dryRun: true,
+    });
+    expect(planned).toMatchObject({
+      ok: false,
+      code: PLUGIN_INSTALL_ERROR_CODE.INSTALL_POLICY_ACKNOWLEDGEMENT_REQUIRED,
+      installPolicyWarning: { acknowledgementId: expect.stringMatching(/^v1:/) },
+    });
+    if (planned.ok || !planned.installPolicyWarning) {
+      throw new Error("expected a staged bundle policy warning");
+    }
+    expect(fs.existsSync(path.join(extensionsDir, "warning-bundle"))).toBe(false);
+
+    const installed = await installPluginFromDir({
+      dirPath: pluginDir,
+      extensionsDir,
+      config,
+      onInstallPolicyWarning: installSecurityScan.createInstallPolicyWarningAcknowledger(
+        planned.installPolicyWarning.acknowledgementId,
+      ),
+    });
+
+    expect(installed.ok).toBe(true);
+    const requests = readCapturedInstallPolicyRequests(logPath);
+    expect(requests).toHaveLength(3);
+    expect(path.relative(extensionsDir, requests[0]?.sourcePath ?? "")).toMatch(/^\.\.[/\\]/);
+    expect(requests.map((request) => path.basename(request.sourcePath ?? ""))).toEqual([
+      expect.stringMatching(/^\.openclaw-install-stage-/),
+      expect.stringMatching(/^\.openclaw-install-stage-/),
+      expect.stringMatching(/^\.openclaw-install-stage-/),
+    ]);
   });
 
   it("prefers native package installs over bundle installs for dual-format directories", async () => {

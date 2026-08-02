@@ -277,6 +277,97 @@ describe("installPackageDir", () => {
     ).resolves.toHaveLength(0);
   });
 
+  it("preserves structured staged-validation failures while rolling back", async () => {
+    await fixtureRootTracker.setup();
+    const fixtureRoot = await fixtureRootTracker.make("structured-failure");
+    const { sourceDir, targetDir } = await createExistingInstallFixture(fixtureRoot);
+    const warning = {
+      reason: "Manual review recommended.",
+      findings: [
+        {
+          ruleId: "dangerous-exec",
+          severity: "warn",
+          message: "The package launches a child process.",
+        },
+      ],
+    };
+
+    const result = await installPackageDir({
+      sourceDir,
+      targetDir,
+      mode: "update",
+      timeoutMs: 1_000,
+      copyErrorPrefix: "failed to copy plugin",
+      hasDeps: false,
+      depsLogMessage: "Installing deps…",
+      afterInstall: async () => ({
+        ok: false as const,
+        error: warning.reason,
+        code: "install_policy_acknowledgement_required",
+        installPolicyWarning: warning,
+      }),
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      error: warning.reason,
+      code: "install_policy_acknowledgement_required",
+      installPolicyWarning: warning,
+    });
+    await expect(fs.readFile(path.join(targetDir, "marker.txt"), "utf8")).resolves.toBe("old");
+  });
+
+  it("removes every newly created install-base ancestor when scan-only validation fails", async () => {
+    await fixtureRootTracker.setup();
+    const fixtureRoot = await fixtureRootTracker.make("failed-scan-only");
+    const sourceDir = path.join(fixtureRoot, "source");
+    const createdRootDir = path.join(fixtureRoot, "generated");
+    const installBaseDir = path.join(createdRootDir, "nested", "plugins");
+    const targetDir = path.join(installBaseDir, "demo");
+    await fs.mkdir(sourceDir, { recursive: true });
+    await fs.writeFile(path.join(sourceDir, "marker.txt"), "new");
+
+    const result = await installPackageDir({
+      sourceDir,
+      targetDir,
+      mode: "install",
+      timeoutMs: 1_000,
+      copyErrorPrefix: "failed to copy plugin",
+      hasDeps: false,
+      depsLogMessage: "Installing deps…",
+      scanOnly: true,
+      afterInstall: async () => ({ ok: false as const, error: "policy warning" }),
+    });
+
+    expect(result).toEqual({ ok: false, error: "policy warning" });
+    await expectMissingPath(createdRootDir);
+  });
+
+  it("removes every newly created install-base ancestor after successful scan-only validation", async () => {
+    await fixtureRootTracker.setup();
+    const fixtureRoot = await fixtureRootTracker.make("successful-scan-only");
+    const sourceDir = path.join(fixtureRoot, "source");
+    const createdRootDir = path.join(fixtureRoot, "generated");
+    const targetDir = path.join(createdRootDir, "nested", "plugins", "demo");
+    await fs.mkdir(sourceDir, { recursive: true });
+    await fs.writeFile(path.join(sourceDir, "marker.txt"), "new");
+
+    const result = await installPackageDir({
+      sourceDir,
+      targetDir,
+      mode: "install",
+      timeoutMs: 1_000,
+      copyErrorPrefix: "failed to copy plugin",
+      hasDeps: false,
+      depsLogMessage: "Installing deps…",
+      scanOnly: true,
+      afterInstall: async () => ({ ok: true as const }),
+    });
+
+    expect(result).toEqual({ ok: true });
+    await expectMissingPath(createdRootDir);
+  });
+
   it("restores the original install if publish rename fails", async () => {
     await fixtureRootTracker.setup();
     const fixtureRoot = await fixtureRootTracker.make("case");

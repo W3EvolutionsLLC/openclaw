@@ -7,6 +7,7 @@ import {
   validatePluginsSetEnabledParams,
   validatePluginsUninstallParams,
 } from "./index.js";
+import { INSTALL_POLICY_ACKNOWLEDGEMENT_TOKEN_MAX_CHARS } from "./install-policy-warning-details.js";
 
 describe("plugin lifecycle protocol validators", () => {
   it("validates plugin metadata refresh params", () => {
@@ -33,7 +34,44 @@ describe("plugin lifecycle protocol validators", () => {
         acknowledgeClawHubRisk: true,
       }),
     ).toBe(true);
-    expect(validatePluginsInstallParams({ source: "official", pluginId: "workboard" })).toBe(true);
+    expect(
+      validatePluginsInstallParams({
+        source: "clawhub",
+        packageName: "memory-plus",
+        version: "2.1.0",
+        acknowledgeClawHubRisk: true,
+        acknowledgeInstallPolicyWarning: "v1:warning-token",
+      }),
+    ).toBe(true);
+    expect(
+      validatePluginsInstallParams({
+        source: "official",
+        pluginId: "workboard",
+      }),
+    ).toBe(true);
+    expect(
+      validatePluginsInstallParams({
+        source: "official",
+        pluginId: "workboard",
+        acknowledgeInstallPolicyWarning: "v1:warning-token",
+      }),
+    ).toBe(true);
+    expect(
+      validatePluginsInstallParams({
+        source: "official",
+        pluginId: "workboard",
+        acknowledgeInstallPolicyWarning: true,
+      }),
+    ).toBe(false);
+    expect(
+      validatePluginsInstallParams({
+        source: "official",
+        pluginId: "workboard",
+        acknowledgeInstallPolicyWarning: "x".repeat(
+          INSTALL_POLICY_ACKNOWLEDGEMENT_TOKEN_MAX_CHARS + 1,
+        ),
+      }),
+    ).toBe(false);
     expect(
       validatePluginsInstallParams({
         source: "official",

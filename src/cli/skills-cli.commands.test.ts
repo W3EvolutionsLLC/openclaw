@@ -623,6 +623,29 @@ describe("skills cli commands", () => {
     expect(installSkillFromClawHubMock).not.toHaveBeenCalled();
   });
 
+  it("passes install-policy acknowledgement through for git and local source installs", async () => {
+    installSkillFromSourceMock.mockResolvedValue({
+      ok: true,
+      slug: "tools",
+      targetDir: "/tmp/workspace/skills/tools",
+      source: "git",
+    });
+
+    await runCommand([
+      "skills",
+      "install",
+      "git:owner/tools",
+      "--dangerously-force-unsafe-install",
+    ]);
+
+    expect(installSkillFromSourceMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        spec: "git:owner/tools",
+        onInstallPolicyWarning: expect.any(Function),
+      }),
+    );
+  });
+
   it("installs a skill from a local directory", async () => {
     installSkillFromSourceMock.mockResolvedValue({
       ok: true,
@@ -739,18 +762,27 @@ describe("skills cli commands", () => {
   it.each([
     { flag: "--force-install", option: "forceInstall" },
     { flag: "--acknowledge-clawhub-risk", option: "acknowledgeClawHubRisk" },
+    {
+      flag: "--dangerously-force-unsafe-install",
+      option: "onInstallPolicyWarning",
+    },
   ])("passes $flag through for ClawHub skill installs", async ({ flag, option }) => {
     primeCalendarInstall();
 
     await runCommand(["skills", "install", "calendar", flag]);
 
-    expect(installSkillFromClawHubMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        workspaceDir: "/tmp/workspace",
-        slug: "calendar",
-        [option]: true,
-      }),
-    );
+    const installArgs = mockFirstObjectArg(installSkillFromClawHubMock);
+    expectObjectFields(installArgs, { workspaceDir: "/tmp/workspace", slug: "calendar" });
+    if (option === "onInstallPolicyWarning") {
+      expect(installArgs[option]).toEqual(expect.any(Function));
+      await expect(
+        (installArgs[option] as (warning: { reason: string }) => Promise<boolean>)({
+          reason: "review required",
+        }),
+      ).resolves.toBe(true);
+    } else {
+      expect(installArgs[option]).toBe(true);
+    }
   });
 
   it("prints acknowledgement guidance for unacknowledged ClawHub skill installs", async () => {
@@ -840,18 +872,30 @@ describe("skills cli commands", () => {
   it.each([
     { flag: "--force-install", option: "forceInstall" },
     { flag: "--acknowledge-clawhub-risk", option: "acknowledgeClawHubRisk" },
+    {
+      flag: "--dangerously-force-unsafe-install",
+      option: "onInstallPolicyWarning",
+    },
   ])("passes $flag through for ClawHub skill updates", async ({ flag, option }) => {
     primeCalendarUpdate();
 
     await runCommand(["skills", "update", "--all", flag]);
 
-    expect(updateSkillsFromClawHubMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        workspaceDir: "/tmp/workspace",
-        ...(option === "forceInstall" ? { slug: undefined } : {}),
-        [option]: true,
-      }),
-    );
+    const updateArgs = mockFirstObjectArg(updateSkillsFromClawHubMock);
+    expect(updateArgs.workspaceDir).toBe("/tmp/workspace");
+    if (option === "forceInstall") {
+      expect(updateArgs.slug).toBeUndefined();
+    }
+    if (option === "onInstallPolicyWarning") {
+      expect(updateArgs[option]).toEqual(expect.any(Function));
+      await expect(
+        (updateArgs[option] as (warning: { reason: string }) => Promise<boolean>)({
+          reason: "review required",
+        }),
+      ).resolves.toBe(true);
+    } else {
+      expect(updateArgs[option]).toBe(true);
+    }
   });
 
   it("prints acknowledgement guidance for unacknowledged ClawHub skill updates", async () => {
@@ -934,6 +978,7 @@ describe("skills cli commands", () => {
       slug,
       logger: expect.any(Object),
       config: {},
+      onInstallPolicyWarning: expect.any(Function),
     });
   });
 

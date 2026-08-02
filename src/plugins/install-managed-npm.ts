@@ -60,10 +60,11 @@ import {
   runInstallSourceScan,
   sourceFamilyForInstallPolicySource,
 } from "./install-shared.js";
-import type {
-  InstallPluginResult,
-  PluginInstallLogger,
-  PluginInstallPolicyRequest,
+import {
+  PLUGIN_INSTALL_ERROR_CODE,
+  type InstallPluginResult,
+  type PluginInstallLogger,
+  type PluginInstallPolicyRequest,
 } from "./install-types.js";
 import { hasRetainedManagedNpmInstallMarker } from "./managed-npm-retention.js";
 import { relinkOpenClawPeerDependenciesInManagedNpmRoot } from "./plugin-peer-link.js";
@@ -143,6 +144,7 @@ export async function installPluginFromManagedNpmRoot(
         await preflightPluginNpmInstallPolicy({
           config: params.config,
           logger,
+          onInstallPolicyWarning: params.onInstallPolicyWarning,
           mode: policyMode,
           packageName: params.packageName,
           ...(expectedPluginId ? { pluginId: expectedPluginId } : {}),
@@ -207,7 +209,7 @@ export async function installPluginFromManagedNpmRoot(
     const rollbackFailedManagedNpmInstall = async (
       failure: Extract<InstallPluginResult, { ok: false }>,
     ): Promise<Extract<InstallPluginResult, { ok: false }>> => {
-      await rollbackManagedNpmPluginInstall({
+      const rollback = await rollbackManagedNpmPluginInstall({
         npmRoot,
         packageName: params.packageName,
         targetDir: installRoot,
@@ -223,6 +225,13 @@ export async function installPluginFromManagedNpmRoot(
         preparedDependency: prepared,
         logger,
       });
+      if (!rollback.ok) {
+        return {
+          ok: false,
+          code: PLUGIN_INSTALL_ERROR_CODE.INSTALL_ROLLBACK_FAILED,
+          error: `${failure.error} Managed npm rollback failed closed: ${rollback.error}`,
+        };
+      }
       return failure;
     };
     const quarantineForRecovery = async (
@@ -564,6 +573,7 @@ export async function installPluginFromManagedNpmRoot(
       trustedSourceLinkedOfficialInstall: params.trustedSourceLinkedOfficialInstall,
       mode: policyMode,
       installPolicyRequest: params.installPolicyRequest,
+      onInstallPolicyWarning: params.onInstallPolicyWarning,
       emitSuccessSecurityEvent: false,
     });
     if (!result.ok) {

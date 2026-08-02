@@ -236,7 +236,7 @@ describe("plugins cli update", () => {
     }
   });
 
-  it("shows the deprecated unsafe install flag in update help", () => {
+  it("shows one unsafe install acknowledgement flag in update help", () => {
     const program = new Command();
     registerPluginsCli(program);
 
@@ -245,9 +245,9 @@ describe("plugins cli update", () => {
     const helpText = updateCommand?.helpInformation() ?? "";
 
     expect(helpText).toContain("--dangerously-force-unsafe-install");
-    expect(helpText).toContain("Deprecated no-op");
-    expect(helpText).toContain("security.installPolicy");
-    expect(helpText).toContain("may still block");
+    expect(helpText).toMatch(/Acknowledge operator install policy\s+warnings/u);
+    expect(helpText).toContain("never overrides blocks");
+    expect(helpText).not.toContain("--acknowledge-install-policy-warning");
   });
 
   it("refuses plugin updates in Nix mode before package-manager work", async () => {
@@ -328,7 +328,7 @@ describe("plugins cli update", () => {
     expect(writeConfigFile).not.toHaveBeenCalled();
   });
 
-  it("updates tracked hook packs through plugins update", async () => {
+  it("updates tracked hook packs and forwards forced warning acknowledgement", async () => {
     const cfg = {} as OpenClawConfig;
     const nextConfig = cfg;
 
@@ -358,11 +358,22 @@ describe("plugins cli update", () => {
       ],
     });
 
-    await runPluginsCommand(["plugins", "update", "demo-hooks"]);
+    await runPluginsCommand([
+      "plugins",
+      "update",
+      "demo-hooks",
+      "--dangerously-force-unsafe-install",
+    ]);
 
     const hookUpdateParams = expectSingleCallParams(updateNpmInstalledHookPacks);
     expect(hookUpdateParams.config).toEqual({ ...cfg, plugins: { installs: {} } });
     expect(hookUpdateParams.hookIds).toEqual(["demo-hooks"]);
+    const onInstallPolicyWarning = hookUpdateParams.onInstallPolicyWarning;
+    expect(onInstallPolicyWarning).toEqual(expect.any(Function));
+    if (typeof onInstallPolicyWarning !== "function") {
+      throw new Error("expected install-policy warning acknowledger");
+    }
+    expect(await onInstallPolicyWarning({ reason: "Manual review recommended." })).toBe(true);
     expect(updateNpmInstalledPlugins).not.toHaveBeenCalled();
     expect(writeConfigFile).toHaveBeenCalledWith(nextConfig);
     expect(replaceConfigFile).toHaveBeenCalledWith(
@@ -1131,7 +1142,7 @@ describe("plugins cli update", () => {
     expect(runtimeLogs.at(-1)).toBe("No tracked plugins or hook packs to update.");
   });
 
-  it("passes dangerous force unsafe install to plugin updates", async () => {
+  it("uses dangerous force unsafe install to acknowledge plugin update warnings", async () => {
     const config = createTrackedPluginConfig({
       pluginId: "openclaw-codex-app-server",
       spec: "openclaw-codex-app-server@beta",
@@ -1155,13 +1166,7 @@ describe("plugins cli update", () => {
     expect(updateParams.config).toEqual(config);
     expect(updateParams.pluginIds).toEqual(["openclaw-codex-app-server"]);
     expect(updateParams.dangerouslyForceUnsafeInstall).toBe(true);
-    expect(
-      runtimeLogs.some((message) =>
-        message.includes(
-          "--dangerously-force-unsafe-install is deprecated and no longer affects plugin updates",
-        ),
-      ),
-    ).toBe(true);
+    expect(updateParams.onInstallPolicyWarning).toEqual(expect.any(Function));
   });
 
   it.each([
@@ -1274,7 +1279,7 @@ describe("plugins cli update", () => {
     );
   });
 
-  it("passes ClawHub risk acknowledgement to plugin updates", async () => {
+  it("passes explicit acknowledgements to plugin updates", async () => {
     const config = createTrackedPluginConfig({
       pluginId: "openclaw-codex-app-server",
       spec: "openclaw-codex-app-server@beta",
@@ -1292,6 +1297,7 @@ describe("plugins cli update", () => {
       "update",
       "openclaw-codex-app-server",
       "--acknowledge-clawhub-risk",
+      "--dangerously-force-unsafe-install",
     ]);
 
     expect(updateNpmInstalledPlugins).toHaveBeenCalledWith(
@@ -1299,6 +1305,7 @@ describe("plugins cli update", () => {
         config,
         pluginIds: ["openclaw-codex-app-server"],
         acknowledgeClawHubRisk: true,
+        onInstallPolicyWarning: expect.any(Function),
       }),
     );
   });

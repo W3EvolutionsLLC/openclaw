@@ -2,6 +2,7 @@
 import path from "node:path";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { uniqueStrings } from "@openclaw/normalization-core/string-normalization";
+import type { PluginsInstallParams } from "../../packages/gateway-protocol/src/schema/plugins.js";
 import { resolveAgentWorkspaceDir, resolveDefaultAgentId } from "../agents/agent-scope-config.js";
 import { MANIFEST_KEY } from "../compat/legacy-names.js";
 import { collectChangedPaths } from "../config/config-change-paths.js";
@@ -37,7 +38,13 @@ import {
   type ConfigSnapshotForInstallPersist,
 } from "./install-persistence.js";
 import { commitPluginInstallRecordsWithConfig } from "./install-record-commit.js";
-import type { InstallSafetyOverrides } from "./install-security-scan.js";
+import {
+  createInstallPolicyWarningAcknowledger,
+  scanBundleInstallSource,
+  type InstallPolicyWarning,
+  type InstallSafetyOverrides,
+} from "./install-security-scan.js";
+import { runInstallSourceScan } from "./install-shared.js";
 import type { PluginInstallLogger } from "./install-types.js";
 import {
   installPluginFromNpmPackArchive,
@@ -115,14 +122,7 @@ type ManagedPluginCatalog = {
   mutationAllowed: boolean;
 };
 
-type ManagedPluginInstallRequest =
-  | {
-      source: "clawhub";
-      packageName: string;
-      version?: string;
-      acknowledgeClawHubRisk?: boolean;
-    }
-  | { source: "official"; pluginId: string };
+type ManagedPluginInstallRequest = PluginsInstallParams;
 
 export type ManagedPluginSourceInstallRequest =
   | {
@@ -152,6 +152,7 @@ export type ManagedPluginSourceInstallRequest =
       source: "bundled";
       rawSpec: string;
       bundledSource: BundledPluginSource;
+      mode: "install" | "update";
       warning?: string;
     }
   | {
@@ -184,10 +185,24 @@ type ManagedPluginSourceInstallResult =
       npmResolution?: NpmSpecResolution;
       clawhub?: ClawHubPluginInstallRecordFields;
     }
-  | { ok: false; error: string; code?: string; version?: string; warning?: string };
+  | {
+      ok: false;
+      error: string;
+      code?: string;
+      version?: string;
+      warning?: string;
+      installPolicyWarning?: InstallPolicyWarning;
+    };
 
 type SourceInstallerResult =
-  | { ok: false; error: string; code?: string; version?: string; warning?: string }
+  | {
+      ok: false;
+      error: string;
+      code?: string;
+      version?: string;
+      warning?: string;
+      installPolicyWarning?: InstallPolicyWarning;
+    }
   | {
       ok: true;
       pluginId: string;
@@ -201,6 +216,7 @@ export class ManagedPluginLifecycleError extends Error {
   readonly code?: string;
   readonly version?: string;
   readonly warning?: string;
+  readonly installPolicyWarning?: InstallPolicyWarning;
 
   constructor(
     message: string,
@@ -209,6 +225,7 @@ export class ManagedPluginLifecycleError extends Error {
       code?: string;
       version?: string;
       warning?: string;
+      installPolicyWarning?: InstallPolicyWarning;
       cause?: unknown;
     },
   ) {
@@ -218,6 +235,7 @@ export class ManagedPluginLifecycleError extends Error {
     this.code = details?.code;
     this.version = details?.version;
     this.warning = details?.warning;
+    this.installPolicyWarning = details?.installPolicyWarning;
   }
 }
 
@@ -971,6 +989,7 @@ function throwInstallFailure(result: {
   code?: string;
   version?: string;
   warning?: string;
+  installPolicyWarning?: InstallPolicyWarning;
 }): never {
   const unavailable =
     !result.code ||
@@ -982,6 +1001,7 @@ function throwInstallFailure(result: {
     code: result.code,
     version: result.version,
     warning: result.warning,
+    installPolicyWarning: result.installPolicyWarning,
     cause: result,
   });
 }
@@ -1058,6 +1078,7 @@ function throwPersistenceFailureWithCleanupWarnings(error: unknown, warnings: st
       code: error.code,
       version: error.version,
       warning: [error.warning, cleanupWarning].filter(Boolean).join("\n"),
+      installPolicyWarning: error.installPolicyWarning,
       cause: error,
     });
   }
@@ -1117,6 +1138,28 @@ export async function installManagedPluginSource(params: {
   const env = params.env ?? process.env;
   const extensionsDir = resolveDefaultPluginExtensionsDir(env);
   if (request.source === "bundled") {
+    const scanFailure = await runInstallSourceScan({
+      subject: `Bundled plugin "${request.bundledSource.pluginId}"`,
+      pluginId: request.bundledSource.pluginId,
+      mode: request.mode,
+      sourceFamily: "directory",
+      scan: async () =>
+        await scanBundleInstallSource({
+          ...params.safetyOverrides,
+          config: params.safetyOverrides?.config ?? params.snapshot.config,
+          logger: params.logger ?? {},
+          pluginId: request.bundledSource.pluginId,
+          sourceDir: request.bundledSource.localPath,
+          requestKind: "plugin-dir",
+          requestedSpecifier: request.rawSpec,
+          mode: request.mode,
+          version: request.bundledSource.version,
+          source: { kind: "bundled", authority: "openclaw", mutable: false, network: false },
+        }),
+    });
+    if (scanFailure) {
+      return scanFailure;
+    }
     const result = await installBundledPluginSource({
       snapshot: params.snapshot,
       rawSpec: request.rawSpec,
@@ -1397,6 +1440,9 @@ export async function installManagedPlugin(params: {
     const snapshot = await readPluginMutationSnapshot(env);
     const officialCatalog = await loadOfficialCatalog();
     const warnings: string[] = [];
+    const onInstallPolicyWarning = createInstallPolicyWarningAcknowledger(
+      params.request.acknowledgeInstallPolicyWarning,
+    );
     const request =
       params.request.source === "clawhub"
         ? resolveManagedClawHubInstallRequest({
@@ -1413,6 +1459,7 @@ export async function installManagedPlugin(params: {
       env,
       logger: createInstallLogger(warnings),
       cleanupOnPersistenceFailure: true,
+      safetyOverrides: onInstallPolicyWarning ? { onInstallPolicyWarning } : {},
     });
     if (!installed.ok) {
       return throwInstallFailure(installed);

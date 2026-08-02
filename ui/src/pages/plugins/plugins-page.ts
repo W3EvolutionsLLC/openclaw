@@ -32,9 +32,11 @@ import {
   type McpServerSummary,
   type McpServersPatchBuildResult,
 } from "../../lib/config/mcp-servers.ts";
+import { formatInstallPolicyWarning } from "../../lib/install-policy-warning.ts";
 import {
   installPlugin,
   pluginInstallNeedsRiskAcknowledgement,
+  readPluginInstallPolicyWarning,
   readPluginInstallTrustError,
   runPluginConfigMutation,
   setPluginEnabled,
@@ -783,6 +785,22 @@ class PluginsPage extends OpenClawLightDomElement {
         await this.refreshCatalogAfterMutation(client);
       },
       (error) => {
+        const policyWarning = readPluginInstallPolicyWarning(error);
+        if (policyWarning) {
+          this.setMessage(rowKey, {
+            kind: "error",
+            text: formatInstallPolicyWarning(policyWarning),
+            ...(policyWarning.acknowledgementId
+              ? {
+                  acknowledge: {
+                    ...request,
+                    acknowledgeInstallPolicyWarning: policyWarning.acknowledgementId,
+                  },
+                }
+              : {}),
+          });
+          return;
+        }
         const trust = readPluginInstallTrustError(error);
         const packageName = request.source === "clawhub" ? request.packageName : null;
         if (packageName && pluginInstallNeedsRiskAcknowledgement(error)) {
@@ -790,8 +808,10 @@ class PluginsPage extends OpenClawLightDomElement {
             kind: "error",
             text: trust?.warning ?? t("pluginsPage.defaultRiskWarning"),
             acknowledge: {
+              source: "clawhub",
               packageName,
               ...(trust?.version ? { version: trust.version } : {}),
+              acknowledgeClawHubRisk: true,
             },
           });
           return;

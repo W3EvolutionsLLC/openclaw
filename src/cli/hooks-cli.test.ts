@@ -186,4 +186,30 @@ describe("hooks cli formatting", () => {
       invalidateRuntimeCache: false,
     });
   });
+
+  it("forwards install policy acknowledgement through deprecated aliases", async () => {
+    runPluginInstallCommandMock.mockResolvedValueOnce(undefined);
+    runPluginUpdateCommandMock.mockResolvedValueOnce(undefined);
+    const program = new Command().exitOverride();
+    registerHooksCli(program);
+
+    await program.parseAsync(
+      ["hooks", "install", "npm:demo-hooks", "--dangerously-force-unsafe-install"],
+      { from: "user" },
+    );
+    await program.parseAsync(
+      ["hooks", "update", "demo-hooks", "--dangerously-force-unsafe-install"],
+      { from: "user" },
+    );
+
+    expect(runPluginInstallCommandMock).toHaveBeenCalledWith({
+      raw: "npm:demo-hooks",
+      opts: expect.objectContaining({ dangerouslyForceUnsafeInstall: true }),
+      invalidateRuntimeCache: false,
+    });
+    expect(runPluginUpdateCommandMock).toHaveBeenCalledWith({
+      id: "demo-hooks",
+      opts: expect.objectContaining({ dangerouslyForceUnsafeInstall: true }),
+    });
+  });
 });

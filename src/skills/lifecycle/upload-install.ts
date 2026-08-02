@@ -2,6 +2,7 @@
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { ArchiveLogger } from "../../infra/archive.js";
 import { formatErrorMessage } from "../../infra/errors.js";
+import type { InstallPolicyWarning } from "../../plugins/install-security-scan.js";
 import {
   installSkillArchiveFromPath,
   type SkillArchiveInstallFailureKind,
@@ -40,13 +41,16 @@ type UploadedSkillInstallResult =
       ok: false;
       error: string;
       errorKind: UploadedSkillInstallErrorKind;
+      installPolicyWarning?: InstallPolicyWarning;
     };
 
 // Preserve invalid-request failures for caller feedback; other install failures are unavailable.
 function uploadInstallFailureErrorKind(
   failureKind: SkillArchiveInstallFailureKind,
 ): UploadedSkillInstallErrorKind {
-  return failureKind === "invalid-request" ? "invalid-request" : "unavailable";
+  return failureKind === "invalid-request" || failureKind === "acknowledgement-required"
+    ? "invalid-request"
+    : "unavailable";
 }
 
 export async function installUploadedSkillArchive(params: {
@@ -57,6 +61,7 @@ export async function installUploadedSkillArchive(params: {
   timeoutMs?: number;
   workspaceDir: string;
   config: OpenClawConfig;
+  onInstallPolicyWarning?: (warning: InstallPolicyWarning) => boolean | Promise<boolean>;
   log?: ArchiveLogger;
   store?: SkillUploadStore;
 }): Promise<UploadedSkillInstallResult> {
@@ -109,6 +114,7 @@ export async function installUploadedSkillArchive(params: {
           },
           source: { kind: "upload", authority: "user", mutable: false, network: false },
           requestedSpecifier: `upload:${params.uploadId}`,
+          onInstallPolicyWarning: params.onInstallPolicyWarning,
         },
       });
       if (!install.ok) {
@@ -120,6 +126,9 @@ export async function installUploadedSkillArchive(params: {
           ok: false,
           error: install.error,
           errorKind,
+          ...(install.installPolicyWarning
+            ? { installPolicyWarning: install.installPolicyWarning }
+            : {}),
         };
       }
       await upload.remove().catch(() => undefined);

@@ -309,16 +309,18 @@ describe("runPostCorePluginConvergence", () => {
     expect(result.installRecords).toEqual({ brave: baseline.brave });
   });
 
-  it("forwards ClawHub risk acknowledgement options to repair", async () => {
+  it("forwards warning acknowledgement options to repair", async () => {
     const cfg = {
       plugins: { entries: { matrix: { enabled: true } } },
     } as unknown as OpenClawConfig;
     const onClawHubRisk = vi.fn(async () => true);
+    const onInstallPolicyWarning = vi.fn(async () => true);
     await runPostCorePluginConvergence({
       cfg,
       env: {},
       acknowledgeClawHubRisk: true,
       onClawHubRisk,
+      onInstallPolicyWarning,
     });
     expect(mocks.repairMissingConfiguredPluginInstalls).toHaveBeenCalledTimes(1);
     expect(mocks.repairMissingConfiguredPluginInstalls).toHaveBeenCalledWith({
@@ -329,6 +331,7 @@ describe("runPostCorePluginConvergence", () => {
       },
       acknowledgeClawHubRisk: true,
       onClawHubRisk,
+      onInstallPolicyWarning,
     });
   });
 

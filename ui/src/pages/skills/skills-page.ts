@@ -29,6 +29,7 @@ import {
   updateSkillEdit,
   updateSkillEnabled,
   type ClawHubSearchResult,
+  type ClawHubInstallMessage,
   type ClawHubSkillDetail,
   type ClawHubSkillSecurityVerdict,
   type SkillOperation,
@@ -81,13 +82,7 @@ class SkillsPage extends OpenClawLightDomElement {
   @state() clawhubDetailSlug: string | null = null;
   @state() clawhubDetailLoading = false;
   @state() clawhubDetailError: string | null = null;
-  @state() clawhubInstallMessage: {
-    kind: "success" | "error";
-    text: string;
-    acknowledgeSlug?: string;
-    acknowledgeVersion?: string;
-    acknowledgeLabel?: string;
-  } | null = null;
+  @state() clawhubInstallMessage: ClawHubInstallMessage | null = null;
   @state() clawhubVerdicts: Record<string, ClawHubSkillSecurityVerdict> = {};
   @state() clawhubVerdictsLoading = false;
   @state() clawhubVerdictsError: string | null = null;
@@ -459,8 +454,8 @@ class SkillsPage extends OpenClawLightDomElement {
             onToggle: (key, enabled) => void updateSkillEnabled(this, key, enabled),
             onEdit: (key, value) => updateSkillEdit(this, key, value),
             onSaveKey: (key) => void saveSkillApiKey(this, key),
-            onInstall: (skillKey, name, installId) =>
-              void installSkill(this, skillKey, name, installId),
+            onInstall: (skillKey, name, installId, acknowledgementId) =>
+              void installSkill(this, skillKey, name, installId, false, acknowledgementId),
             onDetailOpen: (key) => {
               this.skillsDetailKey = key;
               this.skillsDetailTab = "overview";
@@ -470,8 +465,19 @@ class SkillsPage extends OpenClawLightDomElement {
             onClawHubQueryChange: (query) => this.changeClawHubQuery(query),
             onClawHubDetailOpen: (slug) => void loadClawHubDetail(this, slug),
             onClawHubDetailClose: () => closeClawHubDetail(this),
-            onClawHubInstall: (slug, acknowledgeClawHubRisk, version) =>
-              void installFromClawHub(this, slug, acknowledgeClawHubRisk, version),
+            onClawHubInstall: (
+              slug,
+              acknowledgeClawHubRisk,
+              version,
+              acknowledgeInstallPolicyWarning,
+            ) =>
+              void installFromClawHub(
+                this,
+                slug,
+                acknowledgeClawHubRisk,
+                version,
+                acknowledgeInstallPolicyWarning,
+              ),
           })}
         </wa-tab-panel>
       `)}

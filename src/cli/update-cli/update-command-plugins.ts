@@ -1,5 +1,6 @@
 // Plugin synchronization and convergence after the core update.
 import { confirm, isCancel, text } from "@clack/prompts";
+import { formatInstallPolicyWarningDetails } from "../../../packages/gateway-protocol/src/install-policy-warning-details.js";
 import { stripAnsi } from "../../../packages/terminal-core/src/ansi.js";
 import { stylePromptMessage } from "../../../packages/terminal-core/src/prompt-style.js";
 import { sanitizeTerminalText } from "../../../packages/terminal-core/src/safe-text.js";
@@ -10,6 +11,7 @@ import type { PluginInstallRecord } from "../../config/types.plugins.js";
 import type { ClawHubRiskAcknowledgementRequest } from "../../infra/clawhub-install-trust.js";
 import type { UpdateChannel } from "../../infra/update-channels.js";
 import { commitPluginInstallRecordsWithConfig } from "../../plugins/install-record-commit.js";
+import { PLUGIN_INSTALL_ERROR_CODE } from "../../plugins/install-types.js";
 import {
   loadInstalledPluginIndexInstallRecords,
   withoutPluginInstallRecords,
@@ -24,6 +26,7 @@ import {
   type PluginUpdateOutcome,
 } from "../../plugins/update.js";
 import { defaultRuntime } from "../../runtime.js";
+import { resolveInstallPolicyAcknowledgementCliOptions } from "../install-policy-acknowledgement.js";
 import { listPersistedBundledPluginLocationBridges } from "../plugins-location-bridges.js";
 import {
   convergenceWarningsToOutcomes,
@@ -42,6 +45,8 @@ export type { PostCorePluginUpdateResult } from "./update-command-plugins-intern
 
 const POST_UPDATE_PLUGIN_REPAIR_GUIDANCE =
   "Run openclaw update repair to retry post-update plugin repair.";
+const INSTALL_POLICY_ACKNOWLEDGEMENT_GUIDANCE =
+  "Review the install policy warning, then run openclaw update repair --dangerously-force-unsafe-install to acknowledge it and retry.";
 
 type PostUpdatePluginWarning = NonNullable<PostCorePluginUpdateResult["warnings"]>[number];
 
@@ -122,9 +127,11 @@ function formatPostUpdatePluginInspectGuidance(pluginId: string): string {
 function createPostUpdatePluginWarning(params: {
   pluginId?: string;
   reason: string;
+  additionalGuidance?: readonly string[];
 }): PostUpdatePluginWarning {
   const reason = params.reason.trim() || "unknown plugin post-update failure";
   const guidance = [
+    ...(params.additionalGuidance ?? []),
     POST_UPDATE_PLUGIN_REPAIR_GUIDANCE,
     ...(params.pluginId ? [formatPostUpdatePluginInspectGuidance(params.pluginId)] : []),
   ];
@@ -149,13 +156,17 @@ function createGuidedPostUpdatePluginOutcome(
     return { outcome };
   }
   const includeWarningInReason = options.includeWarningInReason ?? true;
-  const warningReason =
-    outcome.warning && includeWarningInReason
+  const warningReason = outcome.installPolicyWarning
+    ? `${formatInstallPolicyWarningDetails(outcome.installPolicyWarning, sanitizeTerminalText)}\n${outcome.message}`
+    : outcome.warning && includeWarningInReason
       ? `${outcome.warning}\n${outcome.message}`
       : outcome.message;
   const warning = createPostUpdatePluginWarning({
     ...(outcome.pluginId && outcome.pluginId !== "unknown" ? { pluginId: outcome.pluginId } : {}),
     reason: warningReason,
+    ...(outcome.code === PLUGIN_INSTALL_ERROR_CODE.INSTALL_POLICY_ACKNOWLEDGEMENT_REQUIRED
+      ? { additionalGuidance: [INSTALL_POLICY_ACKNOWLEDGEMENT_GUIDANCE] }
+      : {}),
   });
   return {
     outcome: {
@@ -266,6 +277,16 @@ export async function updatePluginsAfterCoreUpdate(params: {
       },
     },
   );
+  const installPolicyAcknowledgementOptions = resolveInstallPolicyAcknowledgementCliOptions({
+    dangerouslyForceUnsafeInstall: params.opts.dangerouslyForceUnsafeInstall,
+    action: "update",
+    allowPrompt: !params.opts.dryRun && !params.opts.yes && !params.opts.json,
+    reportError: (message) => {
+      if (!params.opts.json) {
+        pluginLogger.error(message);
+      }
+    },
+  });
   const pluginInstallRecords =
     params.pluginInstallRecords ?? (await loadInstalledPluginIndexInstallRecords());
   const pluginUpdateChannel = params.channel;
@@ -283,10 +304,22 @@ export async function updatePluginsAfterCoreUpdate(params: {
       workspaceDir: params.root,
     }),
     ...clawHubRiskAcknowledgementOptions,
+    ...installPolicyAcknowledgementOptions,
     logger: pluginLogger,
   });
   for (const error of syncResult.summary.errors) {
-    warnings.push(createPostUpdatePluginWarning({ reason: error }));
+    const policyWarning = syncResult.summary.installPolicyWarnings?.find(
+      (entry) => entry.error === error,
+    );
+    warnings.push(
+      createPostUpdatePluginWarning({
+        ...(policyWarning ? { pluginId: policyWarning.pluginId } : {}),
+        reason: policyWarning
+          ? `${formatInstallPolicyWarningDetails(policyWarning.warning, sanitizeTerminalText)}\n${error}`
+          : error,
+        ...(policyWarning ? { additionalGuidance: [INSTALL_POLICY_ACKNOWLEDGEMENT_GUIDANCE] } : {}),
+      }),
+    );
   }
   let pluginConfig = syncResult.config;
   const integrityDrifts: PostCorePluginUpdateResult["integrityDrifts"] = [];
@@ -358,6 +391,7 @@ export async function updatePluginsAfterCoreUpdate(params: {
       logger: pluginLogger,
       onIntegrityDrift: onPluginIntegrityDrift,
       ...clawHubRiskAcknowledgementOptions,
+      ...installPolicyAcknowledgementOptions,
     });
     pluginConfig = repairResult.config;
     pluginsChanged ||= repairResult.changed;
@@ -384,6 +418,7 @@ export async function updatePluginsAfterCoreUpdate(params: {
     logger: pluginLogger,
     onIntegrityDrift: onPluginIntegrityDrift,
     ...clawHubRiskAcknowledgementOptions,
+    ...installPolicyAcknowledgementOptions,
   });
   pluginConfig = npmResult.config;
   pluginsChanged ||= npmResult.changed;
@@ -438,6 +473,7 @@ export async function updatePluginsAfterCoreUpdate(params: {
     env: process.env,
     baselineInstallRecords: convergenceBaselineRecords,
     ...clawHubRiskAcknowledgementOptions,
+    ...installPolicyAcknowledgementOptions,
   });
   for (const change of convergence.changes) {
     if (!params.opts.json) {

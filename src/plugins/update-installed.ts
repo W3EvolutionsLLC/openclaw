@@ -12,6 +12,8 @@ import { resolveBundledPluginSources } from "./bundled-sources.js";
 import { buildClawHubPluginInstallRecordFields } from "./clawhub-install-records.js";
 import type { ClawHubRiskAcknowledgementRequest } from "./clawhub.js";
 import { normalizePluginsConfig, resolveEffectiveEnableState } from "./config-state.js";
+import { buildInstallPolicyAcknowledgementOptions } from "./install-security-scan.js";
+import type { InstallSafetyOverrides } from "./install-security-scan.js";
 import { PLUGIN_INSTALL_ERROR_CODE, resolvePluginInstallDir } from "./install.js";
 import {
   buildNpmResolutionInstallFields,
@@ -47,11 +49,12 @@ import {
   runPluginUpdateWithClawHubLease,
 } from "./update-claw-lifecycle.js";
 import {
-  disablePluginAfterUpdateFailure,
-  hasRunnableInstalledNpmPayload,
+  hasRunnableInstalledPayloadForAdvisoryFailure,
   migratePluginConfigId,
   repairOpenClawPeerLinksForNpmInstalls,
   resolveRecordedExtensionsDir,
+  resolvePluginUpdateFailure,
+  type PluginUpdateFailureOptions as FailureOptions,
   withoutPluginInstallRecord,
 } from "./update-config.js";
 import {
@@ -70,32 +73,33 @@ import {
   resolveTrustedSourceLinkedOfficialNpmFallbackForClawHubUpdate,
   shouldBypassTrustedOfficialUnchangedNpmCheck,
   shouldSkipUnchangedNpmInstall,
-  type PluginUpdateChannelFallback,
   type PluginUpdateIntegrityDriftParams,
   type PluginUpdateLogger,
   type PluginUpdateOutcome,
   type PluginUpdateSummary,
 } from "./update-source.js";
 
-export async function updateNpmInstalledPlugins(params: {
-  config: OpenClawConfig;
-  logger?: PluginUpdateLogger;
-  pluginIds?: string[];
-  skipIds?: Set<string>;
-  skipDisabledPlugins?: boolean;
-  syncOfficialPluginInstalls?: boolean;
-  disableOnFailure?: boolean;
-  timeoutMs?: number;
-  dryRun?: boolean;
-  updateChannel?: UpdateChannel;
-  officialPluginUpdateChannel?: UpdateChannel;
-  coreVersion?: string;
-  dangerouslyForceUnsafeInstall?: boolean;
-  specOverrides?: Record<string, string>;
-  onIntegrityDrift?: (params: PluginUpdateIntegrityDriftParams) => boolean | Promise<boolean>;
-  acknowledgeClawHubRisk?: boolean;
-  onClawHubRisk?: (request: ClawHubRiskAcknowledgementRequest) => boolean | Promise<boolean>;
-}): Promise<PluginUpdateSummary> {
+export async function updateNpmInstalledPlugins(
+  params: InstallSafetyOverrides & {
+    config: OpenClawConfig;
+    logger?: PluginUpdateLogger;
+    pluginIds?: string[];
+    skipIds?: Set<string>;
+    skipDisabledPlugins?: boolean;
+    syncOfficialPluginInstalls?: boolean;
+    disableOnFailure?: boolean;
+    timeoutMs?: number;
+    dryRun?: boolean;
+    updateChannel?: UpdateChannel;
+    officialPluginUpdateChannel?: UpdateChannel;
+    coreVersion?: string;
+    dangerouslyForceUnsafeInstall?: boolean;
+    specOverrides?: Record<string, string>;
+    onIntegrityDrift?: (params: PluginUpdateIntegrityDriftParams) => boolean | Promise<boolean>;
+    acknowledgeClawHubRisk?: boolean;
+    onClawHubRisk?: (request: ClawHubRiskAcknowledgementRequest) => boolean | Promise<boolean>;
+  },
+): Promise<PluginUpdateSummary> {
   const logger = params.logger ?? {};
   const installs = params.config.plugins?.installs ?? {};
   const targets = params.pluginIds?.length ? params.pluginIds : Object.keys(installs);
@@ -112,41 +116,21 @@ export async function updateNpmInstalledPlugins(params: {
   });
   const clawHubRiskAcknowledgementOptions = resolveClawHubRiskAcknowledgementOptions(params);
 
-  const recordFailure = (
-    pluginId: string,
-    message: string,
-    options: {
-      channelFallback?: PluginUpdateChannelFallback;
-      code?: string;
-      installedPayloadRunnable?: boolean;
-    } = {},
-  ) => {
-    // Metadata failure is advisory only when a runnable payload is still installed.
-    // Missing-payload repair must keep disabling the broken config entry.
-    const preserveInstalledPayload =
-      options.code === PLUGIN_INSTALL_ERROR_CODE.NPM_METADATA_FAILURE &&
-      options.installedPayloadRunnable === true;
-    if (params.disableOnFailure && !params.dryRun && !preserveInstalledPayload) {
-      const disabledMessage =
-        `Disabled "${pluginId}" after plugin update failure; OpenClaw will continue without it. ` +
-        message;
-      logger.warn?.(disabledMessage);
-      next = disablePluginAfterUpdateFailure(next, pluginId);
-      changed = true;
-      outcomes.push({
-        pluginId,
-        status: "skipped",
-        message: disabledMessage,
-        ...(options.channelFallback ? { channelFallback: options.channelFallback } : {}),
-      });
-      return;
-    }
-    outcomes.push({
+  const recordFailure = (pluginId: string, message: string, options: FailureOptions = {}) => {
+    const failure = resolvePluginUpdateFailure({
+      config: next,
       pluginId,
-      status: "error",
       message,
-      ...(options.channelFallback ? { channelFallback: options.channelFallback } : {}),
+      disableOnFailure: params.disableOnFailure,
+      dryRun: params.dryRun,
+      ...options,
     });
+    if (failure.changed) {
+      logger.warn?.(failure.outcome.message);
+      next = failure.config;
+      changed = true;
+    }
+    outcomes.push(failure.outcome);
   };
 
   for (const pluginId of targets) {
@@ -358,24 +342,15 @@ export async function updateNpmInstalledPlugins(params: {
       );
       continue;
     }
-    // Payload validation is filesystem work needed only to preserve state after metadata failures.
-    // Every failure path below ends this plugin iteration, so the result cannot be reused.
-    const hasRunnableInstalledPayloadForFailure = async (code?: string): Promise<boolean> => {
-      if (
-        code !== PLUGIN_INSTALL_ERROR_CODE.NPM_METADATA_FAILURE ||
-        !params.disableOnFailure ||
-        params.dryRun ||
-        currentVersion === undefined
-      ) {
-        return false;
-      }
-      try {
-        return await hasRunnableInstalledNpmPayload({ installPath, manifest: installedManifest });
-      } catch {
-        // Damaged or unreadable payloads fail closed without aborting the remaining plugin sweep.
-        return false;
-      }
-    };
+    const hasRunnableInstalledPayloadForFailure = (code?: string) =>
+      hasRunnableInstalledPayloadForAdvisoryFailure({
+        code,
+        currentVersion,
+        disableOnFailure: params.disableOnFailure,
+        dryRun: params.dryRun,
+        installPath,
+        manifest: installedManifest,
+      });
     const extensionsDir = resolveRecordedExtensionsDir({
       pluginId,
       installPath,
@@ -525,6 +500,7 @@ export async function updateNpmInstalledPlugins(params: {
         logger,
         onIntegrityDrift: params.onIntegrityDrift,
         clawHubRiskAcknowledgementOptions,
+        installPolicyAcknowledgementOptions: buildInstallPolicyAcknowledgementOptions(params),
       });
     const attempt = await runPluginUpdateWithClawHubLease({
       pluginId,
@@ -570,7 +546,7 @@ export async function updateNpmInstalledPlugins(params: {
         continue;
       }
       const phase = params.dryRun ? "check" : "update";
-      const code = resultSource === "npm" && "code" in result ? result.code : undefined;
+      const code = "code" in result ? result.code : undefined;
       const message =
         resultSource === "npm"
           ? formatNpmInstallFailure({
@@ -609,6 +585,9 @@ export async function updateNpmInstalledPlugins(params: {
       recordFailure(pluginId, message, {
         channelFallback: npmChannelFallback,
         code,
+        ...("installPolicyWarning" in result && result.installPolicyWarning
+          ? { installPolicyWarning: result.installPolicyWarning }
+          : {}),
         installedPayloadRunnable: await hasRunnableInstalledPayloadForFailure(code),
       });
       continue;

@@ -14,15 +14,20 @@ import {
   getExternalizedBundledPluginLookupIds,
   type ExternalizedBundledPluginBridge,
 } from "./externalized-bundled-plugins.js";
-import { resolvePluginInstallDir } from "./install.js";
+import type { InstallPolicyWarning } from "./install-security-scan.js";
+import { PLUGIN_INSTALL_ERROR_CODE, resolvePluginInstallDir } from "./install.js";
 import { resolvePackageExtensionEntries, type PackageManifest } from "./manifest.js";
 import { validatePackageExtensionEntriesForInstall } from "./package-entry-resolution.js";
 import { linkOpenClawPeerDependencies } from "./plugin-peer-link.js";
 import { resetPluginSlotsToDefaults } from "./slots.js";
 import { setPluginEnabledInConfig } from "./toggle-config.js";
-import type { PluginUpdateLogger } from "./update-source.js";
+import type {
+  PluginUpdateChannelFallback,
+  PluginUpdateLogger,
+  PluginUpdateOutcome,
+} from "./update-source.js";
 
-export async function hasRunnableInstalledNpmPayload(params: {
+async function hasRunnableInstalledNpmPayload(params: {
   installPath: string;
   manifest: PackageManifest | undefined;
 }): Promise<boolean> {
@@ -36,6 +41,90 @@ export async function hasRunnableInstalledNpmPayload(params: {
     manifest: params.manifest ?? {},
   });
   return validation.ok;
+}
+
+export async function hasRunnableInstalledPayloadForAdvisoryFailure(params: {
+  code?: string;
+  currentVersion?: string;
+  disableOnFailure?: boolean;
+  dryRun?: boolean;
+  installPath: string;
+  manifest: PackageManifest | undefined;
+}): Promise<boolean> {
+  if (!params.disableOnFailure || params.dryRun) {
+    return false;
+  }
+  if (
+    params.code === PLUGIN_INSTALL_ERROR_CODE.NPM_METADATA_FAILURE &&
+    params.currentVersion === undefined
+  ) {
+    return false;
+  }
+  if (
+    params.code !== PLUGIN_INSTALL_ERROR_CODE.NPM_METADATA_FAILURE &&
+    params.code !== PLUGIN_INSTALL_ERROR_CODE.INSTALL_POLICY_ACKNOWLEDGEMENT_REQUIRED
+  ) {
+    return false;
+  }
+  try {
+    return await hasRunnableInstalledNpmPayload({
+      installPath: params.installPath,
+      manifest: params.manifest,
+    });
+  } catch {
+    return false;
+  }
+}
+
+export type PluginUpdateFailureOptions = {
+  channelFallback?: PluginUpdateChannelFallback;
+  code?: string;
+  installPolicyWarning?: InstallPolicyWarning;
+  installedPayloadRunnable?: boolean;
+};
+
+export function resolvePluginUpdateFailure(
+  params: {
+    config: OpenClawConfig;
+    pluginId: string;
+    message: string;
+    disableOnFailure?: boolean;
+    dryRun?: boolean;
+  } & PluginUpdateFailureOptions,
+): { config: OpenClawConfig; changed: boolean; outcome: PluginUpdateOutcome } {
+  const keepPluginEnabled =
+    params.code === PLUGIN_INSTALL_ERROR_CODE.INSTALL_POLICY_ACKNOWLEDGEMENT_REQUIRED ||
+    (params.code === PLUGIN_INSTALL_ERROR_CODE.NPM_METADATA_FAILURE &&
+      params.installedPayloadRunnable === true);
+  if (params.disableOnFailure && !params.dryRun && !keepPluginEnabled) {
+    const message =
+      `Disabled "${params.pluginId}" after plugin update failure; OpenClaw will continue without it. ` +
+      params.message;
+    return {
+      config: disablePluginAfterUpdateFailure(params.config, params.pluginId),
+      changed: true,
+      outcome: {
+        pluginId: params.pluginId,
+        status: "skipped",
+        message,
+        ...(params.channelFallback ? { channelFallback: params.channelFallback } : {}),
+      },
+    };
+  }
+  return {
+    config: params.config,
+    changed: false,
+    outcome: {
+      pluginId: params.pluginId,
+      status: "error",
+      message: params.message,
+      ...(params.code === PLUGIN_INSTALL_ERROR_CODE.INSTALL_POLICY_ACKNOWLEDGEMENT_REQUIRED
+        ? { code: params.code }
+        : {}),
+      ...(params.installPolicyWarning ? { installPolicyWarning: params.installPolicyWarning } : {}),
+      ...(params.channelFallback ? { channelFallback: params.channelFallback } : {}),
+    },
+  };
 }
 
 export function pathsEqual(
@@ -375,10 +464,7 @@ export function withoutPluginInstallRecord(cfg: OpenClawConfig, pluginId: string
   };
 }
 
-export function disablePluginAfterUpdateFailure(
-  config: OpenClawConfig,
-  pluginId: string,
-): OpenClawConfig {
+function disablePluginAfterUpdateFailure(config: OpenClawConfig, pluginId: string): OpenClawConfig {
   const disabled = setPluginEnabledInConfig(config, pluginId, false, {
     updateChannelConfig: false,
   });

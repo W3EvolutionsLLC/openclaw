@@ -349,6 +349,48 @@ describe("Claw root install provenance", () => {
 });
 
 describe("applyClawAddPlan", () => {
+  it("declines a planned install policy warning before any Claw state is written", async () => {
+    const { root, plan } = await makePlan();
+    const warning = {
+      reason: "Skill package needs operator review.",
+      acknowledgementId: `v1:${"a".repeat(43)}`,
+    };
+    plan.actions.push({
+      kind: "package",
+      id: "skill:review-me",
+      action: "install",
+      target: "clawhub:review-me@1.0.0",
+      digest: `sha256:${"b".repeat(64)}`,
+      details: {
+        kind: "skill",
+        source: "clawhub",
+        ref: "review-me",
+        version: "1.0.0",
+        integrity: `sha256:${"b".repeat(64)}`,
+        ownerAction: "install",
+        installPolicyWarning: warning,
+      },
+      blocked: false,
+    });
+    let warningCalls = 0;
+
+    await expect(
+      applyClawAddPlan(plan, {
+        consentPlanIntegrity: plan.planIntegrity,
+        env: stateEnv(root),
+        onInstallPolicyWarning: async (observed) => {
+          warningCalls += 1;
+          expect(observed).toEqual(warning);
+          return false;
+        },
+      }),
+    ).rejects.toMatchObject({ code: "install_policy_acknowledgement_required" });
+
+    expect(warningCalls).toBe(1);
+    expect(readInstallRow(plan.agent.finalId, root)).toBeUndefined();
+    await expect(access(plan.agent.workspace)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("appends one agent, preserves defaults and existing agents, and creates a new workspace", async () => {
     const { root, plan } = await makePlan(
       {

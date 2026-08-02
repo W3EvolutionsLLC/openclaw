@@ -1,9 +1,7 @@
-import { randomUUID } from "node:crypto";
 import { constants as fsConstants, type Dirent } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import type { NpmSpecResolution } from "../infra/install-source-utils.js";
 import {
   type ManagedNpmRootPeerDependencySnapshot,
   readManagedNpmRootPeerDependencySnapshot,
@@ -11,20 +9,19 @@ import {
   repairManagedNpmRootOpenClawPeer,
   restoreManagedNpmRootPeerDependencySnapshot,
 } from "../infra/npm-managed-root.js";
-import { parseRegistryNpmSpec, validateRegistryNpmSpec } from "../infra/npm-registry-spec.js";
-import { isNotFoundPathError } from "../infra/path-guards.js";
 import { createSafeNpmInstallEnv } from "../infra/safe-package-install.js";
 import { runCommandWithTimeout, type SpawnResult } from "../process/exec.js";
-import {
-  resolvePluginNpmGenerationProjectDir,
-  resolvePluginNpmGenerationProjectDirPrefix,
-  resolvePluginNpmProjectDir,
-} from "./install-paths.js";
-import { loadPluginInstallRuntime } from "./install-shared.js";
+import { resolveManagedNpmRootPackageDir } from "./install-managed-npm-planning.js";
 import type { PluginInstallLogger } from "./install-types.js";
-import { hasRetainedManagedNpmInstallMarker } from "./managed-npm-retention.js";
-import type { OpenClawPackageManifest } from "./manifest.js";
 import { relinkOpenClawPeerDependenciesInManagedNpmRoot } from "./plugin-peer-link.js";
+
+export {
+  resolveManagedNpmGenerationUseForInstall,
+  resolveManagedNpmInstallRoot,
+  resolveManagedNpmRootForInstall,
+  resolveRequiredPlatformPackageNames,
+} from "./install-managed-npm-planning.js";
+export { resolveManagedNpmRootPackageDir };
 
 const rollbackSnapshotCopyMode = fsConstants.COPYFILE_FICLONE;
 const MANAGED_NPM_PROJECT_QUARANTINE_DIR = "_openclaw-quarantined-npm-projects";
@@ -71,7 +68,7 @@ export async function rollbackManagedNpmPluginInstall(params: {
   logger: PluginInstallLogger;
   peerDependencySnapshot?: ManagedNpmRootPeerDependencySnapshot;
   snapshot?: ManagedNpmPluginInstallRollbackSnapshot;
-}): Promise<void> {
+}): Promise<ManagedNpmPluginInstallRollbackResult> {
   if (params.snapshot) {
     try {
       await restoreManagedNpmPluginInstallRollbackSnapshot({
@@ -82,16 +79,48 @@ export async function rollbackManagedNpmPluginInstall(params: {
         npmRoot: params.npmRoot,
         logger: params.logger,
       });
+      if (!params.snapshot.rootExisted) {
+        await removeEmptyDirectoryIfPresent(params.npmRoot);
+      }
+      return { ok: true };
     } catch (error) {
-      params.logger.warn?.(
-        `Failed to restore managed npm plugin root after installing ${params.packageName}: ${String(error)}`,
-      );
+      const restoreError = `Failed to restore managed npm plugin root after installing ${params.packageName}: ${String(error)}`;
+      params.logger.warn?.(restoreError);
+      try {
+        const quarantine = await quarantineManagedNpmProjectRebuildArtifacts({
+          npmRoot: params.npmRoot,
+        });
+        const quarantineMessage =
+          `Quarantined ${formatManagedNpmProjectQuarantineArtifacts(quarantine.movedArtifactNames)} ` +
+          `at ${quarantine.quarantineDir} after rollback failed.`;
+        params.logger.warn?.(quarantineMessage);
+        return { ok: false, error: `${restoreError} ${quarantineMessage}` };
+      } catch (quarantineError) {
+        try {
+          await fs.rm(params.targetDir, { recursive: true, force: true });
+          const removalMessage =
+            `Quarantine also failed (${String(quarantineError)}); removed the candidate plugin directory ` +
+            `${params.targetDir} so it cannot activate.`;
+          params.logger.warn?.(removalMessage);
+          return { ok: false, error: `${restoreError} ${removalMessage}` };
+        } catch (removalError) {
+          const containmentError =
+            `Quarantine failed (${String(quarantineError)}) and the candidate plugin directory could not be removed ` +
+            `(${String(removalError)}).`;
+          params.logger.warn?.(containmentError);
+          return { ok: false, error: `${restoreError} ${containmentError}` };
+        }
+      }
     }
-    return;
   }
 
+  const rollbackErrors: string[] = [];
+  const reportRollbackFailure = (message: string) => {
+    rollbackErrors.push(message);
+    params.logger.warn?.(message);
+  };
   try {
-    await runCommandWithTimeout(
+    const uninstallResult = await runCommandWithTimeout(
       [
         "npm",
         "uninstall",
@@ -113,15 +142,20 @@ export async function rollbackManagedNpmPluginInstall(params: {
         }),
       },
     );
+    if (uninstallResult.code !== 0) {
+      reportRollbackFailure(
+        `npm uninstall rollback for ${params.packageName} exited ${uninstallResult.code}: ${uninstallResult.stderr.trim() || uninstallResult.stdout.trim()}`,
+      );
+    }
   } catch (error) {
-    params.logger.warn?.(
+    reportRollbackFailure(
       `Failed to run npm uninstall rollback for ${params.packageName}: ${String(error)}`,
     );
   }
   try {
     await fs.rm(params.targetDir, { recursive: true, force: true });
   } catch (error) {
-    params.logger.warn?.(
+    reportRollbackFailure(
       `Failed to remove failed plugin install directory ${params.targetDir}: ${String(error)}`,
     );
   }
@@ -131,7 +165,7 @@ export async function rollbackManagedNpmPluginInstall(params: {
       packageName: params.packageName,
     });
   } catch (error) {
-    params.logger.warn?.(
+    reportRollbackFailure(
       `Failed to remove managed npm dependency ${params.packageName}: ${String(error)}`,
     );
   }
@@ -175,7 +209,7 @@ export async function rollbackManagedNpmPluginInstall(params: {
         },
       );
       if (cleanupResult.code !== 0) {
-        params.logger.warn?.(
+        reportRollbackFailure(
           `npm install cleanup after rollback for ${params.packageName} exited ${cleanupResult.code}: ${cleanupResult.stderr.trim() || cleanupResult.stdout.trim()}`,
         );
         await Promise.all(
@@ -186,7 +220,7 @@ export async function rollbackManagedNpmPluginInstall(params: {
                 force: true,
               });
             } catch (error) {
-              params.logger.warn?.(
+              reportRollbackFailure(
                 `Failed to remove rolled-back managed peer dependency ${packageName}: ${String(error)}`,
               );
             }
@@ -194,7 +228,7 @@ export async function rollbackManagedNpmPluginInstall(params: {
         );
       }
     } catch (error) {
-      params.logger.warn?.(
+      reportRollbackFailure(
         `Failed to restore managed npm peer dependencies after rollback for ${params.packageName}: ${String(error)}`,
       );
     }
@@ -207,7 +241,7 @@ export async function rollbackManagedNpmPluginInstall(params: {
         logger: params.logger,
       });
     } catch (error) {
-      params.logger.warn?.(
+      reportRollbackFailure(
         `Failed to repair managed npm openclaw peer after rollback: ${String(error)}`,
       );
     }
@@ -218,16 +252,20 @@ export async function rollbackManagedNpmPluginInstall(params: {
       logger: params.logger,
     });
   } catch (error) {
-    params.logger.warn?.(
+    reportRollbackFailure(
       `Failed to repair managed npm peer links after rollback for ${params.packageName}: ${String(error)}`,
     );
   }
+  return rollbackErrors.length > 0 ? { ok: false, error: rollbackErrors.join(" ") } : { ok: true };
 }
+
+type ManagedNpmPluginInstallRollbackResult = { ok: true } | { ok: false; error: string };
 
 export type ManagedNpmPluginInstallRollbackSnapshot = {
   packageJson?: string;
   packageLockJson?: string;
   nodeModulesBackupDir?: string;
+  rootExisted: boolean;
   tempDir: string;
 };
 
@@ -345,6 +383,15 @@ async function writeOrRemoveRollbackFile(filePath: string, contents: string | un
 export async function createManagedNpmPluginInstallRollbackSnapshot(params: {
   npmRoot: string;
 }): Promise<ManagedNpmPluginInstallRollbackSnapshot> {
+  let rootExisted = true;
+  try {
+    await fs.stat(params.npmRoot);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw error;
+    }
+    rootExisted = false;
+  }
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-npm-plugin-rollback-"));
   let nodeModulesBackupDir: string | undefined;
   const nodeModulesDir = path.join(params.npmRoot, "node_modules");
@@ -376,6 +423,7 @@ export async function createManagedNpmPluginInstallRollbackSnapshot(params: {
         path.join(params.npmRoot, "package-lock.json"),
       ),
       ...(nodeModulesBackupDir ? { nodeModulesBackupDir } : {}),
+      rootExisted,
       tempDir,
     };
   } catch (error) {
@@ -550,182 +598,6 @@ export async function listManagedNpmRootPackageNames(npmRoot: string): Promise<S
     }
   }
   return packageNames;
-}
-
-export function resolveManagedNpmRootPackageDir(npmRoot: string, packageName: string): string {
-  return path.join(npmRoot, "node_modules", ...packageName.split("/"));
-}
-
-function resolveManagedNpmRootGenerationKey(params: {
-  packageName: string;
-  npmResolution: NpmSpecResolution;
-}): string {
-  return [
-    params.npmResolution.name ?? params.packageName,
-    params.npmResolution.version ?? "",
-    params.npmResolution.resolvedSpec ?? "",
-    params.npmResolution.integrity ?? "",
-    params.npmResolution.shasum ?? "",
-  ].join("\n");
-}
-
-export function resolveManagedNpmRootForInstall(params: {
-  npmBaseDir: string;
-  packageName: string;
-  npmResolution: NpmSpecResolution;
-  useGeneration: boolean;
-}): string {
-  if (!params.useGeneration) {
-    return resolvePluginNpmProjectDir({
-      npmDir: params.npmBaseDir,
-      packageName: params.packageName,
-    });
-  }
-  return resolvePluginNpmGenerationProjectDir({
-    npmDir: params.npmBaseDir,
-    packageName: params.packageName,
-    generationKey: resolveManagedNpmRootGenerationKey({
-      packageName: params.packageName,
-      npmResolution: params.npmResolution,
-    }),
-  });
-}
-
-export function resolveManagedNpmInstallRoot(params: {
-  npmBaseDir: string;
-  packageName: string;
-  npmResolution: NpmSpecResolution;
-  useGeneration: boolean;
-}): string {
-  const generationKey = resolveManagedNpmRootGenerationKey({
-    packageName: params.packageName,
-    npmResolution: params.npmResolution,
-  });
-  const npmRoot = resolveManagedNpmRootForInstall(params);
-  const installRoot = resolveManagedNpmRootPackageDir(npmRoot, params.packageName);
-  if (!hasRetainedManagedNpmInstallMarker(installRoot)) {
-    return npmRoot;
-  }
-  // Never mutate a retained tree: an older process may still hold lazy imports
-  // rooted there. A fresh activation root keeps that module graph importable.
-  return resolvePluginNpmGenerationProjectDir({
-    npmDir: params.npmBaseDir,
-    packageName: params.packageName,
-    generationKey: `${generationKey}\nactivation\n${randomUUID()}`,
-  });
-}
-
-async function listManagedNpmPackageDirsForPackage(params: {
-  runtime: Awaited<ReturnType<typeof loadPluginInstallRuntime>>;
-  npmBaseDir: string;
-  packageName: string;
-}): Promise<string[]> {
-  const packageDirs: string[] = [];
-  const legacyProjectRoot = resolvePluginNpmProjectDir({
-    npmDir: params.npmBaseDir,
-    packageName: params.packageName,
-  });
-  const legacyPackageDir = resolveManagedNpmRootPackageDir(legacyProjectRoot, params.packageName);
-  if (await params.runtime.fileExists(legacyPackageDir)) {
-    packageDirs.push(legacyPackageDir);
-  }
-  const projectsDir = path.dirname(legacyProjectRoot);
-  const generationPrefix = resolvePluginNpmGenerationProjectDirPrefix(params.packageName);
-  let entries: Dirent[];
-  try {
-    entries = await fs.readdir(projectsDir, { withFileTypes: true });
-  } catch (error) {
-    if (isNotFoundPathError(error)) {
-      return packageDirs;
-    }
-    throw error;
-  }
-  for (const entry of entries) {
-    if (!entry.isDirectory() || !entry.name.startsWith(generationPrefix)) {
-      continue;
-    }
-    const packageDir = resolveManagedNpmRootPackageDir(
-      path.join(projectsDir, entry.name),
-      params.packageName,
-    );
-    if (await params.runtime.fileExists(packageDir)) {
-      packageDirs.push(packageDir);
-    }
-  }
-  return packageDirs;
-}
-
-export async function resolveManagedNpmGenerationUseForInstall(params: {
-  runtime: Awaited<ReturnType<typeof loadPluginInstallRuntime>>;
-  npmBaseDir: string;
-  packageName: string;
-  requestedMode: "install" | "update";
-  npmResolution?: NpmSpecResolution;
-}): Promise<"none" | "update" | "retained-install"> {
-  const packageDirs = await listManagedNpmPackageDirsForPackage({
-    runtime: params.runtime,
-    npmBaseDir: params.npmBaseDir,
-    packageName: params.packageName,
-  });
-  const hasNonRetainedPackageDir = packageDirs.some(
-    (packageDir) => !hasRetainedManagedNpmInstallMarker(packageDir),
-  );
-  if (packageDirs.length > 0 && !hasNonRetainedPackageDir) {
-    return "retained-install";
-  }
-  const generationUse =
-    params.requestedMode === "update" && hasNonRetainedPackageDir ? "update" : "none";
-  if (params.npmResolution) {
-    const candidateRoot = resolveManagedNpmRootForInstall({
-      npmBaseDir: params.npmBaseDir,
-      packageName: params.packageName,
-      npmResolution: params.npmResolution,
-      useGeneration: generationUse !== "none",
-    });
-    const candidatePackageDir = resolveManagedNpmRootPackageDir(candidateRoot, params.packageName);
-    if (hasRetainedManagedNpmInstallMarker(candidatePackageDir)) {
-      return "retained-install";
-    }
-  }
-  if (params.requestedMode === "update") {
-    return hasNonRetainedPackageDir ? "update" : "none";
-  }
-  return "none";
-}
-
-export function resolveRequiredPlatformPackageNames(
-  packageMetadata?: OpenClawPackageManifest,
-): { ok: true; packageNames: string[] } | { ok: false; error: string } {
-  const raw = packageMetadata?.install?.requiredPlatformPackages as unknown;
-  if (raw === undefined) {
-    return { ok: true, packageNames: [] };
-  }
-  if (!Array.isArray(raw)) {
-    return {
-      ok: false,
-      error: "package.json openclaw.install.requiredPlatformPackages must be an array",
-    };
-  }
-  const packageNames = new Set<string>();
-  for (const value of raw) {
-    if (typeof value !== "string") {
-      return {
-        ok: false,
-        error:
-          "package.json openclaw.install.requiredPlatformPackages must contain only npm package names",
-      };
-    }
-    const specError = validateRegistryNpmSpec(value);
-    const parsed = parseRegistryNpmSpec(value);
-    if (specError || !parsed || parsed.selectorKind !== "none") {
-      return {
-        ok: false,
-        error: `package.json openclaw.install.requiredPlatformPackages contains invalid package name: ${value}`,
-      };
-    }
-    packageNames.add(parsed.name);
-  }
-  return { ok: true, packageNames: [...packageNames] };
 }
 
 export async function listNewManagedNpmRootPackageDirs(params: {

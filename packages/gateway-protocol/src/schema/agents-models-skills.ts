@@ -1,6 +1,7 @@
 // Gateway Protocol schema module defines protocol validation shapes.
 import type { Static } from "typebox";
 import { Type } from "typebox";
+import { INSTALL_POLICY_ACKNOWLEDGEMENT_TOKEN_MAX_CHARS } from "../install-policy-warning-details.js";
 import { closedObject } from "./closed-object.js";
 import { NonEmptyString } from "./primitives.js";
 
@@ -351,6 +352,9 @@ export const SkillsInstallParamsSchema = Type.Union([
       }),
     ),
     timeoutMs: Type.Optional(Type.Integer({ minimum: 1000 })),
+    acknowledgeInstallPolicyWarning: Type.Optional(
+      Type.String({ minLength: 1, maxLength: INSTALL_POLICY_ACKNOWLEDGEMENT_TOKEN_MAX_CHARS }),
+    ),
   }),
   closedObject({
     agentId: Type.Optional(NonEmptyString),
@@ -359,6 +363,9 @@ export const SkillsInstallParamsSchema = Type.Union([
     version: Type.Optional(NonEmptyString),
     force: Type.Optional(Type.Boolean()),
     acknowledgeClawHubRisk: Type.Optional(Type.Boolean()),
+    acknowledgeInstallPolicyWarning: Type.Optional(
+      Type.String({ minLength: 1, maxLength: INSTALL_POLICY_ACKNOWLEDGEMENT_TOKEN_MAX_CHARS }),
+    ),
     timeoutMs: Type.Optional(Type.Integer({ minimum: 1000 })),
   }),
   closedObject({
@@ -369,6 +376,9 @@ export const SkillsInstallParamsSchema = Type.Union([
     force: Type.Optional(Type.Boolean()),
     sha256: Type.Optional(Sha256String),
     timeoutMs: Type.Optional(Type.Integer({ minimum: 1000 })),
+    acknowledgeInstallPolicyWarning: Type.Optional(
+      Type.String({ minLength: 1, maxLength: INSTALL_POLICY_ACKNOWLEDGEMENT_TOKEN_MAX_CHARS }),
+    ),
   }),
 ]);
 
@@ -386,6 +396,9 @@ export const SkillsUpdateParamsSchema = Type.Union([
     slug: Type.Optional(NonEmptyString),
     all: Type.Optional(Type.Boolean()),
     acknowledgeClawHubRisk: Type.Optional(Type.Boolean()),
+    acknowledgeInstallPolicyWarning: Type.Optional(
+      Type.String({ minLength: 1, maxLength: INSTALL_POLICY_ACKNOWLEDGEMENT_TOKEN_MAX_CHARS }),
+    ),
   }),
 ]);
 

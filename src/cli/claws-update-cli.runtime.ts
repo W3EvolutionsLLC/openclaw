@@ -1,6 +1,6 @@
 import { assertExperimentalClawsEnabled } from "../claws/experimental.js";
 import { readClawStatus } from "../claws/lifecycle-state.js";
-import { preflightClawPackage } from "../claws/packages.js";
+import { createConfiguredClawPackagePreflight } from "../claws/package-preflight.js";
 import { readClawManifestFile } from "../claws/reader.js";
 import { CLAW_OUTPUT_STABILITY } from "../claws/types.js";
 import {
@@ -15,6 +15,10 @@ import { openExistingOpenClawStateDatabaseReadOnly } from "../state/openclaw-sta
 import { logClawUpdatePlanSummary } from "./claws-cli-update-output.js";
 import type { ClawsUpdateOptions } from "./claws-cli.js";
 import { callGatewayFromCli } from "./gateway-rpc.js";
+import {
+  buildInstallPolicyAcknowledgementRequiredError,
+  resolveInstallPolicyAcknowledgementCliOptions,
+} from "./install-policy-acknowledgement.js";
 
 type DiagnosticLike = { level: string; code: string; path: string; message: string };
 
@@ -166,6 +170,7 @@ export async function runClawsUpdateCommand(
     return;
   }
 
+  const packagePreflight = createConfiguredClawPackagePreflight(config);
   const plan = await buildClawUpdatePlan({
     agentId: target,
     targetManifest: loaded.manifest,
@@ -174,7 +179,7 @@ export async function runClawsUpdateCommand(
     targetSource: loaded.source,
     config,
     sourceMcpServers: listedMcpServers.mcpServers,
-    packagePreflight: preflightClawPackage,
+    packagePreflight,
     diagnostics: loaded.diagnostics,
   });
   if (opts.dryRun || plan.blockers.length > 0 || plan.actions.some((action) => action.blocked)) {
@@ -194,7 +199,20 @@ export async function runClawsUpdateCommand(
     return;
   }
 
+  let installPolicyAcknowledgementGuidance: string | undefined;
   try {
+    const installPolicyAcknowledgementOptions = resolveInstallPolicyAcknowledgementCliOptions({
+      dangerouslyForceUnsafeInstall: opts.dangerouslyForceUnsafeInstall,
+      action: "update",
+      allowPrompt: !opts.json,
+      reportError: (message) => {
+        if (opts.json) {
+          installPolicyAcknowledgementGuidance = message;
+        } else {
+          runtime.error(message);
+        }
+      },
+    });
     const result = await applyClawUpdatePlan(
       plan,
       {
@@ -207,7 +225,9 @@ export async function runClawsUpdateCommand(
         config,
         sourceMcpServers: listedMcpServers.mcpServers,
         consentPlanIntegrity: opts.planIntegrity,
-        packagePreflight: preflightClawPackage,
+        packagePreflight,
+        ...installPolicyAcknowledgementOptions,
+        acknowledgeUnplannedInstallPolicyWarnings: opts.dangerouslyForceUnsafeInstall === true,
         cronGateway: {
           add: async (input) => await callGatewayFromCli("cron.add", {}, input),
           get: async (id) => await callGatewayFromCli("cron.get", {}, { id }),
@@ -225,12 +245,18 @@ export async function runClawsUpdateCommand(
   } catch (error) {
     const code = error instanceof ClawUpdateMutationError ? error.code : "update_failed";
     const message = error instanceof Error ? error.message : String(error);
+    const structuredError = installPolicyAcknowledgementGuidance
+      ? buildInstallPolicyAcknowledgementRequiredError(
+          message,
+          installPolicyAcknowledgementGuidance,
+        )
+      : { code, message };
     if (opts.json) {
       writeRuntimeJson(runtime, {
         schemaVersion: CLAW_UPDATE_RESULT_SCHEMA_VERSION,
         stability: CLAW_OUTPUT_STABILITY,
         status: code === "update_partial" ? "partial" : "failed",
-        error: { code, message },
+        error: structuredError,
       });
     } else {
       runtime.error(message);

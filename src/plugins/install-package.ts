@@ -41,6 +41,7 @@ function pickPackageInstallCommonParams(
   return {
     config: params.config,
     dangerouslyForceUnsafeInstall: params.dangerouslyForceUnsafeInstall,
+    onInstallPolicyWarning: params.onInstallPolicyWarning,
     trustedSourceLinkedOfficialInstall: params.trustedSourceLinkedOfficialInstall,
     extensionsDir: params.extensionsDir,
     npmDir: params.npmDir,
@@ -104,6 +105,7 @@ async function installBundleFromSourceDir(
   if (!manifestRes.ok) {
     return { ok: false, error: manifestRes.error };
   }
+  const hasBundleManifest = await runtime.fileExists(manifestRes.manifestPath);
 
   const pluginId = manifestRes.manifest.id;
   const pluginIdError = validatePluginId(pluginId);
@@ -127,10 +129,12 @@ async function installBundleFromSourceDir(
   const packageMetadata = packageManifestResult.manifest
     ? runtime.getPackageManifestMetadata(packageManifestResult.manifest)
     : undefined;
+  const compatibilityHostVersion = runtime.resolveCompatibilityHostVersion();
   const compatibilityError = validateOpenClawPackageInstallCompatibility({
     runtime,
     pluginId,
     packageMetadata,
+    currentHostVersion: compatibilityHostVersion,
   });
   if (compatibilityError) {
     return compatibilityError;
@@ -147,29 +151,70 @@ async function installBundleFromSourceDir(
   }
   params.onEffectiveMode?.(targetResult.target.effectiveMode);
 
-  const scanResult = await runInstallSourceScan({
-    subject: `Bundle "${pluginId}"`,
-    pluginId,
-    mode: targetResult.target.effectiveMode,
-    sourceFamily: sourceFamilyForInstallPolicyKind(params.installPolicyRequest?.kind, "archive"),
-    scan: async () =>
-      await runtime.scanBundleInstallSource({
-        dangerouslyForceUnsafeInstall: params.dangerouslyForceUnsafeInstall,
-        config: params.config,
-        sourceDir: params.sourceDir,
-        pluginId,
-        logger,
-        requestKind: params.installPolicyRequest?.kind,
-        requestedSpecifier: params.installPolicyRequest?.requestedSpecifier,
-        source: params.installPolicyRequest?.source,
-        mode: targetResult.target.effectiveMode,
-        version: manifestRes.manifest.version,
-      }),
-  });
-  if (scanResult) {
-    return scanResult;
-  }
-
+  const source = params.installPolicyRequest?.source;
+  const logicalSourcePath =
+    source && !source.network && (source.kind === "local-path" || source.kind === "workspace")
+      ? params.sourceDir
+      : undefined;
+  const scanBundle = async (sourceDir: string) =>
+    await runInstallSourceScan({
+      subject: `Bundle "${pluginId}"`,
+      pluginId,
+      mode: targetResult.target.effectiveMode,
+      sourceFamily: sourceFamilyForInstallPolicyKind(params.installPolicyRequest?.kind, "archive"),
+      scan: async () =>
+        await runtime.scanBundleInstallSource({
+          dangerouslyForceUnsafeInstall: params.dangerouslyForceUnsafeInstall,
+          config: params.config,
+          onInstallPolicyWarning: params.onInstallPolicyWarning,
+          sourceDir,
+          logicalSourcePath,
+          pluginId,
+          logger,
+          requestKind: params.installPolicyRequest?.kind,
+          requestedSpecifier: params.installPolicyRequest?.requestedSpecifier,
+          source,
+          mode: targetResult.target.effectiveMode,
+          version: manifestRes.manifest.version,
+        }),
+    });
+  const validateAndScanStagedBundle = async (sourceDir: string) => {
+    const stagedManifest = runtime.loadBundleManifest({
+      rootDir: sourceDir,
+      bundleFormat,
+      rejectHardlinks: true,
+    });
+    if (!stagedManifest.ok) {
+      return stagedManifest;
+    }
+    if (
+      hasBundleManifest &&
+      (stagedManifest.manifest.id !== pluginId ||
+        stagedManifest.manifest.version !== manifestRes.manifest.version)
+    ) {
+      return {
+        ok: false as const,
+        code: PLUGIN_INSTALL_ERROR_CODE.PLUGIN_ID_MISMATCH,
+        error: `bundle identity changed while staging: expected ${pluginId}@${manifestRes.manifest.version ?? "unknown"}, got ${stagedManifest.manifest.id}@${stagedManifest.manifest.version ?? "unknown"}`,
+      };
+    }
+    const stagedPackageManifest = await readOptionalPackageManifest({
+      runtime,
+      packageDir: sourceDir,
+    });
+    if (!stagedPackageManifest.ok) {
+      return stagedPackageManifest;
+    }
+    const stagedCompatibilityError = validateOpenClawPackageInstallCompatibility({
+      runtime,
+      pluginId,
+      currentHostVersion: compatibilityHostVersion,
+      packageMetadata: stagedPackageManifest.manifest
+        ? runtime.getPackageManifestMetadata(stagedPackageManifest.manifest)
+        : undefined,
+    });
+    return stagedCompatibilityError ?? (await scanBundle(sourceDir));
+  };
   return await installPluginDirectoryIntoExtensions({
     sourceDir: params.sourceDir,
     pluginId,
@@ -185,6 +230,7 @@ async function installBundleFromSourceDir(
     copyErrorPrefix: "failed to copy plugin bundle",
     hasDeps: false,
     depsLogMessage: "",
+    afterInstall: validateAndScanStagedBundle,
   });
 }
 
@@ -234,6 +280,7 @@ async function installPluginFromPackageDir(
     params,
     defaultLogger,
   );
+  const compatibilityHostVersion = runtime.resolveCompatibilityHostVersion();
   let preparedTarget: PreparedInstallTarget | undefined;
   const resolvePreparedTargetForPluginId = async (pluginId: string) => {
     if (!preparedTarget) {
@@ -262,9 +309,12 @@ async function installPluginFromPackageDir(
     dangerouslyForceUnsafeInstall: params.dangerouslyForceUnsafeInstall,
     trustedSourceLinkedOfficialInstall: params.trustedSourceLinkedOfficialInstall,
     config: params.config,
+    onInstallPolicyWarning: params.onInstallPolicyWarning,
     installPolicyRequest: params.installPolicyRequest,
     logger,
     mode,
+    scanInstallSource: false,
+    compatibilityHostVersion,
     resolveEffectiveMode: async (pluginId) =>
       (await resolvePreparedTargetForPluginId(pluginId)).effectiveMode,
   });
@@ -281,6 +331,14 @@ async function installPluginFromPackageDir(
     plugin.hasRuntimeDependencies &&
     !hasBundleManifest &&
     params.installPolicyRequest?.kind === "plugin-archive";
+  const policySource = params.installPolicyRequest?.source;
+  const logicalSourcePath =
+    policySource &&
+    !policySource.network &&
+    (policySource.kind === "local-path" || policySource.kind === "workspace")
+      ? params.packageDir
+      : undefined;
+  let stagedPeerDependencies = plugin.peerDependencies;
 
   return await installPluginDirectoryIntoExtensions({
     sourceDir: params.packageDir,
@@ -300,15 +358,49 @@ async function installPluginFromPackageDir(
     sourceHardlinks: shouldInstallRuntimeDeps ? "package-manager" : "reject",
     depsLogMessage: "Installing plugin dependencies…",
     nameEncoder: encodePluginInstallDirName,
+    afterCopy: async (installedDir) => {
+      const staged = await validatePackagePluginInstallSource({
+        runtime,
+        packageDir: installedDir,
+        expectedPluginId: plugin.pluginId,
+        requirePluginManifest: params.requirePluginManifest,
+        allowSourceTypeScriptEntries: params.allowSourceTypeScriptEntries,
+        dangerouslyForceUnsafeInstall: params.dangerouslyForceUnsafeInstall,
+        trustedSourceLinkedOfficialInstall: params.trustedSourceLinkedOfficialInstall,
+        config: params.config,
+        onInstallPolicyWarning: params.onInstallPolicyWarning,
+        installPolicyRequest: params.installPolicyRequest,
+        logicalSourcePath,
+        compatibilityHostVersion,
+        logger,
+        mode: effectiveMode,
+      });
+      if (!staged.ok) {
+        return staged;
+      }
+      if (
+        staged.plugin.manifestName !== plugin.manifestName ||
+        staged.plugin.version !== plugin.version ||
+        staged.plugin.extensions.join("\0") !== plugin.extensions.join("\0")
+      ) {
+        return {
+          ok: false,
+          error: `Plugin "${plugin.pluginId}" identity changed while staging the install.`,
+        };
+      }
+      stagedPeerDependencies = staged.plugin.peerDependencies;
+      return null;
+    },
     afterInstall: async (installedDir) => {
       return await scanAndLinkInstalledPackage({
         runtime,
         installedDir,
         pluginId: plugin.pluginId,
-        peerDependencies: plugin.peerDependencies,
+        peerDependencies: stagedPeerDependencies,
         dangerouslyForceUnsafeInstall: params.dangerouslyForceUnsafeInstall,
         trustedSourceLinkedOfficialInstall: params.trustedSourceLinkedOfficialInstall,
         config: params.config,
+        onInstallPolicyWarning: params.onInstallPolicyWarning,
         mode: effectiveMode,
         ...(params.installPolicyRequest?.kind
           ? { requestKind: params.installPolicyRequest.kind }
@@ -359,6 +451,7 @@ export async function installPluginFromArchive(
           mode,
           dryRun: params.dryRun,
           config: params.config,
+          onInstallPolicyWarning: params.onInstallPolicyWarning,
           expectedPluginId: params.expectedPluginId,
           trustedSourceLinkedOfficialInstall: params.trustedSourceLinkedOfficialInstall,
           requirePluginManifest: true,

@@ -29,11 +29,13 @@ import { sha256Hex } from "../../infra/crypto-digest.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import { pathExists } from "../../infra/fs-safe.js";
 import { withExtractedArchiveRoot } from "../../infra/install-flow.js";
+import type { InstallPolicyWarning } from "../../plugins/install-security-scan.js";
 import { markClawPackageIndependentlyOwned } from "../../state/claw-package-adoption.js";
 import {
   CLAWHUB_SKILL_ARCHIVE_ROOT_MARKERS,
   installExtractedSkillRoot,
   resolveWorkspaceSkillInstallDir,
+  type SkillArchiveInstallResult,
 } from "./archive-install.js";
 import {
   formatClawHubSkillRef,
@@ -66,6 +68,7 @@ export type ClawHubInstallParams = {
   force?: boolean;
   forceInstall?: boolean;
   acknowledgeClawHubRisk?: boolean;
+  onInstallPolicyWarning?: (warning: InstallPolicyWarning) => boolean | Promise<boolean>;
   onClawHubRisk?: (request: ClawHubRiskAcknowledgementRequest) => boolean | Promise<boolean>;
   logger?: Logger;
   config?: OpenClawConfig;
@@ -81,7 +84,15 @@ export type InstallClawHubSkillResult =
       detail?: ClawHubSkillDetail;
       warning?: string;
     }
-  | { ok: false; error: string; code?: ClawHubTrustErrorCode; version?: string; warning?: string };
+  | {
+      ok: false;
+      error: string;
+      code?: ClawHubTrustErrorCode;
+      version?: string;
+      warning?: string;
+      installPolicyFailure?: true;
+      installPolicyWarning?: InstallPolicyWarning;
+    };
 
 export function normalizeExpectedArtifactIntegrity(expectedIntegrity: string): string;
 export function normalizeExpectedArtifactIntegrity(expectedIntegrity: undefined): undefined;
@@ -308,7 +319,16 @@ async function installArchiveResolution(params: {
   force?: boolean;
   logger?: Logger;
   config?: OpenClawConfig;
-}) {
+  onInstallPolicyWarning?: (warning: InstallPolicyWarning) => boolean | Promise<boolean>;
+}): Promise<
+  | SkillArchiveInstallResult
+  | {
+      ok: false;
+      error: string;
+      installPolicyFailure?: never;
+      installPolicyWarning?: never;
+    }
+> {
   return await withExtractedArchiveRoot({
     archivePath: params.archivePath,
     tempDirPrefix: "openclaw-skill-clawhub-",
@@ -333,6 +353,7 @@ async function installArchiveResolution(params: {
           },
           source: { kind: "clawhub", authority: params.authority, mutable: false, network: true },
           requestedSpecifier: `clawhub:${formatClawHubSkillRef(params)}@${params.version}`,
+          onInstallPolicyWarning: params.onInstallPolicyWarning,
         },
         rootMarkers: CLAWHUB_SKILL_ARCHIVE_ROOT_MARKERS,
       }),
@@ -354,7 +375,16 @@ async function installGitHubResolution(params: {
   force?: boolean;
   logger?: Logger;
   config?: OpenClawConfig;
-}) {
+  onInstallPolicyWarning?: (warning: InstallPolicyWarning) => boolean | Promise<boolean>;
+}): Promise<
+  | SkillArchiveInstallResult
+  | {
+      ok: false;
+      error: string;
+      installPolicyFailure?: never;
+      installPolicyWarning?: never;
+    }
+> {
   // Preserve the repository root for sourcePath selection. Root markers validate
   // the selected skill directory afterward, so nested paths are not applied twice.
   return await withExtractedArchiveRoot({
@@ -387,6 +417,7 @@ async function installGitHubResolution(params: {
           requestedSpecifier:
             params.requestedReference ??
             `clawhub:${formatClawHubSkillRef(params)}@${params.commit}`,
+          onInstallPolicyWarning: params.onInstallPolicyWarning,
         },
         rootMarkers: CLAWHUB_SKILL_ARCHIVE_ROOT_MARKERS,
       }),
@@ -578,6 +609,7 @@ export async function performClawHubSkillInstall(
               force: params.force,
               logger: params.logger,
               config: params.config,
+              onInstallPolicyWarning: params.onInstallPolicyWarning,
             })
           : await installArchiveResolution({
               workspaceDir: params.workspaceDir,
@@ -594,9 +626,17 @@ export async function performClawHubSkillInstall(
               force: params.force,
               logger: params.logger,
               config: params.config,
+              onInstallPolicyWarning: params.onInstallPolicyWarning,
             });
       if (!install.ok) {
-        return { ok: false, error: install.error };
+        return {
+          ok: false,
+          error: install.error,
+          ...(install.installPolicyFailure ? { installPolicyFailure: true as const } : {}),
+          ...(install.installPolicyWarning
+            ? { installPolicyWarning: install.installPolicyWarning }
+            : {}),
+        };
       }
 
       const installedAt = Date.now();

@@ -171,6 +171,38 @@ async function runCli(args: string[]) {
   }
 }
 
+async function runConsentedAdd(
+  manifestPath: string,
+  planIntegrity: string,
+  extraArgs: string[] = [],
+): Promise<void> {
+  await runCli([
+    "claws",
+    "add",
+    manifestPath,
+    "--yes",
+    "--plan-integrity",
+    planIntegrity,
+    "--json",
+    ...extraArgs,
+  ]);
+}
+
+async function runConsentedUpdate(root: string, extraArgs: string[] = []): Promise<void> {
+  await runCli([
+    "claws",
+    "update",
+    "demo-agent",
+    "--from",
+    root,
+    "--yes",
+    "--plan-integrity",
+    "sha256:update-plan",
+    "--json",
+    ...extraArgs,
+  ]);
+}
+
 describe("claws cli", () => {
   beforeEach(() => {
     vi.stubEnv("OPENCLAW_EXPERIMENTAL_CLAWS", "1");
@@ -528,28 +560,47 @@ describe("claws cli", () => {
     const plan = JSON.parse(mocks.logs[0] ?? "{}");
     mocks.logs.length = 0;
 
-    await runCli([
-      "claws",
-      "add",
-      manifestPath,
-      "--yes",
-      "--plan-integrity",
-      plan.planIntegrity,
+    await runConsentedAdd(manifestPath, plan.planIntegrity, [
       "--workspace",
       workspace,
-      "--json",
+      "--dangerously-force-unsafe-install",
     ]);
 
+    const addOptions = mocks.applyClawAddPlan.mock.calls[0]?.[1];
     expect(mocks.applyClawAddPlan).toHaveBeenCalledWith(
       expect.objectContaining({ planIntegrity: plan.planIntegrity }),
       expect.objectContaining({ consentPlanIntegrity: plan.planIntegrity }),
     );
+    expect(addOptions).toHaveProperty("onInstallPolicyWarning", expect.any(Function));
     expect(JSON.parse(mocks.logs[0] ?? "{}")).toMatchObject({
-      schemaVersion: "openclaw.clawAddResult.v1",
-      stability: "experimental",
       status: "complete",
       agent: { finalId: "demo-agent", workspace: expectedWorkspace },
     });
+  });
+
+  it("explains how JSON callers can acknowledge a Claw package warning", async () => {
+    const manifestPath = await writeManifest();
+    await runCli(["claws", "add", manifestPath, "--dry-run", "--json"]);
+    const plan = JSON.parse(mocks.logs[0] ?? "{}");
+    mocks.logs.length = 0;
+    mocks.applyClawAddPlan.mockImplementationOnce(async (_plan, options) => {
+      await options.onInstallPolicyWarning({ reason: "Manual review required." });
+      return {
+        status: "partial",
+        error: { code: "package_install_failed", message: "Manual review required." },
+      };
+    });
+
+    await runConsentedAdd(manifestPath, plan.planIntegrity);
+
+    expect(JSON.parse(mocks.logs[0] ?? "{}")).toMatchObject({
+      status: "partial",
+      error: {
+        code: "install_policy_acknowledgement_required",
+        message: expect.stringContaining("--dangerously-force-unsafe-install"),
+      },
+    });
+    expect(mocks.errors).toEqual([]);
   });
 
   it("resumes consented add with the matching in-flight workspace on disk", async () => {
@@ -568,17 +619,7 @@ describe("claws cli", () => {
     mocks.applyClawAddPlan.mockClear();
     mocks.loadConfig.mockReturnValue({});
 
-    await runCli([
-      "claws",
-      "add",
-      manifestPath,
-      "--yes",
-      "--plan-integrity",
-      plan.planIntegrity,
-      "--workspace",
-      workspace,
-      "--json",
-    ]);
+    await runConsentedAdd(manifestPath, plan.planIntegrity, ["--workspace", workspace]);
 
     expect(mocks.applyClawAddPlan).toHaveBeenCalledWith(
       expect.objectContaining({ planIntegrity: plan.planIntegrity, blockers: [] }),
@@ -602,17 +643,7 @@ describe("claws cli", () => {
     mocks.applyClawAddPlan.mockClear();
     mocks.loadConfig.mockReturnValue({ agents: { list: [plan.agent.config] } });
 
-    await runCli([
-      "claws",
-      "add",
-      manifestPath,
-      "--yes",
-      "--plan-integrity",
-      plan.planIntegrity,
-      "--workspace",
-      workspace,
-      "--json",
-    ]);
+    await runConsentedAdd(manifestPath, plan.planIntegrity, ["--workspace", workspace]);
 
     expect(mocks.applyClawAddPlan).toHaveBeenCalledWith(
       expect.objectContaining({ planIntegrity: plan.planIntegrity, blockers: [] }),
@@ -635,17 +666,7 @@ describe("claws cli", () => {
     mocks.runtime.exit.mockClear();
     mocks.applyClawAddPlan.mockClear();
 
-    await runCli([
-      "claws",
-      "add",
-      manifestPath,
-      "--yes",
-      "--plan-integrity",
-      plan.planIntegrity,
-      "--workspace",
-      workspace,
-      "--json",
-    ]);
+    await runConsentedAdd(manifestPath, plan.planIntegrity, ["--workspace", workspace]);
 
     expect(JSON.parse(mocks.logs[0] ?? "{}")).toMatchObject({
       blockers: [expect.objectContaining({ code: "workspace_collision" })],
@@ -668,17 +689,7 @@ describe("claws cli", () => {
     mocks.applyClawAddPlan.mockClear();
     mocks.loadConfig.mockReturnValue({ agents: { list: [{ id: "demo-agent", workspace }] } });
 
-    await runCli([
-      "claws",
-      "add",
-      manifestPath,
-      "--yes",
-      "--plan-integrity",
-      plan.planIntegrity,
-      "--workspace",
-      workspace,
-      "--json",
-    ]);
+    await runConsentedAdd(manifestPath, plan.planIntegrity, ["--workspace", workspace]);
 
     expect(JSON.parse(mocks.logs[0] ?? "{}")).toMatchObject({
       blockers: expect.arrayContaining([expect.objectContaining({ code: "agent_id_collision" })]),
@@ -701,17 +712,7 @@ describe("claws cli", () => {
     mocks.applyClawAddPlan.mockClear();
     mocks.loadConfig.mockReturnValue({ agents: { list: [{ id: "other-agent", workspace }] } });
 
-    await runCli([
-      "claws",
-      "add",
-      manifestPath,
-      "--yes",
-      "--plan-integrity",
-      plan.planIntegrity,
-      "--workspace",
-      workspace,
-      "--json",
-    ]);
+    await runConsentedAdd(manifestPath, plan.planIntegrity, ["--workspace", workspace]);
 
     expect(JSON.parse(mocks.logs[0] ?? "{}")).toMatchObject({
       blockers: [expect.objectContaining({ code: "workspace_collision" })],
@@ -960,17 +961,7 @@ describe("claws cli", () => {
   it("applies a supported update only after explicit consent", async () => {
     const { root } = await writePackage();
 
-    await runCli([
-      "claws",
-      "update",
-      "demo-agent",
-      "--from",
-      root,
-      "--yes",
-      "--plan-integrity",
-      "sha256:update-plan",
-      "--json",
-    ]);
+    await runConsentedUpdate(root, ["--dangerously-force-unsafe-install"]);
 
     expect(mocks.applyClawUpdatePlan).toHaveBeenCalledWith(
       expect.objectContaining({ agentId: "demo-agent" }),
@@ -984,6 +975,7 @@ describe("claws cli", () => {
         sourceMcpServers: {},
         consentPlanIntegrity: "sha256:update-plan",
         packagePreflight: expect.any(Function),
+        onInstallPolicyWarning: expect.any(Function),
         cronGateway: expect.objectContaining({
           add: expect.any(Function),
           get: expect.any(Function),
@@ -1004,17 +996,7 @@ describe("claws cli", () => {
       new ClawUpdateMutationError("update_partial", "artifact outcome requires reconciliation"),
     );
 
-    await runCli([
-      "claws",
-      "update",
-      "demo-agent",
-      "--from",
-      root,
-      "--yes",
-      "--plan-integrity",
-      "sha256:update-plan",
-      "--json",
-    ]);
+    await runConsentedUpdate(root);
 
     expect(JSON.parse(mocks.logs[0] ?? "{}")).toMatchObject({
       schemaVersion: "openclaw.clawUpdateResult.v1",
@@ -1022,6 +1004,25 @@ describe("claws cli", () => {
       error: { code: "update_partial" },
     });
     expect(mocks.runtime.exit).toHaveBeenCalledWith(1);
+  });
+
+  it("explains how JSON callers can acknowledge a Claw update warning", async () => {
+    const { root } = await writePackage();
+    mocks.applyClawUpdatePlan.mockImplementationOnce(async (_plan, _target, options) => {
+      await options.onInstallPolicyWarning({ reason: "Manual review required." });
+      throw new ClawUpdateMutationError("agent_update_failed", "Manual review required.");
+    });
+
+    await runConsentedUpdate(root);
+
+    expect(JSON.parse(mocks.logs[0] ?? "{}")).toMatchObject({
+      status: "failed",
+      error: {
+        code: "install_policy_acknowledgement_required",
+        message: expect.stringContaining("--dangerously-force-unsafe-install"),
+      },
+    });
+    expect(mocks.errors).toEqual([]);
   });
 
   it("applies remove only after explicit consent", async () => {

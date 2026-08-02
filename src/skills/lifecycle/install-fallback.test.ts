@@ -15,7 +15,8 @@ vi.mock("../../process/exec.js", () => ({
   runCommandWithTimeout: (...args: unknown[]) => runCommandWithTimeoutMock(...args),
 }));
 
-vi.mock("../../plugins/install-security-scan.js", () => ({
+vi.mock("../../plugins/install-security-scan.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../plugins/install-security-scan.js")>()),
   evaluateSkillInstallPolicy: vi.fn(async () => undefined),
 }));
 

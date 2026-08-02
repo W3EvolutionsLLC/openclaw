@@ -1439,6 +1439,7 @@ export async function installPluginFromClawHub(
       trustedSourceLinkedOfficialInstall:
         officialClawHubPackage || isTrustedSourceLinkedOfficialPackage(detail.package!),
       config: params.config,
+      onInstallPolicyWarning: params.onInstallPolicyWarning,
       logger: params.logger,
       mode: params.mode,
       extensionsDir: params.extensionsDir,

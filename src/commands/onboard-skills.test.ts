@@ -310,6 +310,38 @@ describe("setupSkills", () => {
     );
   });
 
+  it("shows and acknowledges install policy warnings for selected dependencies", async () => {
+    mockMissingBrewStatus([
+      createBundledSkill({
+        name: "node-helper",
+        description: "Node helper",
+        bins: ["node-helper"],
+        installLabel: "Install node-helper",
+        installKind: "node",
+      }),
+    ]);
+    mocks.installSkill.mockImplementationOnce(async (params) => {
+      const accepted = await params.onInstallPolicyWarning?.({
+        reason: "dependency recipe needs review",
+        acknowledgementId: "v1:dependency-warning",
+      });
+      return { ok: accepted === true, message: "Installed", stdout: "", stderr: "", code: 0 };
+    });
+    const { prompter, notes } = createPrompter({ multiselect: ["node-helper"] });
+    vi.mocked(prompter.confirm).mockResolvedValue(true);
+
+    await setupSkills({} as OpenClawConfig, "/tmp/ws", runtime, prompter);
+
+    expect(notes).toContainEqual({
+      title: "Install policy warning",
+      message: "dependency recipe needs review",
+    });
+    expect(prompter.confirm).toHaveBeenCalledWith({
+      message: "Continue after reviewing this install policy warning?",
+      initialValue: false,
+    });
+  });
+
   it("offers unavailable bundled dependencies and explains selected prerequisites afterward", async () => {
     await withPlatform("linux", async () => {
       mockMissingBrewStatus([

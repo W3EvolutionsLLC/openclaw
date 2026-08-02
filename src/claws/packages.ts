@@ -1,7 +1,14 @@
-import { runPluginInstallCommand } from "../cli/plugins-install-command.js";
+import {
+  PluginInstallCommandFailure,
+  runPluginInstallCommand,
+} from "../cli/plugins-install-command.js";
 import { runPluginUninstallCommand } from "../cli/plugins-uninstall-command.js";
+import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { normalizeClawHubSha256Integrity } from "../infra/clawhub.js";
 import { installPluginFromClawHub } from "../plugins/clawhub.js";
+import type { InstallPolicyWarning } from "../plugins/install-security-scan.js";
+import { accumulateInstallPolicyWarningsForSingleConsent } from "../plugins/install-security-scan.js";
+import { PLUGIN_INSTALL_ERROR_CODE } from "../plugins/install-types.js";
 import type { PluginManifestSetup } from "../plugins/manifest.js";
 import {
   preflightPluginInstall,
@@ -111,6 +118,15 @@ function installerRuntime(runtime: RuntimeEnv): RuntimeEnv {
   };
 }
 
+function isPreCommitPolicyFailure(error: unknown): boolean {
+  return (
+    error instanceof PluginInstallCommandFailure &&
+    (error.code === PLUGIN_INSTALL_ERROR_CODE.INSTALL_POLICY_ACKNOWLEDGEMENT_REQUIRED ||
+      error.code === PLUGIN_INSTALL_ERROR_CODE.SECURITY_SCAN_BLOCKED ||
+      error.code === PLUGIN_INSTALL_ERROR_CODE.SECURITY_SCAN_FAILED)
+  );
+}
+
 function ownerInstallIsNewerThanRefs(
   installedAt: string | undefined,
   refs: PersistedClawPackageRef[],
@@ -130,6 +146,7 @@ type ClawPackagePreflightResult =
       integrity: string;
       installId?: string;
       warning?: string;
+      installPolicyWarning?: InstallPolicyWarning;
       requirements?: ClawLocalPrerequisite[];
     }
   | {
@@ -140,6 +157,7 @@ type ClawPackagePreflightResult =
       integrity?: string;
       installId?: string;
       warning?: string;
+      installPolicyWarning?: InstallPolicyWarning;
     };
 
 function resolveClawPluginSetupRequirements(params: {
@@ -182,6 +200,7 @@ export async function preflightClawPackage(
   pkg: ClawPackage,
   workspaceDir: string,
   options: {
+    config?: OpenClawConfig;
     env?: NodeJS.ProcessEnv;
     deps?: Pick<PackageInstallerDeps, "preflightPlugin" | "probePlugin">;
   } = {},
@@ -192,6 +211,7 @@ export async function preflightClawPackage(
       slug: pkg.ref,
       version: pkg.version,
       acknowledgeClawHubRisk: true,
+      config: options.config,
     });
     return result.ok ? result : { ok: false, code: result.code, message: result.error };
   }
@@ -207,10 +227,21 @@ export async function preflightClawPackage(
       message: result.error,
     };
   }
+  let installPolicyWarning: InstallPolicyWarning | undefined;
   const probe = await (options.deps?.probePlugin ?? installPluginFromClawHub)({
     spec: `clawhub:${pkg.ref}@${pkg.version}`,
     dryRun: true,
     acknowledgeClawHubRisk: true,
+    config: options.config,
+    // Planning needs immutable identity/integrity metadata. It never commits;
+    // the apply install evaluates the policy again and owns user consent.
+    onInstallPolicyWarning: async (warning) => {
+      installPolicyWarning = accumulateInstallPolicyWarningsForSingleConsent(
+        installPolicyWarning,
+        warning,
+      );
+      return true;
+    },
   });
   if (!probe.ok) {
     return { ok: false, code: probe.code ?? "plugin_preflight_failed", message: probe.error };
@@ -233,6 +264,7 @@ export async function preflightClawPackage(
       integrity,
       installId: probe.pluginId,
       ...(probe.warning ? { warning: probe.warning } : {}),
+      ...(installPolicyWarning ? { installPolicyWarning } : {}),
       message: `Plugin ${pkg.ref}@${pkg.version} conflicts with installed version ${result.installedVersion}.`,
     };
   }
@@ -258,16 +290,19 @@ export async function preflightClawPackage(
     action: result.action,
     integrity,
     installId: probe.pluginId,
+    ...(installPolicyWarning ? { installPolicyWarning } : {}),
     ...(requirements.length > 0 ? { requirements } : {}),
     ...(probe.warning ? { warning: probe.warning } : {}),
   };
 }
 
 type InstallClawPackagesOptions = OpenClawStateDatabaseOptions & {
+  config?: OpenClawConfig;
   deps?: PackageInstallerDeps;
   runtime?: RuntimeEnv;
   nowMs?: number;
   onExternalMutation?: (pkg: ClawPackage) => void;
+  onInstallPolicyWarning?: (warning: InstallPolicyWarning) => boolean | Promise<boolean>;
 };
 
 export async function installClawPackages(
@@ -339,6 +374,7 @@ async function installClawPackagesUnlocked(
           version: pkg.version,
           expectedIntegrity: pkg.integrity,
           acknowledgeClawHubRisk: true,
+          config: options.config,
         });
         packageLease.assertCurrent();
         if (!preflight.ok) {
@@ -376,9 +412,6 @@ async function installClawPackagesUnlocked(
           independentOwner: false,
         });
         installedPackages.push(packageRef);
-        // The installer has no mutation receipt. Mark the boundary before calling it so a throw
-        // after an on-disk change is treated as uncertain instead of falsely reported as rolled back.
-        options.onExternalMutation?.(pkg);
         const installed = await installSkill({
           workspaceDir: plan.agent.workspace,
           slug: pkg.ref,
@@ -386,11 +419,19 @@ async function installClawPackagesUnlocked(
           expectedIntegrity: pkg.integrity,
           acknowledgeClawHubRisk: true,
           clawManaged: true,
+          config: options.config,
+          ...(options.onInstallPolicyWarning
+            ? { onInstallPolicyWarning: options.onInstallPolicyWarning }
+            : {}),
         });
         packageLease.assertCurrent();
         if (!installed.ok) {
+          if (!installed.installPolicyFailure) {
+            options.onExternalMutation?.(pkg);
+          }
           throw new Error(installed.error);
         }
+        options.onExternalMutation?.(pkg);
         packageRef = completePackageRef(packageRef, "complete", options);
         installedPackages[installedPackages.length - 1] = packageRef;
         continue;
@@ -400,6 +441,10 @@ async function installClawPackagesUnlocked(
         spec: `clawhub:${pkg.ref}@${pkg.version}`,
         dryRun: true,
         acknowledgeClawHubRisk: true,
+        config: options.config,
+        // This identity check is non-mutating. The real install below reruns
+        // policy with the interactive/force acknowledgement handler.
+        onInstallPolicyWarning: async () => true,
       });
       if (!probe.ok) {
         throw new Error(probe.error);
@@ -492,20 +537,29 @@ async function installClawPackagesUnlocked(
       });
       installedPackages.push(packageRef);
 
-      // The installer has no mutation receipt. Mark the boundary before calling it so a throw
-      // after an on-disk change is treated as uncertain instead of falsely reported as rolled back.
+      try {
+        await installPlugin({
+          raw: `clawhub:${pkg.ref}@${pkg.version}`,
+          opts: {
+            acknowledgeClawHubRisk: true,
+            expectedIntegrity: pkg.integrity,
+            expectedPluginId: pkg.installId,
+            config: options.config,
+            ...(options.onInstallPolicyWarning
+              ? { onInstallPolicyWarning: options.onInstallPolicyWarning }
+              : {}),
+          },
+          invalidateRuntimeCache: false,
+          clawManaged: true,
+          runtime: installerRuntime(runtime),
+        });
+      } catch (error) {
+        if (!isPreCommitPolicyFailure(error)) {
+          options.onExternalMutation?.(pkg);
+        }
+        throw error;
+      }
       options.onExternalMutation?.(pkg);
-      await installPlugin({
-        raw: `clawhub:${pkg.ref}@${pkg.version}`,
-        opts: {
-          acknowledgeClawHubRisk: true,
-          expectedIntegrity: pkg.integrity,
-          expectedPluginId: pkg.installId,
-        },
-        invalidateRuntimeCache: false,
-        clawManaged: true,
-        runtime: installerRuntime(runtime),
-      });
       installedPlugins.push({
         installId: pkg.installId,
         packageIndex: installedPackages.length - 1,

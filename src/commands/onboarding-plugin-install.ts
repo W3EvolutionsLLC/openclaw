@@ -9,6 +9,7 @@ import path from "node:path";
 import { expectDefined } from "@openclaw/normalization-core";
 import { uniqueStrings } from "@openclaw/normalization-core/string-normalization";
 import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
+import { formatInstallPolicyWarningDetails } from "../../packages/gateway-protocol/src/install-policy-warning-details.js";
 import { sanitizeTerminalText } from "../../packages/terminal-core/src/safe-text.js";
 import { resolveBundledInstallPlanForCatalogEntry } from "../cli/plugin-install-plan.js";
 import { assertConfigWriteAllowedInCurrentMode } from "../config/nix-mode-write-guard.js";
@@ -38,6 +39,10 @@ import {
 } from "../plugins/install-overrides.js";
 import { resolveDefaultPluginExtensionsDir } from "../plugins/install-paths.js";
 import {
+  scanBundleInstallSource,
+  type InstallPolicyWarning,
+} from "../plugins/install-security-scan.js";
+import {
   installPluginFromNpmSpec,
   installPluginFromNpmPackArchive,
   type InstallPluginResult,
@@ -52,10 +57,10 @@ import type { PluginPackageInstall } from "../plugins/manifest.js";
 import { clearPluginMetadataLifecycleCaches } from "../plugins/plugin-metadata-lifecycle.js";
 import { invalidatePluginRuntimeDiscoveryAfterConfigMutation } from "../plugins/registry-refresh.js";
 import type { RuntimeEnv } from "../runtime.js";
-import { withTimeout } from "../utils/with-timeout.js";
 import { VERSION } from "../version.js";
 import { t } from "../wizard/i18n/index.js";
 import type { WizardPrompter } from "../wizard/prompts.js";
+import { withPausableOnboardingInstallWatchdog } from "./onboarding-install-watchdog.js";
 
 type InstallChoice = "clawhub" | "npm" | "local" | "skip";
 type InstallPluginFromClawHubResult = Awaited<
@@ -634,7 +639,51 @@ async function installLocalOnboardingPlugin(params: {
   workspaceDir?: string;
   prompter: WizardPrompter;
   runtime: RuntimeEnv;
+  beforePersistentEffect?: () => Promise<void>;
 }): Promise<OnboardingPluginInstallResult> {
+  const bundled = pathsReferToSameDirectory(params.localPath, params.bundledLocalPath);
+  const scanResult = await scanBundleInstallSource({
+    config: params.cfg,
+    logger: {
+      warn: (message) => logInstallWarningWithSpacing(params.runtime, message),
+    },
+    pluginId: params.entry.pluginId,
+    sourceDir: params.localPath,
+    requestKind: "plugin-dir",
+    requestedSpecifier: params.entry.install.localPath ?? params.localPath,
+    mode: "install",
+    source: bundled
+      ? { kind: "bundled", authority: "openclaw", mutable: false, network: false }
+      : { kind: "local-path", authority: "user", mutable: true, network: false },
+    onInstallPolicyWarning: async (warning) =>
+      await promptOnboardingInstallPolicyWarning({
+        label: params.entry.label,
+        warning,
+        prompter: params.prompter,
+        runtime: params.runtime,
+      }),
+  });
+  if (scanResult) {
+    const error = scanResult.warning
+      ? formatInstallPolicyWarningDetails(scanResult.warning, sanitizeTerminalText)
+      : sanitizeTerminalText(scanResult.blocked.reason);
+    await params.prompter.note(
+      t("wizard.plugins.installFailed", {
+        spec: sanitizeTerminalText(params.localPath),
+        error: summarizeInstallError(error),
+      }),
+      t("wizard.plugins.installTitle"),
+    );
+    params.runtime.error?.(`Plugin install failed: ${summarizeInstallError(error)}`);
+    return {
+      cfg: params.cfg,
+      installed: false,
+      pluginId: params.entry.pluginId,
+      status: "failed",
+      error: formatInstallErrorDetail(error),
+    };
+  }
+  await params.beforePersistentEffect?.();
   const enableResult = await applyPluginEnablement({
     cfg: params.cfg,
     pluginId: params.entry.pluginId,
@@ -652,7 +701,7 @@ async function installLocalOnboardingPlugin(params: {
   }
   // Bundled sources already belong to the host and must not gain an install
   // record or a duplicate plugin load path.
-  const cfg = pathsReferToSameDirectory(params.localPath, params.bundledLocalPath)
+  const cfg = bundled
     ? enableResult.config
     : await recordLocalPluginInstall({
         cfg: addPluginLoadPath(enableResult.config, params.localPath),
@@ -814,15 +863,34 @@ function isClawHubTrustWarning(message: string): boolean {
   );
 }
 
+async function promptOnboardingInstallPolicyWarning(params: {
+  label: string;
+  warning: InstallPolicyWarning;
+  prompter: WizardPrompter;
+  runtime: RuntimeEnv;
+}): Promise<boolean> {
+  logInstallWarningWithLineBreaks(
+    params.runtime,
+    formatInstallPolicyWarningDetails(params.warning, sanitizeTerminalText),
+  );
+  return await params.prompter.confirm({
+    message: `Install "${sanitizeTerminalText(params.label)}" after reviewing the install policy warning above?`,
+    initialValue: false,
+  });
+}
+
 async function runOnboardingPluginInstallWithProgress(params: {
   cfg: OpenClawConfig;
   entry: OnboardingPluginInstallEntry;
   prompter: WizardPrompter;
   runtime: RuntimeEnv;
-  install: (logger: {
-    info: (message: string) => void;
-    warn: (message: string) => void;
-  }) => Promise<InstallPluginResult>;
+  install: (
+    logger: {
+      info: (message: string) => void;
+      warn: (message: string) => void;
+    },
+    onInstallPolicyWarning: (warning: InstallPolicyWarning) => Promise<boolean>,
+  ) => Promise<InstallPluginResult>;
   rethrowUnexpectedErrors?: boolean;
 }): Promise<
   | { status: "timed_out" }
@@ -844,16 +912,30 @@ async function runOnboardingPluginInstallWithProgress(params: {
   };
 
   try {
-    const result = await withTimeout(
-      params.install({
-        info: updateProgress,
-        warn: (message) => {
-          updateProgress(message);
-          logInstallWarningWithSpacing(params.runtime, message);
-        },
-      }),
-      ONBOARDING_PLUGIN_INSTALL_WATCHDOG_TIMEOUT_MS,
-    );
+    const result = await withPausableOnboardingInstallWatchdog({
+      timeoutMs: ONBOARDING_PLUGIN_INSTALL_WATCHDOG_TIMEOUT_MS,
+      operation: async (watchdog) =>
+        await params.install(
+          {
+            info: updateProgress,
+            warn: (message) => {
+              updateProgress(message);
+              logInstallWarningWithSpacing(params.runtime, message);
+            },
+          },
+          async (warning) =>
+            await watchdog.pauseWhile(async () => {
+              animated.stop();
+              progress.stop("Review install policy warning");
+              return await promptOnboardingInstallPolicyWarning({
+                label: params.entry.label,
+                warning,
+                prompter: params.prompter,
+                runtime: params.runtime,
+              });
+            }),
+        ),
+    });
     animated.stop();
     progress.stop(
       result.ok ? formatPluginInstalled(safeLabel) : formatPluginInstallFailed(safeLabel),
@@ -897,7 +979,7 @@ async function installPluginFromNpmSpecWithProgress(params: {
 > {
   return await runOnboardingPluginInstallWithProgress({
     ...params,
-    install: (logger) =>
+    install: (logger, onInstallPolicyWarning) =>
       installPluginFromNpmSpec({
         spec: params.npmSpec,
         mode: "update",
@@ -911,6 +993,7 @@ async function installPluginFromNpmSpecWithProgress(params: {
           : {}),
         extensionsDir: resolveDefaultPluginExtensionsDir(),
         logger,
+        onInstallPolicyWarning,
       }),
   });
 }
@@ -930,7 +1013,7 @@ async function installPluginFromNpmPackArchiveWithProgress(params: {
 > {
   return await runOnboardingPluginInstallWithProgress({
     ...params,
-    install: (logger) =>
+    install: (logger, onInstallPolicyWarning) =>
       installPluginFromNpmPackArchive({
         archivePath: params.archivePath,
         timeoutMs: ONBOARDING_PLUGIN_INSTALL_TIMEOUT_MS,
@@ -939,6 +1022,7 @@ async function installPluginFromNpmPackArchiveWithProgress(params: {
         expectedIntegrity: params.entry.install.expectedIntegrity,
         extensionsDir: resolveDefaultPluginExtensionsDir(),
         logger,
+        onInstallPolicyWarning,
       }),
     // Archive overrides retain their existing unexpected-error contract.
     rethrowUnexpectedErrors: true,
@@ -1091,49 +1175,62 @@ async function installPluginFromClawHubSpecWithProgress(params: {
 
   try {
     const { installPluginFromClawHub } = await import("../plugins/clawhub.js");
-    const result = await withTimeout(
-      installPluginFromClawHub({
-        spec: params.clawhubSpec,
-        timeoutMs: ONBOARDING_PLUGIN_INSTALL_TIMEOUT_MS,
-        config: params.cfg,
-        extensionsDir: resolveDefaultPluginExtensionsDir(),
-        expectedPluginId: params.entry.pluginId,
-        mode: "install",
-        logger: {
-          info: updateProgress,
-          warn: (message) => {
-            updateProgress(message);
-            if (isReviewRequiredClawHubTrustWarning(message)) {
-              return;
-            }
-            if (isClawHubTrustWarning(message)) {
-              renderTrustWarning(message);
-              return;
-            }
-            logInstallWarningWithSpacing(params.runtime, message);
+    const result = await withPausableOnboardingInstallWatchdog({
+      timeoutMs: ONBOARDING_PLUGIN_INSTALL_WATCHDOG_TIMEOUT_MS,
+      operation: async (watchdog) =>
+        await installPluginFromClawHub({
+          spec: params.clawhubSpec,
+          timeoutMs: ONBOARDING_PLUGIN_INSTALL_TIMEOUT_MS,
+          config: params.cfg,
+          extensionsDir: resolveDefaultPluginExtensionsDir(),
+          expectedPluginId: params.entry.pluginId,
+          mode: "install",
+          logger: {
+            info: updateProgress,
+            warn: (message) => {
+              updateProgress(message);
+              if (isReviewRequiredClawHubTrustWarning(message)) {
+                return;
+              }
+              if (isClawHubTrustWarning(message)) {
+                renderTrustWarning(message);
+                return;
+              }
+              logInstallWarningWithSpacing(params.runtime, message);
+            },
           },
-        },
-        onClawHubRisk: async (request) => {
-          animated.stop();
-          progress.stop("Review ClawHub warning");
-          renderTrustWarning(request.warning);
-          const packageName = sanitizeTerminalText(request.packageName);
-          const releaseLabel = `${packageName}@${sanitizeTerminalText(request.version)}`;
-          if (request.acknowledgementKind === "type-package") {
-            const answer = await params.prompter.text({
-              message: `To install anyway, type the package name for "${releaseLabel}"`,
-              placeholder: packageName,
-            });
-            return answer.trim() === packageName;
-          }
-          return await params.prompter.confirm({
-            message: `Install ClawHub package "${releaseLabel}" after reviewing the warning above?`,
-            initialValue: false,
-          });
-        },
-      }),
-      ONBOARDING_PLUGIN_INSTALL_WATCHDOG_TIMEOUT_MS,
-    );
+          onClawHubRisk: async (request) =>
+            await watchdog.pauseWhile(async () => {
+              animated.stop();
+              progress.stop("Review ClawHub warning");
+              renderTrustWarning(request.warning);
+              const packageName = sanitizeTerminalText(request.packageName);
+              const releaseLabel = `${packageName}@${sanitizeTerminalText(request.version)}`;
+              if (request.acknowledgementKind === "type-package") {
+                const answer = await params.prompter.text({
+                  message: `To install anyway, type the package name for "${releaseLabel}"`,
+                  placeholder: packageName,
+                });
+                return answer.trim() === packageName;
+              }
+              return await params.prompter.confirm({
+                message: `Install ClawHub package "${releaseLabel}" after reviewing the warning above?`,
+                initialValue: false,
+              });
+            }),
+          onInstallPolicyWarning: async (warning) =>
+            await watchdog.pauseWhile(async () => {
+              animated.stop();
+              progress.stop("Review install policy warning");
+              return await promptOnboardingInstallPolicyWarning({
+                label: params.entry.label,
+                warning,
+                prompter: params.prompter,
+                runtime: params.runtime,
+              });
+            }),
+        }),
+    });
     animated.stop();
     const failureWarning = readInstallFailureWarning(result);
     if (failureWarning && !renderedTrustWarning) {
@@ -1272,6 +1369,7 @@ export async function ensureOnboardingPluginInstalled(params: {
       workspaceDir,
       prompter,
       runtime,
+      beforePersistentEffect: params.beforePersistentEffect,
     });
   }
 
@@ -1459,6 +1557,7 @@ export async function ensureOnboardingPluginInstalled(params: {
         workspaceDir,
         prompter,
         runtime,
+        beforePersistentEffect: params.beforePersistentEffect,
       });
     }
   }

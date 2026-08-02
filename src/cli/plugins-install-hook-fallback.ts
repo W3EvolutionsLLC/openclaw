@@ -11,7 +11,7 @@ import { resolveArchiveKind } from "../infra/archive.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import { findBundledPluginSource } from "../plugins/bundled-sources.js";
 import type { InstallSafetyOverrides } from "../plugins/install-security-scan.js";
-import { PLUGIN_INSTALL_ERROR_CODE } from "../plugins/install.js";
+import { PLUGIN_INSTALL_ERROR_CODE } from "../plugins/install-types.js";
 import { installManagedPluginSource } from "../plugins/management-service.js";
 import { defaultRuntime, type RuntimeEnv } from "../runtime.js";
 import { shortenHomePath } from "../utils.js";
@@ -34,6 +34,7 @@ export function resolveInstallSafetyOverrides(
   return {
     config: overrides.config,
     dangerouslyForceUnsafeInstall: overrides.dangerouslyForceUnsafeInstall,
+    onInstallPolicyWarning: overrides.onInstallPolicyWarning,
     trustedSourceLinkedOfficialInstall: overrides.trustedSourceLinkedOfficialInstall,
   };
 }
@@ -62,6 +63,8 @@ export function isTerminalPluginInstallFailure(code?: string): boolean {
   return (
     code === PLUGIN_INSTALL_ERROR_CODE.SECURITY_SCAN_BLOCKED ||
     code === PLUGIN_INSTALL_ERROR_CODE.SECURITY_SCAN_FAILED ||
+    code === PLUGIN_INSTALL_ERROR_CODE.INSTALL_ROLLBACK_FAILED ||
+    code === PLUGIN_INSTALL_ERROR_CODE.INSTALL_POLICY_ACKNOWLEDGEMENT_REQUIRED ||
     code === PLUGIN_INSTALL_ERROR_CODE.UNSUPPORTED_PLAIN_FILE_PLUGIN
   );
 }
@@ -160,6 +163,7 @@ async function tryInstallHookPackFromNpmSpec(params: {
   installMode: "install" | "update";
   spec: string;
   pin?: boolean;
+  safetyOverrides?: InstallSafetyOverrides;
   expectedIntegrity?: string;
   expectedPackageKind?: "hook-only";
   runtime?: RuntimeEnv;
@@ -168,6 +172,7 @@ async function tryInstallHookPackFromNpmSpec(params: {
     return { ok: false, error: params.snapshot.hookMutation.reason };
   }
   const result = await installHooksFromNpmSpec({
+    ...resolveInstallSafetyOverrides(params.safetyOverrides ?? {}),
     config: params.snapshot.config,
     spec: params.spec,
     mode: params.installMode,
@@ -241,6 +246,7 @@ export async function tryInstallPluginOrHookPackFromNpmSpec(params: {
         installMode: params.installMode,
         spec: params.spec,
         pin: params.pin,
+        safetyOverrides: params.safetyOverrides,
         expectedIntegrity: hookProbe.npmResolution?.integrity ?? params.expectedIntegrity,
         expectedPackageKind: "hook-only",
         runtime: params.runtime,
@@ -301,9 +307,12 @@ export async function tryInstallPluginOrHookPackFromNpmSpec(params: {
             source: "bundled",
             rawSpec: params.spec,
             bundledSource: bundledFallbackPlan.bundledSource,
+            mode: params.installMode,
             warning: bundledFallbackPlan.warning,
           },
           snapshot: params.snapshot,
+          safetyOverrides: params.safetyOverrides,
+          logger: createPluginInstallLogger(params.runtime),
           invalidateRuntimeCache: params.invalidateRuntimeCache,
           runtime: params.runtime,
         });
@@ -319,6 +328,7 @@ export async function tryInstallPluginOrHookPackFromNpmSpec(params: {
       installMode: params.installMode,
       spec: params.spec,
       pin: params.pin,
+      safetyOverrides: params.safetyOverrides,
       expectedIntegrity: params.expectedIntegrity,
       runtime: params.runtime,
     });

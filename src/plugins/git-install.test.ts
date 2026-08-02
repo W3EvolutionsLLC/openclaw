@@ -350,14 +350,24 @@ describe("installPluginFromGitSpec", () => {
 
   it("runs install policy preflight before npm installs git dependencies", async () => {
     runCommandWithTimeoutMock
-      .mockResolvedValueOnce({ code: 0, stdout: "", stderr: "" })
+      .mockImplementationOnce(async (argv: string[]) => {
+        const repoDir = expectDefined(argv.at(-1), "clone destination test invariant");
+        await fs.mkdir(path.join(repoDir, ".git"), { recursive: true });
+        await fs.writeFile(path.join(repoDir, ".git", "index"), "volatile clone metadata");
+        return { code: 0, stdout: "", stderr: "" };
+      })
       .mockResolvedValueOnce({ code: 0, stdout: "abc123\n", stderr: "" });
-    preflightPluginGitInstallPolicyMock.mockResolvedValueOnce({
-      blocked: {
-        reason: "blocked by install policy: git installs disabled",
-        code: "security_scan_blocked",
+    preflightPluginGitInstallPolicyMock.mockImplementationOnce(
+      async (params: { sourcePath: string }) => {
+        await expect(fs.access(path.join(params.sourcePath, ".git"))).rejects.toThrow();
+        return {
+          blocked: {
+            reason: "blocked by install policy: git installs disabled",
+            code: "security_scan_blocked",
+          },
+        };
       },
-    });
+    );
     const captured = captureSecurityEvents();
 
     let result: Awaited<ReturnType<typeof installPluginFromGitSpec>>;
@@ -403,6 +413,64 @@ describe("installPluginFromGitSpec", () => {
         mode: "install",
       },
     });
+  });
+
+  it("reruns a warned git preflight on acknowledgement and keeps a new block terminal", async () => {
+    runCommandWithTimeoutMock
+      .mockResolvedValueOnce({ code: 0, stdout: "", stderr: "" })
+      .mockResolvedValueOnce({ code: 0, stdout: "abc123\n", stderr: "" });
+    const warning = {
+      reason: "manual git review required",
+      findings: [
+        {
+          ruleId: "git-review",
+          severity: "warn" as const,
+          message: "Review the cloned repository.",
+        },
+      ],
+    };
+    preflightPluginGitInstallPolicyMock.mockResolvedValueOnce({ warning });
+
+    const first = await installPluginFromGitSpec({
+      spec: "git:github.com/acme/demo",
+      expectedPluginId: "demo",
+    });
+
+    expect(first).toMatchObject({
+      ok: false,
+      installPolicyWarning: warning,
+    });
+    expect(runCommandWithTimeoutMock).toHaveBeenCalledTimes(2);
+    expect(installPluginFromInstalledPackageDirMock).not.toHaveBeenCalled();
+
+    runCommandWithTimeoutMock.mockReset();
+    runCommandWithTimeoutMock
+      .mockResolvedValueOnce({ code: 0, stdout: "", stderr: "" })
+      .mockResolvedValueOnce({ code: 0, stdout: "abc123\n", stderr: "" });
+    preflightPluginGitInstallPolicyMock.mockImplementationOnce(
+      async (params: { onInstallPolicyWarning?: unknown }) => {
+        expect(params.onInstallPolicyWarning).toEqual(expect.any(Function));
+        return {
+          blocked: {
+            reason: "git source became blocked on re-evaluation",
+            code: "security_scan_blocked",
+          },
+        };
+      },
+    );
+
+    const second = await installPluginFromGitSpec({
+      spec: "git:github.com/acme/demo",
+      expectedPluginId: "demo",
+      onInstallPolicyWarning: async () => true,
+    });
+
+    expect(second).toMatchObject({
+      ok: false,
+      error: "git source became blocked on re-evaluation",
+    });
+    expect(preflightPluginGitInstallPolicyMock).toHaveBeenCalledTimes(2);
+    expect(installPluginFromInstalledPackageDirMock).not.toHaveBeenCalled();
   });
 
   it("emits git audit errors when install policy preflight fails", async () => {

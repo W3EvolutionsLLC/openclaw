@@ -546,6 +546,47 @@ describe("setupAppRecommendations", () => {
     expect(outcome.config.plugins?.entries?.["chat-plugin"]?.enabled).toBe(true);
   });
 
+  it("shows and acknowledges install policy warnings for recommended skills", async () => {
+    const prompter = createPrompter(["recommendation:1"]);
+    const installSkill = vi.fn(async (params) => {
+      const accepted = await params.onInstallPolicyWarning?.({
+        reason: "recommended skill needs review",
+        acknowledgementId: "v1:recommendation-warning",
+      });
+      return accepted
+        ? {
+            ok: true as const,
+            slug: "chat-skill",
+            version: "1.0.0",
+            targetDir: "/tmp/workspace/skills/chat-skill",
+          }
+        : { ok: false as const, error: "warning declined" };
+    });
+
+    await setupAppRecommendations({
+      config: {},
+      prompter,
+      runtime,
+      workspaceDir: "/tmp/workspace",
+      modelRouteVerified: true,
+      platform: "darwin",
+      deps: {
+        ...storeDeps(),
+        recommend: async () => recommendationResult(),
+        installSkill,
+      },
+    });
+
+    expect(prompter.note).toHaveBeenCalledWith(
+      "recommended skill needs review",
+      "Install policy warning",
+    );
+    expect(prompter.confirm).toHaveBeenCalledWith({
+      message: "Continue after reviewing this install policy warning?",
+      initialValue: false,
+    });
+  });
+
   it("reoffers a failed install and consumes it after a successful retry", async () => {
     const storeState: { current: OnboardingRecommendationsRecord | null } = { current: null };
     let now = 0;

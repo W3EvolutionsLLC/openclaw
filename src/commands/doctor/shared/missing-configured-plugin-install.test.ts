@@ -666,6 +666,47 @@ describe("repairMissingConfiguredPluginInstalls", () => {
     expect(result.warnings).toStrictEqual([]);
   });
 
+  it("explains how to acknowledge a policy warning that blocks automatic repair", async () => {
+    mocks.installPluginFromNpmSpec.mockResolvedValueOnce({
+      ok: false,
+      code: "install_policy_acknowledgement_required",
+      error: "Manual review required.",
+      installPolicyWarning: {
+        reason: "Manual review required.",
+        findings: [
+          {
+            ruleId: "dangerous-exec",
+            severity: "warn",
+            message: "The plugin launches a child process.",
+            file: "dist/index.js",
+            line: 7,
+            evidence: "spawn(command)",
+          },
+        ],
+      },
+    });
+    mocks.listChannelPluginCatalogEntries.mockReturnValue([
+      {
+        id: "matrix",
+        pluginId: "matrix",
+        meta: { label: "Matrix" },
+        install: { npmSpec: "@openclaw/plugin-matrix@1.2.3" },
+        trustedSourceLinkedOfficialInstall: true,
+      },
+    ]);
+
+    const result = await repairConfiguredPlugins({
+      channels: { matrix: { enabled: true, homeserver: "https://matrix.example.org" } },
+    });
+
+    expect(result.changes).toEqual([]);
+    expect(result.warnings).toEqual([
+      expect.stringMatching(
+        /Manual review required\.[\s\S]*dangerous-exec[\s\S]*dist\/index\.js:7[\s\S]*spawn\(command\)[\s\S]*openclaw update repair --dangerously-force-unsafe-install[\s\S]*trusted shell/u,
+      ),
+    ]);
+  });
+
   it("uses an explicit ClawHub install spec before npm", async () => {
     const cfg = {
       security: { installPolicy: { enabled: true } },
@@ -2966,7 +3007,7 @@ describe("repairMissingConfiguredPluginInstalls", () => {
     expect(result.changes).toEqual(['Repaired missing configured plugin "demo".']);
   });
 
-  it("forwards ClawHub risk acknowledgement to persisted-record repair", async () => {
+  it("forwards warning acknowledgements to persisted-record repair", async () => {
     const records = {
       demo: {
         source: "clawhub",
@@ -2976,6 +3017,7 @@ describe("repairMissingConfiguredPluginInstalls", () => {
       },
     };
     const onClawHubRisk = vi.fn(async () => true);
+    const onInstallPolicyWarning = vi.fn(async () => true);
     mocks.loadInstalledPluginIndexInstallRecords.mockResolvedValue(records);
     mocks.updateNpmInstalledPlugins.mockResolvedValue({
       changed: true,
@@ -3012,12 +3054,14 @@ describe("repairMissingConfiguredPluginInstalls", () => {
       env: {},
       acknowledgeClawHubRisk: true,
       onClawHubRisk,
+      onInstallPolicyWarning,
     });
 
     const updateArg = expectRecordFields(mockCallArg(mocks.updateNpmInstalledPlugins), {
       pluginIds: ["demo"],
       acknowledgeClawHubRisk: true,
       onClawHubRisk,
+      onInstallPolicyWarning,
     });
     expect(updateArg.logger).toEqual(expect.objectContaining({ terminalLinks: false }));
     const updateConfig = updateArg.config as Record<string, unknown>;

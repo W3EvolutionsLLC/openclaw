@@ -47,7 +47,7 @@ export type InstalledFilter = "all" | "enabled" | "disabled" | "issues";
 export type PluginRowMessage = {
   kind: "success" | "error";
   text: string;
-  acknowledge?: { packageName: string; version?: string };
+  acknowledge?: PluginInstallRequest;
 };
 
 type PluginsViewProps = {
@@ -389,13 +389,7 @@ function renderRowMessage(
               class="btn btn--sm"
               title=${props.mutationBlockedReason ?? ""}
               ?disabled=${busy || !props.canMutate}
-              @click=${() =>
-                props.onInstall(key, {
-                  source: "clawhub",
-                  packageName: message.acknowledge?.packageName ?? "",
-                  ...(message.acknowledge?.version ? { version: message.acknowledge.version } : {}),
-                  acknowledgeClawHubRisk: true,
-                })}
+              @click=${() => message.acknowledge && props.onInstall(key, message.acknowledge)}
             >
               ${busy ? t("pluginsPage.installing") : t("pluginsPage.acknowledgeRisk")}
             </button>

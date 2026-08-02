@@ -1,6 +1,7 @@
 // Gateway Protocol schema module defines protocol validation shapes.
 import type { Static } from "typebox";
 import { Type } from "typebox";
+import { INSTALL_POLICY_ACKNOWLEDGEMENT_TOKEN_MAX_CHARS } from "../install-policy-warning-details.js";
 import { closedObject } from "./closed-object.js";
 import { NonEmptyString } from "./primitives.js";
 
@@ -173,10 +174,16 @@ export const PluginsInstallParamsSchema = Type.Union([
     packageName: NonEmptyString,
     version: Type.Optional(NonEmptyString),
     acknowledgeClawHubRisk: Type.Optional(Type.Boolean()),
+    acknowledgeInstallPolicyWarning: Type.Optional(
+      Type.String({ minLength: 1, maxLength: INSTALL_POLICY_ACKNOWLEDGEMENT_TOKEN_MAX_CHARS }),
+    ),
   }),
   closedObject({
     source: Type.Literal("official"),
     pluginId: NonEmptyString,
+    acknowledgeInstallPolicyWarning: Type.Optional(
+      Type.String({ minLength: 1, maxLength: INSTALL_POLICY_ACKNOWLEDGEMENT_TOKEN_MAX_CHARS }),
+    ),
   }),
 ]);
 

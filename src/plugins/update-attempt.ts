@@ -4,6 +4,7 @@ import type { UpdateChannel } from "../infra/update-channels.js";
 import { CLAWHUB_INSTALL_ERROR_CODE } from "./clawhub-error-codes.js";
 import { installPluginFromClawHub, type ClawHubRiskAcknowledgementRequest } from "./clawhub.js";
 import { installPluginFromGitSpec } from "./git-install.js";
+import type { InstallPolicyWarning } from "./install-security-scan.js";
 import { installPluginFromNpmSpec, PLUGIN_INSTALL_ERROR_CODE } from "./install.js";
 import { installPluginFromMarketplace } from "./marketplace.js";
 import { shouldFallbackClawHubBridgeToNpm } from "./update-config.js";
@@ -79,6 +80,15 @@ function isClawHubDownloadBlocked(result: { ok: false; code?: string }): boolean
 
 function isClawHubSecurityUnavailable(result: { ok: false; code?: string }): boolean {
   return result.code === CLAWHUB_INSTALL_ERROR_CODE.CLAWHUB_SECURITY_UNAVAILABLE;
+}
+
+function isPluginUpdateTerminalFailure(result: { ok: false; code?: string }): boolean {
+  return (
+    result.code === PLUGIN_INSTALL_ERROR_CODE.INSTALL_ROLLBACK_FAILED ||
+    result.code === PLUGIN_INSTALL_ERROR_CODE.INSTALL_POLICY_ACKNOWLEDGEMENT_REQUIRED ||
+    result.code === PLUGIN_INSTALL_ERROR_CODE.SECURITY_SCAN_BLOCKED ||
+    result.code === PLUGIN_INSTALL_ERROR_CODE.SECURITY_SCAN_FAILED
+  );
 }
 
 export function readClawHubTrustErrorCode(result: {
@@ -340,6 +350,9 @@ export async function runPluginUpdateAttempt(params: {
     acknowledgeClawHubRisk?: boolean;
     onClawHubRisk?: (request: ClawHubRiskAcknowledgementRequest) => boolean | Promise<boolean>;
   };
+  installPolicyAcknowledgementOptions: {
+    onInstallPolicyWarning?: (warning: InstallPolicyWarning) => boolean | Promise<boolean>;
+  };
 }): Promise<PluginUpdateAttemptResult> {
   const dryRunOption = params.dryRun ? { dryRun: true } : {};
   const phase = params.dryRun ? "check" : "update";
@@ -356,6 +369,7 @@ export async function runPluginUpdateAttempt(params: {
             timeoutMs: params.timeoutMs,
             ...dryRunOption,
             dangerouslyForceUnsafeInstall: params.dangerouslyForceUnsafeInstall,
+            ...params.installPolicyAcknowledgementOptions,
             trustedSourceLinkedOfficialInstall: params.trustedSourceLinkedOfficialInstall,
             expectedPluginId: params.pluginId,
             expectedIntegrity: params.expectedIntegrity,
@@ -377,6 +391,7 @@ export async function runPluginUpdateAttempt(params: {
               timeoutMs: params.timeoutMs,
               ...dryRunOption,
               dangerouslyForceUnsafeInstall: params.dangerouslyForceUnsafeInstall,
+              ...params.installPolicyAcknowledgementOptions,
               expectedPluginId: params.pluginId,
               ...params.clawHubRiskAcknowledgementOptions,
               logger: params.logger,
@@ -390,6 +405,7 @@ export async function runPluginUpdateAttempt(params: {
                 timeoutMs: params.timeoutMs,
                 ...dryRunOption,
                 dangerouslyForceUnsafeInstall: params.dangerouslyForceUnsafeInstall,
+                ...params.installPolicyAcknowledgementOptions,
                 expectedPluginId: params.pluginId,
                 logger: params.logger,
               })
@@ -402,6 +418,7 @@ export async function runPluginUpdateAttempt(params: {
                 timeoutMs: params.timeoutMs,
                 ...dryRunOption,
                 dangerouslyForceUnsafeInstall: params.dangerouslyForceUnsafeInstall,
+                ...params.installPolicyAcknowledgementOptions,
                 expectedPluginId: params.pluginId,
                 logger: params.logger,
               });
@@ -421,7 +438,12 @@ export async function runPluginUpdateAttempt(params: {
   let npmChannelFallback: PluginUpdateChannelFallback | undefined;
   let resultSource = params.record.source;
 
-  if (!result.ok && params.record.source === "npm" && params.npmSpecs?.fallbackSpec) {
+  if (
+    !result.ok &&
+    !isPluginUpdateTerminalFailure(result) &&
+    params.record.source === "npm" &&
+    params.npmSpecs?.fallbackSpec
+  ) {
     params.logger.warn?.(
       describeBetaNpmFallback({
         pluginId: params.pluginId,
@@ -451,6 +473,7 @@ export async function runPluginUpdateAttempt(params: {
       timeoutMs: params.timeoutMs,
       ...dryRunOption,
       dangerouslyForceUnsafeInstall: params.dangerouslyForceUnsafeInstall,
+      ...params.installPolicyAcknowledgementOptions,
       trustedSourceLinkedOfficialInstall: params.trustedSourceLinkedOfficialInstall,
       expectedPluginId: params.pluginId,
       expectedIntegrity: await params.getFallbackExpectedIntegrity(),
@@ -487,6 +510,7 @@ export async function runPluginUpdateAttempt(params: {
       timeoutMs: params.timeoutMs,
       ...dryRunOption,
       dangerouslyForceUnsafeInstall: params.dangerouslyForceUnsafeInstall,
+      ...params.installPolicyAcknowledgementOptions,
       expectedPluginId: params.pluginId,
       ...params.clawHubRiskAcknowledgementOptions,
       logger: params.logger,
@@ -524,6 +548,7 @@ export async function runPluginUpdateAttempt(params: {
       timeoutMs: params.timeoutMs,
       ...dryRunOption,
       dangerouslyForceUnsafeInstall: params.dangerouslyForceUnsafeInstall,
+      ...params.installPolicyAcknowledgementOptions,
       trustedSourceLinkedOfficialInstall: true,
       expectedPluginId: params.pluginId,
       logger: params.logger,

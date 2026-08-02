@@ -2,6 +2,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { runCommandWithTimeout } from "../../process/exec.js";
 import { withTempDir } from "../../test-helpers/temp-dir.js";
 import { buildWorkspaceSkillStatus } from "../discovery/status.js";
@@ -93,16 +94,84 @@ function capturePolicyConfig(params: { scriptPath: string; capturePath: string }
   };
 }
 
+async function writeDecisionPolicyScript(root: string): Promise<{
+  scriptPath: string;
+  countPath: string;
+}> {
+  await fs.chmod(root, 0o700);
+  const scriptPath = path.join(root, "decision-policy.cjs");
+  const countPath = path.join(root, "policy-count.txt");
+  await fs.writeFile(
+    scriptPath,
+    [
+      `#!${process.execPath}`,
+      "const fs = require('node:fs');",
+      "let input = '';",
+      "process.stdin.on('data', (chunk) => { input += chunk; });",
+      "process.stdin.on('end', () => {",
+      "  JSON.parse(input);",
+      "  let count = 0;",
+      "  try { count = Number(fs.readFileSync(process.env.POLICY_COUNT_PATH, 'utf8')) || 0; } catch {}",
+      "  fs.writeFileSync(process.env.POLICY_COUNT_PATH, String(count + 1));",
+      "  const decision = process.env.POLICY_DECISION;",
+      "  if (decision === 'allow') {",
+      "    process.stdout.write(JSON.stringify({ protocolVersion: 1, decision }));",
+      "    return;",
+      "  }",
+      "  process.stdout.write(JSON.stringify({",
+      "    protocolVersion: 1,",
+      "    decision,",
+      "    reason: decision === 'warn' ? 'source review required' : 'source blocked on re-evaluation',",
+      "    findings: [{",
+      "      ruleId: 'proof.source',",
+      "      severity: decision === 'warn' ? 'warn' : 'critical',",
+      "      message: 'Review the staged skill source.',",
+      "    }],",
+      "  }));",
+      "});",
+      "",
+    ].join("\n"),
+    { mode: 0o700 },
+  );
+  return { scriptPath, countPath };
+}
+
+function decisionPolicyConfig(params: {
+  scriptPath: string;
+  countPath: string;
+  decision: "allow" | "warn" | "block";
+}): OpenClawConfig {
+  return {
+    security: {
+      installPolicy: {
+        enabled: true,
+        exec: {
+          source: "exec",
+          command: params.scriptPath,
+          env: {
+            POLICY_COUNT_PATH: params.countPath,
+            POLICY_DECISION: params.decision,
+          },
+          trustedDirs: [path.dirname(params.scriptPath)],
+        },
+      },
+    },
+  };
+}
+
 describe("installSkillFromSource", () => {
   it("installs a local skill directory using the SKILL.md frontmatter name", async () => {
     await withTempDir({ prefix: "openclaw-skill-source-local-" }, async (root) => {
       const workspaceDir = path.join(root, "workspace");
       const sourceDir = path.join(root, "source");
+      const scriptPath = await writeCapturePolicyScript(root);
+      const capturePath = path.join(root, "policy-stdin.json");
       await writeSkill(sourceDir, { name: "frontmatter-skill" });
 
       const result = await installSkillFromSource({
         workspaceDir,
         spec: sourceDir,
+        config: capturePolicyConfig({ scriptPath, capturePath }),
       });
 
       expect(result).toMatchObject({
@@ -114,6 +183,11 @@ describe("installSkillFromSource", () => {
       await expect(
         fs.readFile(path.join(workspaceDir, "skills", "frontmatter-skill", "SKILL.md"), "utf8"),
       ).resolves.toContain("frontmatter-skill");
+      const payload = JSON.parse(await fs.readFile(capturePath, "utf8")) as {
+        sourcePath?: string;
+      };
+      expect(payload.sourcePath).not.toBe(await fs.realpath(sourceDir));
+      expect(path.basename(payload.sourcePath ?? "")).toMatch(/^\.openclaw-install-stage-/);
     });
   });
 
@@ -143,6 +217,81 @@ describe("installSkillFromSource", () => {
         name: "frontmatter-skill",
         skillKey: "custom-name",
       });
+    });
+  });
+
+  it("keeps source installs uncommitted on warning and re-evaluates acknowledged updates", async () => {
+    await withTempDir({ prefix: "openclaw-skill-source-warning-" }, async (root) => {
+      const workspaceDir = path.join(root, "workspace");
+      const sourceDir = path.join(root, "source");
+      const targetDir = path.join(workspaceDir, "skills", "reviewed-source");
+      const lockPath = path.join(workspaceDir, ".clawhub", "lock.json");
+      await writeSkill(sourceDir, { name: "reviewed-source", description: "Original source" });
+      await fs.mkdir(path.dirname(lockPath), { recursive: true });
+      const originalLock = `${JSON.stringify({
+        version: 1,
+        skills: {
+          "reviewed-source": { version: "0.9.0", installedAt: 1 },
+        },
+      })}\n`;
+      await fs.writeFile(lockPath, originalLock);
+      const policy = await writeDecisionPolicyScript(root);
+      const warningConfig = decisionPolicyConfig({ ...policy, decision: "warn" });
+
+      const first = await installSkillFromSource({
+        workspaceDir,
+        spec: sourceDir,
+        config: warningConfig,
+      });
+
+      expect(first).toMatchObject({
+        ok: false,
+        error: "source review required",
+        installPolicyWarning: {
+          reason: "source review required",
+          findings: [
+            {
+              ruleId: "proof.source",
+              severity: "warn",
+              message: "Review the staged skill source.",
+            },
+          ],
+        },
+      });
+      await expect(fs.access(targetDir)).rejects.toThrow();
+      await expect(fs.readFile(lockPath, "utf8")).resolves.toBe(originalLock);
+      await expect(fs.readFile(policy.countPath, "utf8")).resolves.toBe("1");
+
+      const acknowledged = await installSkillFromSource({
+        workspaceDir,
+        spec: sourceDir,
+        config: warningConfig,
+        onInstallPolicyWarning: async () => true,
+      });
+
+      expect(acknowledged).toMatchObject({ ok: true, targetDir });
+      await expect(fs.readFile(path.join(targetDir, "SKILL.md"), "utf8")).resolves.toContain(
+        "Original source",
+      );
+      await expect(fs.readFile(policy.countPath, "utf8")).resolves.toBe("3");
+
+      await writeSkill(sourceDir, { name: "reviewed-source", description: "Changed source" });
+      const blocked = await installSkillFromSource({
+        workspaceDir,
+        spec: sourceDir,
+        force: true,
+        config: decisionPolicyConfig({ ...policy, decision: "block" }),
+        onInstallPolicyWarning: async () => true,
+      });
+
+      expect(blocked).toMatchObject({
+        ok: false,
+        error: "blocked by install policy: source blocked on re-evaluation",
+      });
+      await expect(fs.readFile(path.join(targetDir, "SKILL.md"), "utf8")).resolves.toContain(
+        "Original source",
+      );
+      await expect(fs.readFile(policy.countPath, "utf8")).resolves.toBe("4");
     });
   });
 

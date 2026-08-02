@@ -2,6 +2,7 @@
 import { lstat, mkdir, rmdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { stableStringify } from "@openclaw/normalization-core";
+import { readInstallPolicyWarningDetails } from "../../packages/gateway-protocol/src/install-policy-warning-details.js";
 import { findOverlappingWorkspaceAgentIds } from "../agents/agent-delete-safety.js";
 import { listAgentEntries } from "../agents/agent-scope.js";
 import { transformConfigFileWithRetry } from "../config/config.js";
@@ -9,6 +10,8 @@ import type { AgentConfig } from "../config/types.agents.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { resolvePathViaExistingAncestorSync } from "../infra/boundary-path.js";
 import { normalizeWindowsPathForComparison } from "../infra/path-guards.js";
+import type { InstallPolicyWarning } from "../plugins/install-security-scan.js";
+import { formatInstallPolicyWarningReasonForTerminal } from "../plugins/install-security-scan.js";
 import { DEFAULT_AGENT_ID, normalizeAgentId } from "../routing/session-key.js";
 import type { RuntimeEnv } from "../runtime.js";
 import type { OpenClawStateDatabaseOptions } from "../state/openclaw-state-db.js";
@@ -19,6 +22,7 @@ import {
   type ClawCronGateway,
   type PersistedClawCronRef,
 } from "./cron.js";
+import { createClawInstallPolicyWarningHandler } from "./install-policy.js";
 import {
   ClawMcpInstallError,
   installClawMcpServers,
@@ -44,6 +48,7 @@ export const CLAW_ADD_RESULT_SCHEMA_VERSION = "openclaw.clawAddResult.v1" as con
 
 type ConfigCommit = (transform: (config: OpenClawConfig) => OpenClawConfig) => Promise<void>;
 type ClawAddApplyOptions = OpenClawStateDatabaseOptions & {
+  config?: OpenClawConfig;
   consentPlanIntegrity?: string;
   commitConfig?: ConfigCommit;
   persistRecord?: typeof persistClawInstallRecord;
@@ -54,6 +59,8 @@ type ClawAddApplyOptions = OpenClawStateDatabaseOptions & {
   installPackages?: typeof installClawPackages;
   installMcpServers?: typeof installClawMcpServers;
   installCronJobs?: typeof installClawCronJobs;
+  onInstallPolicyWarning?: (warning: InstallPolicyWarning) => boolean | Promise<boolean>;
+  acknowledgeUnplannedInstallPolicyWarnings?: boolean;
   cronGateway?: Pick<ClawCronGateway, "add" | "list" | "waitUntilAgentAvailable">;
   nowMs?: number;
 };
@@ -97,6 +104,13 @@ function hasUnsupportedMutationActions(plan: ClawAddPlan): boolean {
         action.kind,
       ),
   );
+}
+
+export function readClawAddPlanInstallPolicyWarnings(plan: ClawAddPlan): InstallPolicyWarning[] {
+  return plan.actions.flatMap((action) => {
+    const details = readInstallPolicyWarningDetails(action.details);
+    return details ? [details.installPolicyWarning] : [];
+  });
 }
 
 function statusAtLeast(status: ClawInstallStatus, phase: ClawInstallStatus): boolean {
@@ -207,6 +221,17 @@ export async function applyClawAddPlan(
       "Consent does not match the current Claw add plan; run add --dry-run again.",
     );
   }
+
+  const onInstallPolicyWarning = await createClawInstallPolicyWarningHandler({
+    plannedWarnings: readClawAddPlanInstallPolicyWarnings(plan),
+    onWarning: options.onInstallPolicyWarning,
+    acknowledgeUnplannedWarnings: options.acknowledgeUnplannedInstallPolicyWarnings,
+    rejectionError: (warning) =>
+      new ClawAddMutationError(
+        "install_policy_acknowledgement_required",
+        formatInstallPolicyWarningReasonForTerminal(warning),
+      ),
+  });
 
   const persistRecord = options.persistRecord ?? persistClawInstallRecord;
   let installRecord: PersistedClawInstall;
@@ -443,7 +468,7 @@ export async function applyClawAddPlan(
   try {
     // Skills require their workspace. Recurring work is enabled only after all
     // package mutation succeeds.
-    packages = await installPackages(plan, options);
+    packages = await installPackages(plan, { ...options, onInstallPolicyWarning });
   } catch (error) {
     const packageError =
       error instanceof ClawPackageInstallError

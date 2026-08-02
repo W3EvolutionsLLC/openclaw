@@ -23,6 +23,7 @@ const agentScopeState = vi.hoisted(() => ({
 const installSecurityScanState = vi.hoisted(() => ({
   evaluateSkillInstallPolicy: vi.fn(),
 }));
+const WARNING_TOKEN = `v1:${"a".repeat(43)}`;
 
 const replaceFileState = vi.hoisted(() => ({
   publishFailureTarget: "",
@@ -39,7 +40,8 @@ vi.mock("../../agents/agent-scope.js", async (importOriginal) => {
   };
 });
 
-vi.mock("../../plugins/install-security-scan.js", () => ({
+vi.mock("../../plugins/install-security-scan.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../plugins/install-security-scan.js")>()),
   evaluateSkillInstallPolicy: installSecurityScanState.evaluateSkillInstallPolicy,
 }));
 
@@ -506,6 +508,60 @@ describe("skill upload gateway handlers", () => {
     expect(scanInput.origin?.type).toBe("upload");
     expect(scanInput.origin?.uploadId).toBe(upload.uploadId);
     expect(scanInput.skillName).toBe("scan-blocked");
+    expect(skillUploadExists(stateDir, upload.uploadId)).toBe(false);
+  });
+
+  it("retains uploads while install-policy acknowledgement is required", async () => {
+    const { handlers, stateDir } = await makeHarness();
+    installSecurityScanState.evaluateSkillInstallPolicy.mockResolvedValueOnce({
+      warning: {
+        reason: "Manual review recommended.",
+        acknowledgementId: WARNING_TOKEN,
+        findings: [
+          {
+            ruleId: "dangerous-exec",
+            severity: "warn",
+            message: "The skill launches a child process.",
+          },
+        ],
+      },
+    });
+    const upload = await uploadArchive(handlers, {
+      archive: await makeSkillArchive({}),
+      slug: "scan-warning",
+    });
+
+    const warning = await call(handlers, "skills.install", {
+      source: "upload",
+      uploadId: upload.uploadId,
+      slug: "scan-warning",
+    });
+
+    expect(warning.ok).toBe(false);
+    expect(warning.error).toMatchObject({
+      code: "INVALID_REQUEST",
+      details: {
+        installPolicyWarning: {
+          reason: "Manual review recommended.",
+          acknowledgementId: WARNING_TOKEN,
+        },
+      },
+    });
+    expect(skillUploadExists(stateDir, upload.uploadId)).toBe(true);
+
+    const acknowledged = await call(handlers, "skills.install", {
+      source: "upload",
+      uploadId: upload.uploadId,
+      slug: "scan-warning",
+      acknowledgeInstallPolicyWarning: WARNING_TOKEN,
+    });
+
+    expect(acknowledged.ok).toBe(true);
+    expect(installSecurityScanState.evaluateSkillInstallPolicy).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        onInstallPolicyWarning: expect.any(Function),
+      }),
+    );
     expect(skillUploadExists(stateDir, upload.uploadId)).toBe(false);
   });
 

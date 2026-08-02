@@ -9,6 +9,8 @@ import { installPackageDir } from "../../infra/install-package-dir.js";
 import { resolveSafeInstallDir } from "../../infra/install-safe-path.js";
 import {
   evaluateSkillInstallPolicy,
+  formatInstallPolicyWarningReasonForTerminal,
+  type InstallPolicyWarning,
   type InstallSecurityScanResult,
 } from "../../plugins/install-security-scan.js";
 import type { InstallPolicyOrigin, InstallPolicySource } from "../../security/install-policy.js";
@@ -43,15 +45,57 @@ type SkillArchiveInstallPolicy = {
   installId?: string;
   origin: InstallPolicyOrigin;
   requestedSpecifier?: string;
+  onInstallPolicyWarning?: (warning: InstallPolicyWarning) => boolean | Promise<boolean>;
   source?: InstallPolicySource;
 };
 
-/** Result shape for installing a skill archive into a workspace skills dir. */
-type SkillArchiveInstallResult =
-  | { ok: true; targetDir: string }
-  | { ok: false; error: string; failureKind: SkillArchiveInstallFailureKind };
+async function evaluateSkillInstallSourcePolicy(params: {
+  sourceDir: string;
+  logicalSourcePath?: string;
+  slug: string;
+  mode: "install" | "update";
+  logger?: ArchiveLogger;
+  policy?: SkillArchiveInstallPolicy;
+}): Promise<InstallSecurityScanResult | undefined> {
+  if (!params.policy) {
+    return undefined;
+  }
+  const source = params.policy.source;
+  const logicalSourcePath =
+    params.logicalSourcePath ??
+    (source && !source.network && (source.kind === "local-path" || source.kind === "workspace")
+      ? params.sourceDir
+      : undefined);
+  return await evaluateSkillInstallPolicy({
+    config: params.policy.config,
+    installId: params.policy.installId ?? "archive",
+    logger: params.logger ?? {},
+    ...(logicalSourcePath ? { logicalSourcePath } : {}),
+    origin: params.policy.origin,
+    onInstallPolicyWarning: params.policy.onInstallPolicyWarning,
+    requestedSpecifier: params.policy.requestedSpecifier,
+    source,
+    mode: params.mode,
+    skillName: params.slug,
+    sourceDir: params.sourceDir,
+  });
+}
 
-export type SkillArchiveInstallFailureKind = "invalid-request" | "unavailable";
+/** Result shape for installing a skill archive into a workspace skills dir. */
+export type SkillArchiveInstallResult =
+  | { ok: true; targetDir: string }
+  | {
+      ok: false;
+      error: string;
+      failureKind: SkillArchiveInstallFailureKind;
+      installPolicyFailure?: true;
+      installPolicyWarning?: InstallPolicyWarning;
+    };
+
+export type SkillArchiveInstallFailureKind =
+  | "acknowledgement-required"
+  | "invalid-request"
+  | "unavailable";
 
 /** Normalizes a tracked slug without accepting traversal or path separators. */
 export function normalizeTrackedSkillSlug(raw: string): string {
@@ -86,8 +130,16 @@ export function resolveWorkspaceSkillInstallDir(workspaceDir: string, slug: stri
 function installFailure(
   error: string,
   failureKind: SkillArchiveInstallFailureKind,
-): SkillArchiveInstallResult {
-  return { ok: false, error, failureKind };
+  installPolicyWarning?: InstallPolicyWarning,
+  installPolicyFailure?: true,
+): Extract<SkillArchiveInstallResult, { ok: false }> {
+  return {
+    ok: false,
+    error,
+    failureKind,
+    ...(installPolicyFailure ? { installPolicyFailure } : {}),
+    ...(installPolicyWarning ? { installPolicyWarning } : {}),
+  };
 }
 
 async function hasSkillArchiveRoot(
@@ -139,6 +191,7 @@ export async function installExtractedSkillRoot(params: {
   slug: string;
   extractedRoot: string;
   mode: "install" | "update";
+  scanOnly?: boolean;
   timeoutMs?: number;
   logger?: ArchiveLogger;
   policy?: SkillArchiveInstallPolicy;
@@ -174,7 +227,7 @@ export async function installExtractedSkillRoot(params: {
       typeof sourceVersionValue === "string" || typeof sourceVersionValue === "number"
         ? String(sourceVersionValue)
         : undefined;
-    const shouldDispatchChange = hasCommittedSkillChangeHooks();
+    const shouldDispatchChange = !params.scanOnly && hasCommittedSkillChangeHooks();
     const before =
       shouldDispatchChange && effectiveMode === "update"
         ? await snapshotCommittedSkillArtifactBestEffort({
@@ -185,27 +238,44 @@ export async function installExtractedSkillRoot(params: {
           })
         : undefined;
 
-    if (params.policy) {
-      const scanResult = await evaluateSkillInstallPolicy({
-        config: params.policy.config,
-        installId: params.policy.installId ?? "archive",
-        logger: params.logger ?? {},
-        origin: params.policy.origin,
-        requestedSpecifier: params.policy.requestedSpecifier,
-        source: params.policy.source,
+    const evaluateStagedPolicy = async (
+      sourceDir: string,
+    ): Promise<Extract<SkillArchiveInstallResult, { ok: false }> | null> => {
+      const policySource = params.policy?.source;
+      const logicalSourcePath =
+        policySource &&
+        !policySource.network &&
+        (policySource.kind === "local-path" || policySource.kind === "workspace")
+          ? params.extractedRoot
+          : undefined;
+      const scanResult = await evaluateSkillInstallSourcePolicy({
+        sourceDir,
+        ...(logicalSourcePath ? { logicalSourcePath } : {}),
+        slug: params.slug,
         mode: effectiveMode,
-        skillName: params.slug,
-        sourceDir: params.extractedRoot,
+        logger: params.logger,
+        policy: params.policy,
       });
       if (scanResult?.blocked) {
         return installFailure(
           scanResult.blocked.reason,
           scanBlockedFailureKind(scanResult.blocked),
+          undefined,
+          true,
         );
       }
-    }
+      if (scanResult?.warning) {
+        return installFailure(
+          formatInstallPolicyWarningReasonForTerminal(scanResult.warning),
+          "acknowledgement-required",
+          scanResult.warning,
+          true,
+        );
+      }
+      return null;
+    };
 
-    const install = await installPackageDir({
+    const install = await installPackageDir<Extract<SkillArchiveInstallResult, { ok: false }>>({
       sourceDir: params.extractedRoot,
       targetDir,
       mode: effectiveMode,
@@ -214,8 +284,23 @@ export async function installExtractedSkillRoot(params: {
       copyErrorPrefix: "failed to install skill",
       hasDeps: false,
       depsLogMessage: "",
+      scanOnly: params.scanOnly,
+      afterInstall: async (stagedDir) => {
+        if (
+          !(await hasSkillArchiveRoot(
+            stagedDir,
+            params.rootMarkers ?? DEFAULT_SKILL_ARCHIVE_ROOT_MARKERS,
+          ))
+        ) {
+          return installFailure("archive is missing SKILL.md", "invalid-request");
+        }
+        return (await evaluateStagedPolicy(stagedDir)) ?? { ok: true };
+      },
     });
     if (!install.ok) {
+      if ("failureKind" in install) {
+        return install;
+      }
       return installFailure(install.error, "unavailable");
     }
     if (shouldDispatchChange) {
@@ -273,10 +358,17 @@ export async function installSkillArchiveFromPath(params: {
       : result.error;
     const failureKind =
       "failureKind" in result &&
-      (result.failureKind === "invalid-request" || result.failureKind === "unavailable")
+      (result.failureKind === "acknowledgement-required" ||
+        result.failureKind === "invalid-request" ||
+        result.failureKind === "unavailable")
         ? result.failureKind
         : archiveFailureKind(error);
-    return installFailure(error, failureKind);
+    return installFailure(
+      error,
+      failureKind,
+      "installPolicyWarning" in result ? result.installPolicyWarning : undefined,
+      "installPolicyFailure" in result && result.installPolicyFailure ? true : undefined,
+    );
   }
   return result;
 }

@@ -4,6 +4,10 @@ import { listAgentEntries } from "../agents/agent-scope.js";
 import { transformConfigFileWithRetry } from "../config/config.js";
 import type { AgentConfig } from "../config/types.agents.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import {
+  formatInstallPolicyWarningReasonForTerminal,
+  type InstallPolicyWarning,
+} from "../plugins/install-security-scan.js";
 import type { OpenClawStateDatabaseOptions } from "../state/openclaw-state-db.js";
 import {
   applyClawCronUpdate,
@@ -11,6 +15,11 @@ import {
   type ClawCronUpdateExecution,
 } from "./cron-update.js";
 import type { ClawCronGateway } from "./cron.js";
+import {
+  canonicalizeInstallPolicyWarningsForPlan,
+  createClawInstallPolicyWarningHandler,
+  digestClawPlanValue,
+} from "./install-policy.js";
 import { buildClawAddPlan, type ClawAddPlanContext } from "./lifecycle.js";
 import {
   applyClawMcpUpdate,
@@ -46,10 +55,6 @@ export const CLAW_UPDATE_RESULT_SCHEMA_VERSION = "openclaw.clawUpdateResult.v1" 
 
 type ConfigCommit = (transform: (config: OpenClawConfig) => OpenClawConfig) => Promise<void>;
 
-function digest(value: unknown): string {
-  return `sha256:${createHash("sha256").update(stableStringify(value)).digest("hex")}`;
-}
-
 export class ClawUpdateMutationError extends Error {
   constructor(
     readonly code: string,
@@ -74,7 +79,7 @@ type ClawUpdateResult = {
 };
 
 function comparablePlan(plan: ClawUpdatePlan): unknown {
-  return {
+  return canonicalizeInstallPolicyWarningsForPlan({
     found: plan.found,
     agentId: plan.agentId,
     currentClaw: plan.currentClaw,
@@ -82,7 +87,7 @@ function comparablePlan(plan: ClawUpdatePlan): unknown {
     actions: plan.actions,
     capabilityChanges: plan.capabilityChanges,
     blockers: plan.blockers,
-  };
+  });
 }
 
 export async function applyClawUpdatePlan(
@@ -107,6 +112,8 @@ export async function applyClawUpdatePlan(
     applyMcp?: typeof applyClawMcpUpdate;
     applyCron?: typeof applyClawCronUpdate;
     applyPackage?: typeof applyClawPackageUpdate;
+    onInstallPolicyWarning?: (warning: InstallPolicyWarning) => boolean | Promise<boolean>;
+    acknowledgeUnplannedInstallPolicyWarnings?: boolean;
     cronGateway?: ClawCronGateway;
   },
 ): Promise<ClawUpdateResult> {
@@ -207,6 +214,9 @@ export async function applyClawUpdatePlan(
               ...(preflight.integrity ? { integrity: preflight.integrity } : {}),
               ...(preflight.installId ? { installId: preflight.installId } : {}),
               ...(preflight.warning ? { warning: preflight.warning } : {}),
+              ...(preflight.installPolicyWarning
+                ? { installPolicyWarning: preflight.installPolicyWarning }
+                : {}),
             }
           : preflight;
       },
@@ -239,11 +249,14 @@ export async function applyClawUpdatePlan(
     if (
       !target ||
       action.desiredDigest !==
-        digest({
+        digestClawPlanValue({
           package: target,
           integrity: details?.integrity,
           installId: details?.installId,
           riskWarning: details?.riskWarning,
+          ...(details?.installPolicyWarning
+            ? { installPolicyWarning: details.installPolicyWarning }
+            : {}),
         })
     ) {
       throw new ClawUpdateMutationError(
@@ -252,6 +265,23 @@ export async function applyClawUpdatePlan(
       );
     }
   }
+
+  const onInstallPolicyWarning = await createClawInstallPolicyWarningHandler({
+    plannedWarnings: fresh.actions.flatMap((action) =>
+      action.kind === "package" &&
+      (action.action === "add" || action.action === "change") &&
+      action.installPolicyWarning
+        ? [action.installPolicyWarning]
+        : [],
+    ),
+    onWarning: options.onInstallPolicyWarning,
+    acknowledgeUnplannedWarnings: options.acknowledgeUnplannedInstallPolicyWarnings,
+    rejectionError: (warning) =>
+      new ClawUpdateMutationError(
+        "install_policy_acknowledgement_required",
+        formatInstallPolicyWarningReasonForTerminal(warning),
+      ),
+  });
 
   const applyWorkspace = options.applyWorkspace ?? applyClawWorkspaceUpdate;
   let workspaceExecution: ClawWorkspaceUpdateExecution;
@@ -292,7 +322,10 @@ export async function applyClawUpdatePlan(
   const applyPackage = options.applyPackage ?? applyClawPackageUpdate;
   let packageExecution: ClawPackageUpdateExecution;
   try {
-    packageExecution = await applyPackage(fresh, params.targetManifest, targetAddPlan, options);
+    packageExecution = await applyPackage(fresh, params.targetManifest, targetAddPlan, {
+      ...options,
+      onInstallPolicyWarning,
+    });
   } catch (error) {
     const rollbackFailures: string[] = [];
     try {

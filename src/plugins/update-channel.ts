@@ -12,6 +12,11 @@ import {
   type ExternalizedBundledPluginBridge,
 } from "./externalized-bundled-plugins.js";
 import { resolveNpmInstallSpecsForUpdateChannel } from "./install-channel-specs.js";
+import {
+  formatInstallPolicyWarningReasonForTerminal,
+  scanBundleInstallSource,
+  type InstallPolicyWarning,
+} from "./install-security-scan.js";
 import { installPluginFromNpmSpec } from "./install.js";
 import {
   buildNpmResolutionInstallFields,
@@ -43,6 +48,11 @@ type PluginChannelSyncSummary = {
   switchedToNpm: string[];
   warnings: string[];
   errors: string[];
+  installPolicyWarnings?: Array<{
+    error: string;
+    pluginId: string;
+    warning: InstallPolicyWarning;
+  }>;
 };
 
 type PluginChannelSyncResult = {
@@ -61,6 +71,7 @@ export async function syncPluginsForUpdateChannel(params: {
   externalizedBundledPluginBridges?: readonly ExternalizedBundledPluginBridge[];
   acknowledgeClawHubRisk?: boolean;
   onClawHubRisk?: (request: ClawHubRiskAcknowledgementRequest) => boolean | Promise<boolean>;
+  onInstallPolicyWarning?: (warning: InstallPolicyWarning) => boolean | Promise<boolean>;
 }): Promise<PluginChannelSyncResult> {
   const env = params.env ?? process.env;
   const logger = params.logger ?? {};
@@ -84,6 +95,46 @@ export async function syncPluginsForUpdateChannel(params: {
     ...(params.acknowledgeClawHubRisk ? { acknowledgeClawHubRisk: true } : {}),
     ...(params.onClawHubRisk ? { onClawHubRisk: params.onClawHubRisk } : {}),
   };
+  const installPolicyAcknowledgementOptions = params.onInstallPolicyWarning
+    ? { onInstallPolicyWarning: params.onInstallPolicyWarning }
+    : {};
+  const bundledLoadPathPresent = (localPath: string) =>
+    loadHelpers.paths.some((entry) => pathsEqual(entry, localPath, env));
+  const allowBundledUpdateMutation = async (candidate: {
+    bundledInfo: typeof bundled extends Map<string, infer Source> ? Source : never;
+    pluginId: string;
+    requestedSpecifier: string;
+  }): Promise<boolean> => {
+    const policyResult = await scanBundleInstallSource({
+      config: next,
+      logger,
+      pluginId: candidate.pluginId,
+      sourceDir: candidate.bundledInfo.localPath,
+      requestKind: "plugin-dir",
+      requestedSpecifier: candidate.requestedSpecifier,
+      mode: "update",
+      version: candidate.bundledInfo.version,
+      source: { kind: "bundled", authority: "openclaw", mutable: false, network: false },
+      ...installPolicyAcknowledgementOptions,
+    });
+    if (!policyResult) {
+      return true;
+    }
+    const reason = policyResult.warning
+      ? formatInstallPolicyWarningReasonForTerminal(policyResult.warning)
+      : policyResult.blocked.reason;
+    const message = `Failed to update ${candidate.pluginId}: ${reason}`;
+    summary.errors.push(message);
+    if (policyResult.warning) {
+      (summary.installPolicyWarnings ??= []).push({
+        error: message,
+        pluginId: candidate.pluginId,
+        warning: policyResult.warning,
+      });
+    }
+    logger.error?.(message);
+    return false;
+  };
 
   if (params.channel === "dev") {
     for (const [pluginId, record] of Object.entries(installs)) {
@@ -92,10 +143,21 @@ export async function syncPluginsForUpdateChannel(params: {
         continue;
       }
 
-      loadHelpers.addPath(bundledInfo.localPath);
-
       const alreadyBundled =
         record.source === "path" && pathsEqual(record.sourcePath, bundledInfo.localPath, env);
+      if (alreadyBundled && bundledLoadPathPresent(bundledInfo.localPath)) {
+        continue;
+      }
+      if (
+        !(await allowBundledUpdateMutation({
+          bundledInfo,
+          pluginId,
+          requestedSpecifier: record.spec ?? bundledInfo.npmSpec ?? `bundled:${pluginId}`,
+        }))
+      ) {
+        continue;
+      }
+      loadHelpers.addPath(bundledInfo.localPath);
       if (alreadyBundled) {
         continue;
       }
@@ -208,6 +270,7 @@ export async function syncPluginsForUpdateChannel(params: {
           mode: "update",
           expectedPluginId: targetPluginId,
           ...clawHubRiskAcknowledgementOptions,
+          ...installPolicyAcknowledgementOptions,
           logger,
         });
         if (!result.ok && npmSpec && shouldFallbackClawHubBridgeToNpm({ result, npmSpec })) {
@@ -222,6 +285,7 @@ export async function syncPluginsForUpdateChannel(params: {
             mode: "update",
             expectedPluginId: targetPluginId,
             trustedSourceLinkedOfficialInstall,
+            ...installPolicyAcknowledgementOptions,
             logger,
           });
         }
@@ -232,6 +296,7 @@ export async function syncPluginsForUpdateChannel(params: {
           mode: "update",
           expectedPluginId: targetPluginId,
           trustedSourceLinkedOfficialInstall,
+          ...installPolicyAcknowledgementOptions,
           logger,
         });
       }
@@ -262,6 +327,13 @@ export async function syncPluginsForUpdateChannel(params: {
                 result,
               });
         summary.errors.push(message);
+        if ("installPolicyWarning" in result && result.installPolicyWarning) {
+          (summary.installPolicyWarnings ??= []).push({
+            error: message,
+            pluginId: targetPluginId,
+            warning: result.installPolicyWarning,
+          });
+        }
         logger.error?.(message);
         continue;
       }
@@ -340,11 +412,23 @@ export async function syncPluginsForUpdateChannel(params: {
       }
       // Keep explicit bundled installs on release channels. Replacing them with
       // npm installs can reintroduce duplicate-id shadowing and packaging drift.
-      loadHelpers.addPath(bundledInfo.localPath);
       const alreadyBundled =
         record.source === "path" &&
         pathsEqual(record.sourcePath, bundledInfo.localPath, env) &&
         pathsEqual(record.installPath, bundledInfo.localPath, env);
+      if (alreadyBundled && bundledLoadPathPresent(bundledInfo.localPath)) {
+        continue;
+      }
+      if (
+        !(await allowBundledUpdateMutation({
+          bundledInfo,
+          pluginId,
+          requestedSpecifier: record.spec ?? bundledInfo.npmSpec ?? `bundled:${pluginId}`,
+        }))
+      ) {
+        continue;
+      }
+      loadHelpers.addPath(bundledInfo.localPath);
       if (alreadyBundled) {
         continue;
       }

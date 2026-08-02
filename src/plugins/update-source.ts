@@ -30,6 +30,7 @@ import {
   resolveClawHubInstallSpecsForUpdateChannel,
   resolveNpmInstallSpecsForUpdateChannel,
 } from "./install-channel-specs.js";
+import type { InstallPolicyWarning } from "./install-security-scan.js";
 import { PLUGIN_INSTALL_ERROR_CODE } from "./install.js";
 import { checkMinHostVersion } from "./min-host-version.js";
 import { resolveTrustedSourceLinkedOfficialNpmSpec } from "./official-external-install-records.js";
@@ -65,6 +66,7 @@ type BasePluginUpdateOutcome = {
   nextVersion?: string;
   channelFallback?: PluginUpdateChannelFallback;
   warning?: string;
+  installPolicyWarning?: InstallPolicyWarning;
 };
 
 export type PluginUpdateOutcome =

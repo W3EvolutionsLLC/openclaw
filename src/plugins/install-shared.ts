@@ -1,10 +1,14 @@
 import path from "node:path";
 import { satisfiesPluginApiRange } from "../infra/clawhub.js";
+import { withTempDir } from "../infra/install-source-utils.js";
 import type { InstallPolicySource } from "../security/install-policy.js";
 import { createLazyImportLoader } from "../shared/lazy-promise.js";
 import { resolveUserPath } from "../utils.js";
 import { resolveDefaultPluginExtensionsDir } from "./install-paths.js";
-import type { InstallSecurityScanResult } from "./install-security-scan.js";
+import {
+  formatInstallPolicyWarningReasonForTerminal,
+  type InstallSecurityScanResult,
+} from "./install-security-scan.js";
 import {
   PLUGIN_INSTALL_ERROR_CODE,
   type InstallPluginResult,
@@ -68,8 +72,10 @@ export function validateOpenClawPackageInstallCompatibility(params: {
   runtime: PluginInstallRuntime;
   pluginId: string;
   packageMetadata?: OpenClawPackageManifest;
+  currentHostVersion?: string;
 }): PluginInstallFailureResult | null {
-  const currentHostVersion = params.runtime.resolveCompatibilityHostVersion();
+  const currentHostVersion =
+    params.currentHostVersion ?? params.runtime.resolveCompatibilityHostVersion();
   const minHostVersionCheck = params.runtime.checkMinHostVersion({
     currentVersion: currentHostVersion,
     minHostVersion: params.packageMetadata?.install?.minHostVersion,
@@ -222,6 +228,17 @@ function buildBlockedInstallResult(params: {
   };
 }
 
+function buildInstallPolicyWarningResult(params: {
+  warning: NonNullable<NonNullable<InstallSecurityScanResult>["warning"]>;
+}): Extract<InstallPluginResult, { ok: false }> {
+  return {
+    ok: false,
+    error: formatInstallPolicyWarningReasonForTerminal(params.warning),
+    code: PLUGIN_INSTALL_ERROR_CODE.INSTALL_POLICY_ACKNOWLEDGEMENT_REQUIRED,
+    installPolicyWarning: params.warning,
+  };
+}
+
 export function sourceFamilyForInstallPolicyKind(
   kind: PluginInstallPolicyRequest["kind"] | undefined,
   fallback: PluginSecuritySourceFamily,
@@ -335,6 +352,9 @@ export async function runInstallSourceScan(params: {
       });
       return buildBlockedInstallResult({ blocked: scanResult.blocked });
     }
+    if (scanResult?.warning) {
+      return buildInstallPolicyWarningResult({ warning: scanResult.warning });
+    }
     return null;
   } catch (err) {
     emitPluginAuditSecurityEvent({
@@ -369,7 +389,7 @@ export async function installPluginDirectoryIntoExtensions(params: {
   hasDeps: boolean;
   sourceHardlinks?: "package-manager" | "reject";
   depsLogMessage: string;
-  afterCopy?: (installedDir: string) => Promise<void>;
+  afterCopy?: (installedDir: string) => Promise<Extract<InstallPluginResult, { ok: false }> | null>;
   afterInstall?: (
     installedDir: string,
   ) => Promise<Extract<InstallPluginResult, { ok: false }> | null>;
@@ -398,45 +418,44 @@ export async function installPluginDirectoryIntoExtensions(params: {
     return availability;
   }
 
-  if (params.dryRun) {
-    return buildDirectoryInstallResult({
-      pluginId: params.pluginId,
-      targetDir,
-      manifestName: params.manifestName,
-      version: params.version,
-      extensions: params.extensions,
-      setup: params.setup,
+  let installPolicyWarning: PluginInstallFailureResult["installPolicyWarning"];
+  const installPackageDir = async (installTargetDir: string) =>
+    await runtime.installPackageDir({
+      sourceDir: params.sourceDir,
+      targetDir: installTargetDir,
+      mode: params.mode,
+      timeoutMs: params.timeoutMs,
+      logger: params.logger,
+      copyErrorPrefix: params.copyErrorPrefix,
+      hasDeps: params.hasDeps,
+      sourceHardlinks: params.sourceHardlinks ?? "reject",
+      depsLogMessage: params.depsLogMessage,
+      scanOnly: params.dryRun,
+      afterCopy: async (installedDir) => {
+        const postCopyResult = await params.afterCopy?.(installedDir);
+        installPolicyWarning = postCopyResult?.installPolicyWarning;
+        return postCopyResult ?? { ok: true as const };
+      },
+      afterInstall: async (installedDir) => {
+        const postInstallResult = await params.afterInstall?.(installedDir);
+        if (!postInstallResult) {
+          return { ok: true as const };
+        }
+        installPolicyWarning = postInstallResult.installPolicyWarning;
+        return postInstallResult;
+      },
     });
-  }
-
-  const installRes = await runtime.installPackageDir({
-    sourceDir: params.sourceDir,
-    targetDir,
-    mode: params.mode,
-    timeoutMs: params.timeoutMs,
-    logger: params.logger,
-    copyErrorPrefix: params.copyErrorPrefix,
-    hasDeps: params.hasDeps,
-    sourceHardlinks: params.sourceHardlinks ?? "reject",
-    depsLogMessage: params.depsLogMessage,
-    afterCopy: params.afterCopy,
-    afterInstall: async (installedDir) => {
-      const postInstallResult = await params.afterInstall?.(installedDir);
-      if (!postInstallResult) {
-        return { ok: true as const };
-      }
-      return {
-        ok: false as const,
-        error: postInstallResult.error,
-        ...(postInstallResult.code ? { code: postInstallResult.code } : {}),
-      };
-    },
-  });
+  const installRes = params.dryRun
+    ? await withTempDir("openclaw-plugin-validation-", async (validationRoot) =>
+        installPackageDir(path.join(validationRoot, "plugin")),
+      )
+    : await installPackageDir(targetDir);
   if (!installRes.ok) {
     return {
       ok: false,
       error: installRes.error,
       ...(installRes.code ? { code: installRes.code as PluginInstallErrorCode } : {}),
+      ...(installPolicyWarning ? { installPolicyWarning } : {}),
     };
   }
 

@@ -15,6 +15,7 @@ import type {
 } from "../../../../packages/gateway-protocol/src/schema/plugins.js";
 import { GatewayRequestError, type GatewayBrowserClient } from "../../api/gateway.ts";
 import type { RuntimeConfigCapability } from "../config/index.ts";
+import { readInstallPolicyWarning, type InstallPolicyWarning } from "../install-policy-warning.ts";
 
 export type PluginCatalogItem = PluginCatalogEntry;
 export type PluginListResult = ProtocolPluginsListResult;
@@ -84,6 +85,10 @@ export function readPluginInstallTrustError(error: unknown): ClawHubTrustErrorDe
     return undefined;
   }
   return readClawHubTrustErrorDetails(error.details);
+}
+
+export function readPluginInstallPolicyWarning(error: unknown): InstallPolicyWarning | undefined {
+  return error instanceof GatewayRequestError ? readInstallPolicyWarning(error) : undefined;
 }
 
 export function pluginInstallNeedsRiskAcknowledgement(error: unknown): boolean {

@@ -1,7 +1,10 @@
 // Runtime bridge for plugin install security scanning.
 import fs from "node:fs/promises";
 import path from "node:path";
+import { stableStringify } from "@openclaw/normalization-core";
+import { sanitizeTerminalText } from "../../packages/terminal-core/src/safe-text.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { sha256Base64Url } from "../infra/crypto-digest.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import { tryReadJson } from "../infra/json-files.js";
 import { resolveOpenClawPackageRootSync } from "../infra/openclaw-root.js";
@@ -24,22 +27,129 @@ import {
   type BlockedPackageFileFinding,
 } from "./dependency-denylist.js";
 import { getGlobalHookRunner } from "./hook-runner-global.js";
+import { digestInstallPolicyArtifact } from "./install-policy-artifact-digest.js";
 import { createBeforeInstallHookPayload } from "./install-policy-context.js";
-import type { InstallSafetyOverrides } from "./install-security-scan.types.js";
+import type {
+  InstallSecurityScanResult,
+  InstallPolicyWarning,
+  InstallSafetyOverrides,
+} from "./install-security-scan.types.js";
 
 type InstallScanLogger = {
   warn?: (message: string) => void;
 };
 
 const FULL_GIT_COMMIT_PATTERN = /^[0-9a-f]{40}$/i;
+const MAX_INSTALL_POLICY_WARNING_EVALUATIONS = 10;
 
 type PluginInstallRequestKind = Exclude<InstallPolicyRequestKind, "skill-install">;
+
+type OperatorInstallPolicyRequest = Parameters<typeof runInstallPolicy>[0]["request"];
+
+function normalizeInstallPolicyWarningTextForAcknowledgement(
+  value: string,
+  sourcePath: string,
+): string {
+  const sourcePathVariants = new Set([
+    sourcePath,
+    sourcePath.replaceAll("\\", "/"),
+    sourcePath.replaceAll("/", "\\"),
+  ]);
+  let normalized = value;
+  for (const sourcePathVariant of sourcePathVariants) {
+    if (sourcePathVariant) {
+      normalized = normalized.replaceAll(sourcePathVariant, "<sourcePath>");
+    }
+  }
+  return normalized;
+}
+
+function createInstallPolicyWarningAcknowledgementId(params: {
+  artifactDigest: string;
+  logicalSourcePath?: string;
+  request: OperatorInstallPolicyRequest;
+  warning: Pick<InstallPolicyWarning, "reason" | "findings">;
+}): string {
+  const requestScope = [
+    params.request.targetType,
+    params.request.targetName,
+    params.request.sourcePathKind,
+    params.request.source ?? null,
+    params.request.origin,
+    params.request.request,
+    params.request.skill ?? null,
+    params.request.plugin ?? null,
+    params.artifactDigest,
+    params.logicalSourcePath ?? null,
+  ];
+  // Retries may extract the same archive into a new temp directory. Exclude that
+  // transient path from scanner text so the warning keeps the same identity.
+  const warning = {
+    reason: normalizeInstallPolicyWarningTextForAcknowledgement(
+      params.warning.reason,
+      params.request.sourcePath,
+    ),
+    ...(params.warning.findings
+      ? {
+          findings: params.warning.findings
+            .map((finding) => ({
+              ...finding,
+              message: normalizeInstallPolicyWarningTextForAcknowledgement(
+                finding.message,
+                params.request.sourcePath,
+              ),
+              ...(finding.file
+                ? {
+                    file: normalizeInstallPolicyWarningTextForAcknowledgement(
+                      finding.file,
+                      params.request.sourcePath,
+                    ),
+                  }
+                : {}),
+              ...(finding.evidence
+                ? {
+                    evidence: normalizeInstallPolicyWarningTextForAcknowledgement(
+                      finding.evidence,
+                      params.request.sourcePath,
+                    ),
+                  }
+                : {}),
+            }))
+            .toSorted((left, right) => {
+              const leftKey = stableStringify(left);
+              const rightKey = stableStringify(right);
+              return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+            }),
+        }
+      : {}),
+  };
+  return `v1:${sha256Base64Url(stableStringify({ requestScope, warning }))}`;
+}
+
+async function resolveInstallPolicyLogicalSourcePath(
+  request: OperatorInstallPolicyRequest,
+  explicitPath?: string,
+): Promise<string | undefined> {
+  if (explicitPath) {
+    return await fs.realpath(explicitPath).catch(() => path.resolve(explicitPath));
+  }
+  if (
+    !request.source?.mutable ||
+    request.source.network ||
+    (request.source.kind !== "file" &&
+      request.source.kind !== "local-path" &&
+      request.source.kind !== "workspace")
+  ) {
+    return undefined;
+  }
+  return await fs.realpath(request.sourcePath).catch(() => path.resolve(request.sourcePath));
+}
 
 function formatInstallPolicyWarning(finding: InstallPolicyFinding): string {
   const location = finding.file
     ? ` (${finding.file}${finding.line ? `:${finding.line}` : ""})`
     : "";
-  return `Install policy: ${finding.message}${location}`;
+  return sanitizeTerminalText(`Install policy: ${finding.message}${location}`);
 }
 
 type InstallScanFinding = {
@@ -106,13 +216,6 @@ type SkillInstallSpec = {
   extract?: boolean;
   stripComponents?: number;
   targetDir?: string;
-};
-
-export type InstallSecurityScanResult = {
-  blocked?: {
-    code?: "security_scan_blocked" | "security_scan_failed";
-    reason: string;
-  };
 };
 
 const DEFAULT_PACKAGE_MANIFEST_TRAVERSAL_LIMITS: PackageManifestTraversalLimits = {
@@ -867,8 +970,12 @@ function shouldBypassOpenClawInstallFriction(params: {
 }
 
 async function runOperatorInstallPolicy(params: {
+  allowManagedNpmRootPackagePeerSymlinks?: boolean;
+  allowOpenClawPeerSymlinks?: boolean;
   config?: OpenClawConfig;
   logger: InstallScanLogger;
+  logicalSourcePath?: string;
+  onInstallPolicyWarning?: InstallSafetyOverrides["onInstallPolicyWarning"];
   origin: InstallPolicyOrigin;
   source?: InstallPolicySource;
   sourcePath: string;
@@ -892,40 +999,123 @@ async function runOperatorInstallPolicy(params: {
   };
   trustedSourceLinkedOfficialInstall?: boolean;
 }): Promise<InstallSecurityScanResult | undefined> {
-  const result = await runInstallPolicy({
-    config: params.config,
-    logger: params.logger,
+  const trustedHostOpenClawRootRealPath = params.allowOpenClawPeerSymlinks
+    ? await resolveTrustedHostOpenClawRootRealPath()
+    : null;
+  const request: OperatorInstallPolicyRequest = {
+    targetName: params.targetName,
+    targetType: params.targetType,
+    sourcePath: params.sourcePath,
+    sourcePathKind: params.sourcePathKind,
+    ...(params.source ? { source: params.source } : {}),
+    origin: params.origin,
     request: {
-      targetName: params.targetName,
-      targetType: params.targetType,
-      sourcePath: params.sourcePath,
-      sourcePathKind: params.sourcePathKind,
-      ...(params.source ? { source: params.source } : {}),
-      origin: params.origin,
-      request: {
-        kind: params.requestKind,
-        mode: params.requestMode,
-        ...(params.requestedSpecifier ? { requestedSpecifier: params.requestedSpecifier } : {}),
-      },
-      ...(params.skill ? { skill: params.skill } : {}),
-      ...(params.plugin ? { plugin: params.plugin } : {}),
+      kind: params.requestKind,
+      mode: params.requestMode,
+      ...(params.requestedSpecifier ? { requestedSpecifier: params.requestedSpecifier } : {}),
     },
-  });
-  if (!result?.blocked) {
-    for (const finding of result?.findings ?? []) {
+    ...(params.skill ? { skill: params.skill } : {}),
+    ...(params.plugin ? { plugin: params.plugin } : {}),
+  };
+  const digestArtifact = async () =>
+    await digestInstallPolicyArtifact({
+      ...(params.allowOpenClawPeerSymlinks
+        ? {
+            allowExternalSymlink: ({ relativePath, resolvedTargetPath }) =>
+              isTrustedOpenClawPeerSymlink({
+                allowManagedNpmRootPackagePeerSymlinks:
+                  params.allowManagedNpmRootPackagePeerSymlinks,
+                relativePath,
+              }) &&
+              isTrustedHostOpenClawPath({
+                resolvedTargetPath,
+                trustedHostOpenClawRootRealPath,
+              }),
+          }
+        : {}),
+      sourcePath: request.sourcePath,
+      sourcePathKind: request.sourcePathKind,
+    });
+  let evaluatedArtifactDigest: string | undefined;
+  const runPolicy = async () => {
+    evaluatedArtifactDigest = undefined;
+    return await runInstallPolicy({
+      artifactDigest: async () => {
+        const digest = await digestArtifact();
+        evaluatedArtifactDigest = digest;
+        return digest;
+      },
+      config: params.config,
+      logger: params.logger,
+      request,
+    });
+  };
+  const acknowledgedWarningIds = new Set<string>();
+  for (let evaluation = 0; evaluation < MAX_INSTALL_POLICY_WARNING_EVALUATIONS; evaluation += 1) {
+    const result = await runPolicy();
+    if (!result) {
+      return undefined;
+    }
+    for (const finding of result.findings ?? []) {
       if (finding.severity === "critical" || finding.severity === "warn") {
         params.logger.warn?.(formatInstallPolicyWarning(finding));
       }
     }
-    return undefined;
+    if (result.decision === "allow") {
+      return undefined;
+    }
+    if (result.decision === "warn") {
+      const warningDetails = {
+        reason: result.reason,
+        ...(result.findings?.length ? { findings: result.findings } : {}),
+      };
+      const acknowledgementId = createInstallPolicyWarningAcknowledgementId({
+        // Test doubles predating the artifact guard do not invoke it. Production
+        // policy execution always supplies the digest observed after a stable run.
+        artifactDigest: evaluatedArtifactDigest ?? (await digestArtifact()),
+        logicalSourcePath: await resolveInstallPolicyLogicalSourcePath(
+          request,
+          params.logicalSourcePath,
+        ),
+        request,
+        warning: warningDetails,
+      });
+      const warning: InstallPolicyWarning = {
+        ...warningDetails,
+        acknowledgementId,
+      };
+      params.logger.warn?.(sanitizeTerminalText(`Install policy warning: ${result.reason}`));
+      if (acknowledgedWarningIds.has(acknowledgementId)) {
+        return undefined;
+      }
+      const acknowledged =
+        params.onInstallPolicyWarning && (await params.onInstallPolicyWarning(warning));
+      if (!acknowledged) {
+        return { warning };
+      }
+      acknowledgedWarningIds.add(acknowledgementId);
+      continue;
+    }
+    return {
+      blocked: {
+        code: result.code,
+        reason: result.reason,
+      },
+    };
   }
-  return { blocked: result.blocked };
+  return {
+    blocked: {
+      code: "security_scan_failed",
+      reason: "install policy did not stabilize after repeated warning acknowledgements",
+    },
+  };
 }
 
 export async function scanBundleInstallSourceRuntime(
   params: InstallSafetyOverrides & {
     config?: OpenClawConfig;
     logger: InstallScanLogger;
+    logicalSourcePath?: string;
     pluginId: string;
     sourceDir: string;
     requestKind?: PluginInstallRequestKind;
@@ -939,6 +1129,8 @@ export async function scanBundleInstallSourceRuntime(
     runOperatorInstallPolicy({
       config: params.config,
       logger: params.logger,
+      logicalSourcePath: params.logicalSourcePath,
+      onInstallPolicyWarning: params.onInstallPolicyWarning,
       origin: { type: "plugin-bundle", ...(params.version ? { version: params.version } : {}) },
       source:
         params.source ?? resolvePolicySource({ requestKind: params.requestKind ?? "plugin-dir" }),
@@ -969,7 +1161,7 @@ export async function scanBundleInstallSourceRuntime(
   }
 
   const policyResult = await runPolicy();
-  if (policyResult?.blocked) {
+  if (policyResult) {
     return policyResult;
   }
 
@@ -999,6 +1191,7 @@ export async function scanPackageInstallSourceRuntime(
     config?: OpenClawConfig;
     extensions: string[];
     logger: InstallScanLogger;
+    logicalSourcePath?: string;
     packageDir: string;
     packageMetadata?: PackageExecutableScanMetadata;
     pluginId: string;
@@ -1016,6 +1209,7 @@ export async function scanPackageInstallSourceRuntime(
     runOperatorInstallPolicy({
       config: params.config,
       logger: params.logger,
+      onInstallPolicyWarning: params.onInstallPolicyWarning,
       origin: {
         type: "plugin-package",
         ...(params.packageName ? { packageName: params.packageName } : {}),
@@ -1025,6 +1219,7 @@ export async function scanPackageInstallSourceRuntime(
         params.source ?? resolvePolicySource({ requestKind: params.requestKind ?? "plugin-dir" }),
       sourcePath: params.packageDir,
       sourcePathKind: "directory",
+      logicalSourcePath: params.logicalSourcePath,
       targetName: params.pluginId,
       targetType: "plugin",
       requestKind: params.requestKind ?? "plugin-dir",
@@ -1057,7 +1252,7 @@ export async function scanPackageInstallSourceRuntime(
   }
 
   const policyResult = await runPolicy();
-  if (policyResult?.blocked) {
+  if (policyResult) {
     return policyResult;
   }
 
@@ -1084,26 +1279,31 @@ export async function scanPackageInstallSourceRuntime(
   return hookResult;
 }
 
-export async function scanInstalledPackageDependencyTreeRuntime(params: {
-  additionalPackageDirs?: string[];
-  allowManagedNpmRootPackagePeerSymlinks?: boolean;
-  config?: OpenClawConfig;
-  dangerouslyForceUnsafeInstall?: boolean;
-  dependencyScanRootDir?: string;
-  logger: InstallScanLogger;
-  mode?: "install" | "update";
-  packageDir: string;
-  pluginId: string;
-  requestKind?: PluginInstallRequestKind;
-  requestedSpecifier?: string;
-  source?: InstallPolicySource;
-  trustedSourceLinkedOfficialInstall?: boolean;
-}): Promise<InstallSecurityScanResult | undefined> {
+export async function scanInstalledPackageDependencyTreeRuntime(
+  params: InstallSafetyOverrides & {
+    additionalPackageDirs?: string[];
+    allowManagedNpmRootPackagePeerSymlinks?: boolean;
+    config?: OpenClawConfig;
+    dangerouslyForceUnsafeInstall?: boolean;
+    dependencyScanRootDir?: string;
+    logger: InstallScanLogger;
+    mode?: "install" | "update";
+    packageDir: string;
+    pluginId: string;
+    requestKind?: PluginInstallRequestKind;
+    requestedSpecifier?: string;
+    source?: InstallPolicySource;
+    trustedSourceLinkedOfficialInstall?: boolean;
+  },
+): Promise<InstallSecurityScanResult | undefined> {
   const requestKind = params.requestKind ?? "plugin-npm";
   const runPolicy = () =>
     runOperatorInstallPolicy({
+      allowManagedNpmRootPackagePeerSymlinks: params.allowManagedNpmRootPackagePeerSymlinks,
+      allowOpenClawPeerSymlinks: true,
       config: params.config,
       logger: params.logger,
+      onInstallPolicyWarning: params.onInstallPolicyWarning,
       origin: { type: "plugin-dependency-tree" },
       source: params.source ?? resolvePolicySource({ requestKind }),
       sourcePath: params.dependencyScanRootDir ?? params.packageDir,
@@ -1166,6 +1366,7 @@ export async function scanFileInstallSourceRuntime(
   const policyResult = await runOperatorInstallPolicy({
     config: params.config,
     logger: params.logger,
+    onInstallPolicyWarning: params.onInstallPolicyWarning,
     origin: { type: "plugin-file" },
     source: params.source ?? resolvePolicySource({ requestKind: "plugin-file" }),
     sourcePath: params.filePath,
@@ -1181,7 +1382,7 @@ export async function scanFileInstallSourceRuntime(
       extensions: [path.basename(params.filePath)],
     },
   });
-  if (policyResult?.blocked) {
+  if (policyResult) {
     return policyResult;
   }
 
@@ -1205,21 +1406,24 @@ export async function scanFileInstallSourceRuntime(
   return hookResult;
 }
 
-export async function preflightPluginNpmInstallPolicyRuntime(params: {
-  config?: OpenClawConfig;
-  logger: InstallScanLogger;
-  mode?: "install" | "update";
-  packageName: string;
-  pluginId?: string;
-  requestedSpecifier?: string;
-  source?: InstallPolicySource;
-  sourcePath: string;
-  sourcePathKind: "file" | "directory";
-}): Promise<InstallSecurityScanResult | undefined> {
+export async function preflightPluginNpmInstallPolicyRuntime(
+  params: InstallSafetyOverrides & {
+    config?: OpenClawConfig;
+    logger: InstallScanLogger;
+    mode?: "install" | "update";
+    packageName: string;
+    pluginId?: string;
+    requestedSpecifier?: string;
+    source?: InstallPolicySource;
+    sourcePath: string;
+    sourcePathKind: "file" | "directory";
+  },
+): Promise<InstallSecurityScanResult | undefined> {
   const pluginId = params.pluginId ?? params.packageName;
   return await runOperatorInstallPolicy({
     config: params.config,
     logger: params.logger,
+    onInstallPolicyWarning: params.onInstallPolicyWarning,
     origin: { type: "plugin-npm", packageName: params.packageName },
     source: params.source ?? resolvePolicySource({ requestKind: "plugin-npm" }),
     sourcePath: params.sourcePath,
@@ -1237,18 +1441,21 @@ export async function preflightPluginNpmInstallPolicyRuntime(params: {
   });
 }
 
-export async function preflightPluginGitInstallPolicyRuntime(params: {
-  config?: OpenClawConfig;
-  logger: InstallScanLogger;
-  mode?: "install" | "update";
-  pluginId: string;
-  requestedSpecifier?: string;
-  source?: InstallPolicySource;
-  sourcePath: string;
-}): Promise<InstallSecurityScanResult | undefined> {
+export async function preflightPluginGitInstallPolicyRuntime(
+  params: InstallSafetyOverrides & {
+    config?: OpenClawConfig;
+    logger: InstallScanLogger;
+    mode?: "install" | "update";
+    pluginId: string;
+    requestedSpecifier?: string;
+    source?: InstallPolicySource;
+    sourcePath: string;
+  },
+): Promise<InstallSecurityScanResult | undefined> {
   return await runOperatorInstallPolicy({
     config: params.config,
     logger: params.logger,
+    onInstallPolicyWarning: params.onInstallPolicyWarning,
     origin: { type: "plugin-git" },
     source: params.source ?? resolvePolicySource({ requestKind: "plugin-git" }),
     sourcePath: params.sourcePath,
@@ -1265,22 +1472,27 @@ export async function preflightPluginGitInstallPolicyRuntime(params: {
   });
 }
 
-export async function evaluateSkillInstallPolicyRuntime(params: {
-  config?: OpenClawConfig;
-  installId: string;
-  installSpec?: SkillInstallSpec;
-  logger: InstallScanLogger;
-  origin: InstallPolicyOrigin;
-  requestedSpecifier?: string;
-  source?: InstallPolicySource;
-  mode?: "install" | "update";
-  skillName: string;
-  sourceDir: string;
-}): Promise<InstallSecurityScanResult | undefined> {
+export async function evaluateSkillInstallPolicyRuntime(
+  params: InstallSafetyOverrides & {
+    config?: OpenClawConfig;
+    installId: string;
+    installSpec?: SkillInstallSpec;
+    logger: InstallScanLogger;
+    logicalSourcePath?: string;
+    origin: InstallPolicyOrigin;
+    requestedSpecifier?: string;
+    source?: InstallPolicySource;
+    mode?: "install" | "update";
+    skillName: string;
+    sourceDir: string;
+  },
+): Promise<InstallSecurityScanResult | undefined> {
   const runPolicy = () =>
     runOperatorInstallPolicy({
       config: params.config,
       logger: params.logger,
+      logicalSourcePath: params.logicalSourcePath,
+      onInstallPolicyWarning: params.onInstallPolicyWarning,
       origin: params.origin,
       source:
         params.source ??
@@ -1301,7 +1513,7 @@ export async function evaluateSkillInstallPolicyRuntime(params: {
     return await runPolicy();
   }
   const policyResult = await runPolicy();
-  if (policyResult?.blocked) {
+  if (policyResult) {
     return policyResult;
   }
 
