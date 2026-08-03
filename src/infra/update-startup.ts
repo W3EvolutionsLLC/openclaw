@@ -40,6 +40,7 @@ import { detectRespawnSupervisor, type RespawnSupervisor } from "./supervisor-ma
 import {
   channelToNpmTag,
   normalizeUpdateChannel,
+  resolveRegistryUpdateChannel,
   DEFAULT_PACKAGE_CHANNEL,
   type UpdateChannel,
 } from "./update-channels.js";
@@ -533,8 +534,10 @@ export async function runGatewayUpdateCheck(params: {
   if (params.isNixMode) {
     return;
   }
-  const configuredChannel =
-    normalizeUpdateChannel(params.cfg.update?.channel) ?? DEFAULT_PACKAGE_CHANNEL;
+  const configuredChannel = resolveRegistryUpdateChannel({
+    configChannel: normalizeUpdateChannel(params.cfg.update?.channel),
+    currentVersion: VERSION,
+  });
   const auto = resolveAutoUpdatePolicy(params.cfg);
   const autoDisabledByEnv = isTruthyEnvValue(process.env.OPENCLAW_NO_AUTO_UPDATE);
   const autoDisabledByExternalSupervisor = isGatewayExternallySupervised();
