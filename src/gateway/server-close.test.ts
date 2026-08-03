@@ -234,6 +234,78 @@ describe("createGatewayCloseHandler", () => {
     expect(deps.chatRunState.clear).toHaveBeenCalledTimes(1);
   });
 
+  it("continues shutdown when disposing system-agent sessions fails", async () => {
+    const disposeSystemAgentSessions = vi.fn(async () => {
+      throw new AggregateError([new Error("session disposal failed")]);
+    });
+    const deps = createGatewayCloseTestDeps({ disposeSystemAgentSessions });
+    const close = createGatewayCloseHandler(deps);
+
+    const result = await close({ reason: "test" });
+
+    expect(disposeSystemAgentSessions).toHaveBeenCalledTimes(1);
+    expect(deps.heartbeatRunner.stop).toHaveBeenCalledTimes(1);
+    expect(result.warnings).toContain("system-agent-sessions");
+  });
+
+  it.each([
+    {
+      name: "restart drain deadline",
+      closeOptions: { reason: "gateway restarting", restartExpectedMs: 123, drainTimeoutMs: 0 },
+      elapsedBeforeDisposalMs: 0,
+      cleanupGraceMs: 0,
+    },
+    {
+      name: "normal shutdown watchdog after earlier teardown delays",
+      closeOptions: { reason: "SIGTERM" },
+      elapsedBeforeDisposalMs: 5_000,
+      cleanupGraceMs: 5_000,
+    },
+  ])(
+    "does not let system-agent cleanup consume the $name",
+    async ({ closeOptions, elapsedBeforeDisposalMs, cleanupGraceMs }) => {
+      vi.useFakeTimers();
+      let releaseEarlierTeardown!: () => void;
+      const earlierTeardown = new Promise<void>((resolve) => {
+        releaseEarlierTeardown = resolve;
+      });
+      let releaseDisposal!: () => void;
+      const disposal = new Promise<void>((resolve) => {
+        releaseDisposal = resolve;
+      });
+      const disposeSystemAgentSessions = vi.fn(() => disposal);
+      const deps = createGatewayCloseTestDeps({
+        disposeSystemAgentSessions,
+        configReloader: {
+          stop: vi.fn(() => earlierTeardown),
+        },
+      });
+      const close = createGatewayCloseHandler(deps);
+      const closePromise = close(closeOptions);
+      let closeSettled = false;
+      void closePromise.then(() => {
+        closeSettled = true;
+      });
+
+      await vi.advanceTimersByTimeAsync(elapsedBeforeDisposalMs);
+      releaseEarlierTeardown();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(disposeSystemAgentSessions).toHaveBeenCalledOnce();
+      if (cleanupGraceMs > 0) {
+        expect(closeSettled).toBe(false);
+        await vi.advanceTimersByTimeAsync(cleanupGraceMs - 1);
+        expect(closeSettled).toBe(false);
+        await vi.advanceTimersByTimeAsync(1);
+      }
+      const result = await closePromise;
+
+      expect(deps.heartbeatRunner.stop).toHaveBeenCalledOnce();
+      expect(result.warnings).toContain("system-agent-sessions");
+      releaseDisposal();
+      await disposal;
+    },
+  );
+
   it("clears the process-root plugin registry after teardown", async () => {
     const lifecycleSlot = resolveGlobalMap<string, number>(
       Symbol.for("openclaw.test.gatewayCloseLifecycleSlot"),
