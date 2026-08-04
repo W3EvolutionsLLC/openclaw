@@ -317,6 +317,8 @@ export class GatewayRelayRealtimeTalkTransport implements RealtimeTalkTransport 
         case "ready":
           this.ctx.callbacks.onStatus?.("listening");
           return;
+        case "audioStarted":
+          return;
         case "audio":
           if (event.audioBase64 && !this.playbackOverflowed) {
             this.cancelRequestedForPlayback = false;
