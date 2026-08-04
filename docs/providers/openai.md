@@ -954,7 +954,9 @@ compatibility fallback when the shared
     Use `gpt-live-1-codex` (recommended) or
     `gpt-live-1-boulder-alpha`. The values `gpt-live-1` and
     `gpt-live-1-mini` are not valid on this route. Opt in explicitly with
-    `talk.realtime.model`; `gpt-realtime-2.1` remains the GA default.
+    `talk.realtime.model`; private preview ids are not listed in the normal
+    Talk model picker, but the exact configured model is returned by
+    `talk.catalog`. `gpt-realtime-2.1` remains the GA default.
 
     GPT-Live accepts these voices: `alloy`, `ash`, `ballad`, `cedar`, `coral`,
     `echo`, `marin`, `sage`, `shimmer`, and `verse`. OpenClaw defaults to
@@ -966,8 +968,7 @@ compatibility fallback when the shared
        created with `openclaw models auth login --provider openai`. An existing
        Codex CLI (`~/.codex`) sign-in is **not** read; the profile must exist in
        OpenClaw.
-    2. `talk.realtime.model` set to a `gpt-live-*` value — via **Settings →
-       Talk** in the Control UI or the config below.
+    2. `talk.realtime.model` set to an exact `gpt-live-*` value in config.
     3. The bundled `openai` plugin registered in full mode. A restrictive
        `plugins.allow` list fails with "OpenAI GPT-Live browser session broker
        is unavailable".
