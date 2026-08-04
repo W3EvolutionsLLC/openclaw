@@ -366,6 +366,13 @@ describeControlUiE2e("Control UI custodian event nudge mocked Gateway E2E", () =
       expect(await cancelButton.evaluate((element) => getComputedStyle(element).cursor)).toBe(
         "pointer",
       );
+      expect(
+        await Promise.all(
+          [continueButton, cancelButton].map((button) =>
+            button.evaluate((element) => element.getBoundingClientRect().height),
+          ),
+        ),
+      ).toEqual([44, 44]);
 
       await gateway.setMethodResponse("openclaw.chat", {
         sessionId: "e2e-rich-wizard",
