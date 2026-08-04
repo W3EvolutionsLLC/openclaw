@@ -15,7 +15,11 @@ import { isPrivateQaCliEnabled } from "./private-qa-cli.js";
 export type SubCliDescriptor = NamedCommandDescriptor;
 
 const subCliCommandCatalog = defineCommandDescriptorCatalog([
-  { name: "acp", description: "Run an ACP bridge backed by the Gateway", hasSubcommands: true },
+  {
+    name: "acp",
+    description: "Run OpenClaw ACP runtimes and Gateway bridge tools",
+    hasSubcommands: true,
+  },
   {
     name: "gateway",
     description: "Run, inspect, and query the WebSocket Gateway",
