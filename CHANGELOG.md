@@ -65,6 +65,7 @@ Docs: https://docs.openclaw.ai
 
 ### Fixes
 
+- **Realtime Talk consult durability:** preserve accepted agent and tool work across normal relay teardown, provider disconnects, and continuity replacement while retaining explicit turn and task cancellation.
 - **Realtime Talk output interruption:** stop provider speech and queued playback without aborting the active turn, agent consult, or tool work, while keeping explicit turn cancellation destructive.
 - **Realtime Talk event consistency:** forward the session harness's authoritative turn, transcript, audio, and completion events through the Gateway and Control UI instead of reconstructing a second event stream, preserving event identity and ordering across clients. Thanks @romneyda.
 - **Control UI agent and skill permissions:** gate Agents, Skills, Skill Workshop, and delayed mutation dispatches by the current Gateway method catalog and operator scopes while preserving read-only browsing and legacy Gateway compatibility. Fixes #119176. Thanks @shakkernerd.
