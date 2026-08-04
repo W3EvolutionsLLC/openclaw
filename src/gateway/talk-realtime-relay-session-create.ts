@@ -232,10 +232,14 @@ export function createTalkRealtimeRelaySession(
         if (!relay) {
           return;
         }
-        broadcastEvent(
-          { relaySessionId, type: "clear", ...(reason ? { reason } : {}) },
-          relay.harness.finishOutputAudio(reason ?? "clear"),
-        );
+        // Advance the harness flush generation before publishing the provider clear.
+        // This suppresses the barge-in fallback so clients receive one clear only.
+        relay.harness.flushOutput(() => {
+          broadcastEvent(
+            { relaySessionId, type: "clear", ...(reason ? { reason } : {}) },
+            relay.harness.finishOutputAudio(reason ?? "clear"),
+          );
+        });
       },
       sendMark: (markName) => {
         const relay = getActiveRelay();
