@@ -20,6 +20,7 @@ function createHarness(
       maxRequests?: number;
       windowMs?: number;
     };
+    abortSettleTimeoutMs?: number;
   } = {},
 ) {
   const updates: unknown[] = [];
@@ -182,6 +183,7 @@ describe("AcpNativeAgent", () => {
   });
 
   it("relays exec approvals through ACP instead of calling a Gateway", async () => {
+    const commandSecret = "sk-abcdefghijklmnopqrstuv"; // pragma: allowlist secret
     const executeAgent = vi.fn(
       async (opts: AgentCommandIngressOpts) =>
         await runWithLocalExecApprovalHandler({
@@ -190,7 +192,7 @@ describe("AcpNativeAgent", () => {
           run: async () => {
             const registration = await registerExecApprovalRequestForHostOrThrow({
               approvalId: "approval-1",
-              command: "buzz messages send --message hello",
+              command: `buzz messages send --token ${commandSecret} --message hello`,
               env: { BUZZ_PRIVATE_KEY: "must-not-leak" },
               workdir: "/tmp/project",
               host: "gateway",
@@ -220,11 +222,12 @@ describe("AcpNativeAgent", () => {
         toolCall: expect.objectContaining({
           kind: "execute",
           rawInput: expect.objectContaining({
-            command: "buzz messages send --message hello",
+            command: expect.stringContaining("buzz messages send"),
           }),
         }),
       }),
     );
+    expect(JSON.stringify(harness.requestPermission.mock.calls)).not.toContain(commandSecret);
     expect(JSON.stringify(harness.requestPermission.mock.calls)).not.toContain("must-not-leak");
     await harness.agent.shutdown();
   });
@@ -293,6 +296,30 @@ describe("AcpNativeAgent", () => {
       await secondResult;
       await teardownResult;
       expect(executeAgent).toHaveBeenCalledTimes(1);
+      if (teardown === "close") {
+        await harness.agent.shutdown();
+      }
+    },
+  );
+
+  it.each(["close", "shutdown"] as const)(
+    "bounds session %s when the executor ignores abort",
+    async (teardown) => {
+      const executeAgent = vi.fn(async () => await new Promise<never>(() => {}));
+      const harness = createHarness(executeAgent, undefined, { abortSettleTimeoutMs: 5 });
+      const session = harness.agent.newSession({ cwd: "/tmp/project", mcpServers: [] });
+      void harness.agent.prompt({
+        sessionId: session.sessionId,
+        prompt: [{ type: "text", text: "wait forever" }],
+      });
+      await vi.waitFor(() => expect(executeAgent).toHaveBeenCalledOnce());
+
+      const teardownResult =
+        teardown === "close"
+          ? harness.agent.closeSession({ sessionId: session.sessionId })
+          : harness.agent.shutdown();
+
+      await expect(teardownResult).resolves.toEqual(teardown === "close" ? {} : undefined);
       if (teardown === "close") {
         await harness.agent.shutdown();
       }

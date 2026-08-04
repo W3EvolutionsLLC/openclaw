@@ -23,6 +23,7 @@ import {
 } from "@agentclientprotocol/sdk";
 import { agentCommandFromIngress } from "../agents/agent-command.js";
 import { resolveDefaultAgentId } from "../agents/agent-scope-config.js";
+import { resolveEmbeddedAbortSettleTimeoutMs } from "../agents/embedded-agent-runner/run/attempt.abort-settle-timeout.js";
 import { stripInternalRuntimeContext } from "../agents/internal-runtime-context.js";
 import type { LocalExecApprovalRequest } from "../agents/local-exec-approval-broker.js";
 import { isSilentReplyPayloadText } from "../auto-reply/tokens.js";
@@ -93,6 +94,7 @@ type NativeAgentDependencies = {
     maxRequests?: number;
     windowMs?: number;
   };
+  abortSettleTimeoutMs?: number;
 };
 
 function payloadText(parts: unknown): string {
@@ -252,6 +254,7 @@ export class AcpNativeAgent implements Agent {
   private readonly resolveAgentId: () => string;
   private readonly runtime: RuntimeEnv;
   private readonly sessionCreateRateLimiter: FixedWindowRateLimiter;
+  private readonly abortSettleTimeoutMs: number;
   private readonly sessions = new Map<string, NativeSession>();
   private readonly activeTurns = new Map<string, ActiveTurn>();
   private readonly admittedPrompts = new Map<string, Set<Promise<PromptResponse>>>();
@@ -270,6 +273,7 @@ export class AcpNativeAgent implements Agent {
     this.subscribeAgentEvents = deps.subscribeAgentEvents ?? onAgentEvent;
     this.resolveAgentId = deps.resolveAgentId ?? (() => resolveDefaultAgentId(getRuntimeConfig()));
     this.runtime = deps.runtime ?? silentRuntime;
+    this.abortSettleTimeoutMs = deps.abortSettleTimeoutMs ?? resolveEmbeddedAbortSettleTimeoutMs();
     this.sessionCreateRateLimiter = createFixedWindowRateLimiter({
       maxRequests: resolveFixedWindowRateLimitInteger(
         deps.sessionCreateRateLimit?.maxRequests,
@@ -463,6 +467,30 @@ export class AcpNativeAgent implements Agent {
     return completions;
   }
 
+  private async waitForAdmittedPrompts(sessionId?: string): Promise<void> {
+    const completions = this.collectAdmittedPrompts(sessionId);
+    if (completions.length === 0) {
+      return;
+    }
+    let timeout: NodeJS.Timeout | undefined;
+    const outcome = await Promise.race([
+      Promise.allSettled(completions).then(() => "settled" as const),
+      new Promise<"timed_out">((resolve) => {
+        timeout = setTimeout(() => resolve("timed_out"), this.abortSettleTimeoutMs);
+        timeout.unref?.();
+      }),
+    ]);
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+    if (outcome === "timed_out") {
+      this.runtime.error(
+        `ACP native abort settle timed out after ${this.abortSettleTimeoutMs}ms` +
+          (sessionId ? ` for session ${sessionId}` : ""),
+      );
+    }
+  }
+
   async closeSession(params: CloseSessionRequest): Promise<CloseSessionResponse> {
     this.closingSessions.add(params.sessionId);
     const session = this.sessions.get(params.sessionId);
@@ -471,8 +499,9 @@ export class AcpNativeAgent implements Agent {
     }
     try {
       this.activeTurns.get(params.sessionId)?.controller.abort(new Error("ACP session closed"));
-      await Promise.allSettled(this.collectAdmittedPrompts(params.sessionId));
+      await this.waitForAdmittedPrompts(params.sessionId);
       this.activeTurns.delete(params.sessionId);
+      this.admittedPrompts.delete(params.sessionId);
       this.sessions.delete(params.sessionId);
       return {};
     } finally {
@@ -488,7 +517,7 @@ export class AcpNativeAgent implements Agent {
     for (const turn of this.activeTurns.values()) {
       turn.controller.abort(reason);
     }
-    await Promise.allSettled(this.collectAdmittedPrompts());
+    await this.waitForAdmittedPrompts();
     this.activeTurns.clear();
     this.admittedPrompts.clear();
     this.closingSessions.clear();
