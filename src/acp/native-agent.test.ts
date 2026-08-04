@@ -8,6 +8,8 @@ import type { AgentCommandIngressOpts } from "../agents/command/types.js";
 import { runWithLocalExecApprovalHandler } from "../agents/local-exec-approval-broker.js";
 import type { AgentEventPayload } from "../infra/agent-events.js";
 import { isEmbeddedMode } from "../infra/embedded-mode.js";
+import { getEmbeddedPluginApprovalBroker } from "../infra/embedded-plugin-approval-broker.js";
+import { PLUGIN_APPROVAL_DETAIL_MAX_LENGTH } from "../infra/plugin-approvals.js";
 import { AcpNativeAgent } from "./native-agent.js";
 
 function createHarness(
@@ -229,6 +231,82 @@ describe("AcpNativeAgent", () => {
     );
     expect(JSON.stringify(harness.requestPermission.mock.calls)).not.toContain(commandSecret);
     expect(JSON.stringify(harness.requestPermission.mock.calls)).not.toContain("must-not-leak");
+    await harness.agent.shutdown();
+  });
+
+  it("projects plugin approvals through the canonical safe presentation", async () => {
+    const secret = `ghp_${"a".repeat(100)}`; // pragma: allowlist secret
+    let decision: string | null | undefined;
+    const executeAgent = vi.fn(async (opts: AgentCommandIngressOpts) => {
+      await Promise.resolve();
+      const broker = getEmbeddedPluginApprovalBroker();
+      if (!broker) {
+        throw new Error("expected embedded plugin approval broker");
+      }
+      decision = (
+        await broker.request({
+          request: {
+            title: `Deploy\u202Eprod ${secret}`,
+            description: `Review\u0000\n${secret}`,
+            detail: `${"x".repeat(PLUGIN_APPROVAL_DETAIL_MAX_LENGTH + 1)}\u202E`,
+            pluginId: `plugin\u202E${secret}`,
+            toolName: `tool\n${secret}`,
+            toolCallId: "plugin-tool-1",
+          },
+          timeoutMs: 1_000,
+          signal: opts.abortSignal,
+        })
+      ).decision;
+      return { payloads: [], meta: {} };
+    });
+    const harness = createHarness(executeAgent);
+    const session = harness.agent.newSession({ cwd: "/tmp/project", mcpServers: [] });
+
+    await harness.agent.prompt({
+      sessionId: session.sessionId,
+      prompt: [{ type: "text", text: "run plugin tool" }],
+    });
+
+    expect(decision).toBe("allow-once");
+    const serialized = JSON.stringify(harness.requestPermission.mock.calls);
+    expect(serialized).not.toContain(secret);
+    expect(serialized).not.toContain("\u202E");
+    expect(serialized).not.toContain("\u0000");
+    expect(serialized).toContain("\\\\u{202E}");
+    expect(serialized).toContain("[truncated]");
+    await harness.agent.shutdown();
+  });
+
+  it("denies plugin approvals that exceed canonical presentation limits", async () => {
+    let decision: string | null | undefined;
+    const executeAgent = vi.fn(async (opts: AgentCommandIngressOpts) => {
+      await Promise.resolve();
+      const broker = getEmbeddedPluginApprovalBroker();
+      if (!broker) {
+        throw new Error("expected embedded plugin approval broker");
+      }
+      decision = (
+        await broker.request({
+          request: {
+            title: "x".repeat(81),
+            description: "bounded description",
+          },
+          timeoutMs: 1_000,
+          signal: opts.abortSignal,
+        })
+      ).decision;
+      return { payloads: [], meta: {} };
+    });
+    const harness = createHarness(executeAgent);
+    const session = harness.agent.newSession({ cwd: "/tmp/project", mcpServers: [] });
+
+    await harness.agent.prompt({
+      sessionId: session.sessionId,
+      prompt: [{ type: "text", text: "run oversized plugin tool" }],
+    });
+
+    expect(decision).toBe("deny");
+    expect(harness.requestPermission).not.toHaveBeenCalled();
     await harness.agent.shutdown();
   });
 

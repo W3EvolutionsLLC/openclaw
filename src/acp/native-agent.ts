@@ -29,6 +29,7 @@ import type { LocalExecApprovalRequest } from "../agents/local-exec-approval-bro
 import { isSilentReplyPayloadText } from "../auto-reply/tokens.js";
 import { getRuntimeConfig } from "../config/config.js";
 import { type AgentEventPayload, onAgentEvent } from "../infra/agent-events.js";
+import { buildApprovalPresentation } from "../infra/approval-presentation.js";
 import { setEmbeddedMode } from "../infra/embedded-mode.js";
 import {
   clearEmbeddedPluginApprovalBroker,
@@ -178,23 +179,32 @@ function permissionOptions(decisions: readonly ExecApprovalDecision[]): Permissi
 function pluginPermissionRequest(
   sessionId: string,
   approval: PluginApprovalRequest,
-): RequestPermissionRequest {
+): RequestPermissionRequest | null {
   const request = approval.request;
-  const toolName = request.toolName ?? request.pluginId ?? "plugin";
-  const options = permissionOptions(resolveCanonicalPluginApprovalRequestAllowedDecisions(request));
+  const allowedDecisions = resolveCanonicalPluginApprovalRequestAllowedDecisions(request);
+  const presentation = buildApprovalPresentation({
+    kind: "plugin",
+    request,
+    allowedDecisions,
+  });
+  if (!presentation || presentation.kind !== "plugin") {
+    return null;
+  }
+  const toolName = presentation.toolName ?? presentation.pluginId ?? "plugin";
+  const options = permissionOptions(allowedDecisions);
   return {
     sessionId,
     toolCall: {
       toolCallId: request.toolCallId ?? approval.id,
-      title: request.title,
+      title: presentation.title,
       kind: "other",
       status: "pending",
       rawInput: {
         name: toolName,
         approvalId: approval.id,
-        description: request.description,
-        ...(request.detail ? { detail: request.detail } : {}),
-        ...(request.pluginId ? { pluginId: request.pluginId } : {}),
+        description: presentation.description,
+        ...(presentation.detail ? { detail: presentation.detail } : {}),
+        ...(presentation.pluginId ? { pluginId: presentation.pluginId } : {}),
       },
       _meta: {
         toolName,
@@ -691,6 +701,10 @@ export class AcpNativeAgent implements Agent {
       return;
     }
     const permission = pluginPermissionRequest(session.id, approval);
+    if (!permission) {
+      this.pluginApprovalBroker.resolve(approval.id, "deny");
+      return;
+    }
     const controller = new AbortController();
     const timeout = setTimeout(
       () => controller.abort(new Error(`Plugin approval "${approval.id}" expired`)),
