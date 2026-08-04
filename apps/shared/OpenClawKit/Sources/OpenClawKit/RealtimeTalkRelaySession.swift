@@ -298,11 +298,14 @@ public final class RealtimeTalkRelaySession {
         self.pendingPreRelayEvents.removeAll()
         self.onStatus("Connecting realtime…")
         let eventStream = await self.transport.subscribeServerEvents(200)
-        guard await self.isCurrentLifecycle(lifecycleGeneration) else { return }
+        guard self.isCurrentLifecycleLocally(lifecycleGeneration) else { return }
+        guard await self.transport.isCurrent() else {
+            throw Self.transportChangedError()
+        }
         self.startEventPump(stream: eventStream, lifecycleGeneration: lifecycleGeneration)
         do {
             let result = try await self.createRelaySession()
-            guard await self.isCurrentLifecycle(lifecycleGeneration) else {
+            guard self.isCurrentLifecycleLocally(lifecycleGeneration) else {
                 if let relaySessionId = result.relaysessionid?.trimmingCharacters(in: .whitespacesAndNewlines),
                    !relaySessionId.isEmpty
                 {
@@ -311,6 +314,16 @@ public final class RealtimeTalkRelaySession {
                         relaySessionId: relaySessionId)
                 }
                 return
+            }
+            guard await self.transport.isCurrent() else {
+                if let relaySessionId = result.relaysessionid?.trimmingCharacters(in: .whitespacesAndNewlines),
+                   !relaySessionId.isEmpty
+                {
+                    await Self.closeRelaySession(
+                        transport: self.transport,
+                        relaySessionId: relaySessionId)
+                }
+                throw Self.transportChangedError()
             }
             guard let relaySessionId = result.relaysessionid?.trimmingCharacters(in: .whitespacesAndNewlines),
                   !relaySessionId.isEmpty
@@ -330,12 +343,19 @@ public final class RealtimeTalkRelaySession {
             if let startupIssue {
                 throw Self.startupFailureError(startupIssue)
             }
-            guard await self.isCurrentLifecycle(lifecycleGeneration) else { return }
+            guard self.isCurrentLifecycleLocally(lifecycleGeneration) else { return }
+            guard await self.transport.isCurrent() else {
+                throw Self.transportChangedError()
+            }
             switch await self.waitForStartupResult(
                 timeoutSeconds: Self.startupReadyTimeoutSeconds,
                 lifecycleGeneration: lifecycleGeneration)
             {
             case .ready:
+                guard self.isCurrentLifecycleLocally(lifecycleGeneration) else { return }
+                guard await self.transport.isCurrent() else {
+                    throw Self.transportChangedError()
+                }
                 return
             case let .failed(issue):
                 self.close(sendClose: true)
@@ -344,7 +364,7 @@ public final class RealtimeTalkRelaySession {
                 return
             }
         } catch {
-            guard await self.isCurrentLifecycle(lifecycleGeneration) else {
+            guard self.isCurrentLifecycleLocally(lifecycleGeneration) else {
                 // A terminal pre-ready event closes the relay to stop all work. Its recorded
                 // startup issue still owns the result; lifecycle invalidation must not turn it
                 // into a successful start.
@@ -367,6 +387,12 @@ public final class RealtimeTalkRelaySession {
     private nonisolated static func startupFailureError(_ issue: RealtimeTalkRelayIssue) -> NSError {
         NSError(domain: "RealtimeTalkRelay", code: 6, userInfo: [
             NSLocalizedDescriptionKey: issue.message,
+        ])
+    }
+
+    private nonisolated static func transportChangedError() -> NSError {
+        NSError(domain: "RealtimeTalkRelay", code: 7, userInfo: [
+            NSLocalizedDescriptionKey: "Gateway connection changed while starting realtime.",
         ])
     }
 
