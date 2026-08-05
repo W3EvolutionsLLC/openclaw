@@ -842,6 +842,10 @@ export type SessionSkillSnapshot = {
   prompt: string;
   /** Persisted stores may replace large duplicate prompts with a content-addressed blob ref. */
   promptRef?: SessionSkillPromptRef;
+  /** Loader-neutral catalog rendered from the same bounded selection as prompt. */
+  catalogPrompt?: string;
+  /** Persisted stores may externalize the loader-neutral catalog independently. */
+  catalogPromptRef?: SessionSkillPromptRef;
   skills: Array<{ name: string; primaryEnv?: string; requiredEnv?: string[] }>;
   /** Normalized agent-level filter used to build this snapshot; undefined means unrestricted. */
   skillFilter?: string[];
@@ -856,6 +860,7 @@ export type SessionSkillSnapshot = {
    */
   resolvedSkills?: Skill[];
   version?: number;
+  promptFormatVersion?: number;
 };
 
 export type SessionSystemPromptReport = {

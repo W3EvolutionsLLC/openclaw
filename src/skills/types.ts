@@ -117,10 +117,12 @@ export type SkillEligibilityContext = {
   };
 };
 
-export const WORKSPACE_SKILLS_PROMPT_FORMAT_VERSION = 3;
+export const WORKSPACE_SKILLS_PROMPT_FORMAT_VERSION = 4;
 
 export type SkillSnapshot = {
   prompt: string;
+  /** Loader-neutral catalog rendered from the same bounded selection as prompt. */
+  catalogPrompt?: string;
   skills: Array<{
     name: string;
     /** Config key can differ from the prompt-facing skill name. */

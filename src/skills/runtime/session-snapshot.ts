@@ -58,7 +58,8 @@ export function resolveReusableWorkspaceSkillSnapshot(
   }
   const snapshotVersion = params.snapshotVersion ?? getSkillsSnapshotVersion(params.workspaceDir);
   const promptFormatChanged =
-    params.existingSnapshot?.promptFormatVersion !== WORKSPACE_SKILLS_PROMPT_FORMAT_VERSION;
+    params.existingSnapshot?.promptFormatVersion !== WORKSPACE_SKILLS_PROMPT_FORMAT_VERSION ||
+    typeof params.existingSnapshot.catalogPrompt !== "string";
   const skillVersionChanged = shouldRefreshSnapshotForVersion(
     params.existingSnapshot?.version,
     snapshotVersion,

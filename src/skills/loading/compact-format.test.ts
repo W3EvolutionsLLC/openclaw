@@ -76,6 +76,21 @@ describe("formatSkillsCompact", () => {
       makeSkill("notes", "Summarize notes", "/tmp/notes/SKILL.md"),
     ];
     expect(formatSkillsForPrompt(skills)).toBe(upstreamFormatSkillsForPrompt(skills));
+    expect(formatSkillsForPrompt(skills)).toContain(
+      "Use the read tool to load a skill's file when the task matches its description.",
+    );
+  });
+
+  it("renders a loader-free full catalog variant from the same snapshot", () => {
+    const snapshot = buildWorkspaceSkillSnapshot("/fake", {
+      entries: [makeEntry(makeSkill("weather", "Get weather data"))],
+    });
+
+    expect(snapshot.prompt).toContain("Use the read tool");
+    expect(snapshot.catalogPrompt).not.toContain("Use the read tool");
+    expect(snapshot.catalogPrompt).toContain("<name>weather</name>");
+    expect(snapshot.catalogPrompt).toContain("<description>Get weather data</description>");
+    expect(snapshot.promptFormatVersion).toBe(4);
   });
 
   it("renders all passed skills in the full formatter without reapplying visibility policy", () => {
@@ -213,6 +228,29 @@ describe("applySkillsPromptLimits (via buildWorkspaceSkillsPrompt)", () => {
     expect(included).toBeLessThan(total);
     expect(total).toBe(skills.length);
     expect(prompt.match(/<skill>/g)?.length ?? 0).toBe(included);
+  });
+
+  it("keeps the compact catalog variant on the embedded prompt's exact budget outcome", () => {
+    const skills = Array.from({ length: 100 }, (_, i) => makeSkill(`skill-${i}`, "description"));
+    const snapshot = buildWorkspaceSkillSnapshot("/fake", {
+      entries: skills.map(makeEntry),
+      config: {
+        skills: { limits: { maxSkillsPromptChars: 2_000 } },
+      } satisfies OpenClawConfig,
+    });
+
+    expect(snapshot.prompt).toContain("Use the read tool");
+    expect(snapshot.catalogPrompt).not.toContain("Use the read tool");
+    expect(snapshot.catalogPrompt).toContain("compact format");
+    expect(requireIncludedCounts(snapshot.catalogPrompt ?? "")).toEqual(
+      requireIncludedCounts(snapshot.prompt),
+    );
+    expect(snapshot.catalogPrompt?.match(/<skill>/g)?.length).toBe(
+      snapshot.prompt.match(/<skill>/g)?.length,
+    );
+    expect(snapshot.catalogPrompt?.match(/<description>/g)?.length ?? 0).toBe(
+      snapshot.prompt.match(/<description>/g)?.length ?? 0,
+    );
   });
 
   it("preserves every identity before allocating description budget", () => {

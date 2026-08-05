@@ -104,9 +104,11 @@ function buildStoreEntryChunkSizeMap(store: Record<string, SessionEntry>): Map<s
   return out;
 }
 
-function resolveProjectedPromptBlobHash(entry: SessionEntry | undefined): string | undefined {
-  const ref = entry?.skillsSnapshot?.promptRef;
-  return ref?.algorithm === "sha256" && typeof ref.hash === "string" ? ref.hash : undefined;
+function resolveProjectedPromptBlobHashes(entry: SessionEntry | undefined): string[] {
+  const snapshot = entry?.skillsSnapshot;
+  return [snapshot?.promptRef, snapshot?.catalogPromptRef].flatMap((ref) =>
+    ref?.algorithm === "sha256" && typeof ref.hash === "string" ? [ref.hash] : [],
+  );
 }
 
 function buildProjectedPromptBlobRefCounts(
@@ -114,11 +116,9 @@ function buildProjectedPromptBlobRefCounts(
 ): Map<string, number> {
   const counts = new Map<string, number>();
   for (const entry of Object.values(store)) {
-    const hash = resolveProjectedPromptBlobHash(entry);
-    if (!hash) {
-      continue;
+    for (const hash of resolveProjectedPromptBlobHashes(entry)) {
+      counts.set(hash, (counts.get(hash) ?? 0) + 1);
     }
-    counts.set(hash, (counts.get(hash) ?? 0) + 1);
   }
   return counts;
 }
@@ -847,7 +847,7 @@ export async function enforceSessionDiskBudget(params: {
       }
       const previousProjectedBytes = projectedStoreBytes;
       const projectedEntry = projectedStore[key];
-      const promptBlobHash = resolveProjectedPromptBlobHash(projectedEntry);
+      const promptBlobHashes = resolveProjectedPromptBlobHashes(projectedEntry);
       delete params.store[key];
       delete projectedStore[key];
       const chunkBytes = entryChunkBytesByKey.get(key);
@@ -859,7 +859,7 @@ export async function enforceSessionDiskBudget(params: {
         projectedStoreBytes = measureStoreBytes(projectedStore);
       }
       total += projectedStoreBytes - previousProjectedBytes;
-      if (promptBlobHash) {
+      for (const promptBlobHash of promptBlobHashes) {
         const nextRefCount = (projectedPromptBlobRefCounts.get(promptBlobHash) ?? 1) - 1;
         if (nextRefCount > 0) {
           projectedPromptBlobRefCounts.set(promptBlobHash, nextRefCount);

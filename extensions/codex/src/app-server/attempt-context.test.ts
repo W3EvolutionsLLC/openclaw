@@ -18,6 +18,7 @@ import {
   buildCodexSystemPromptReport,
   readContextEngineThreadBootstrapProjection,
   readMirroredSessionHistoryMessages,
+  renderCodexSkillsCollaborationInstructions,
   resolveContextEngineBootstrapProjectionDecision,
 } from "./attempt-context.js";
 import type { CodexDynamicToolSpec } from "./protocol.js";
@@ -29,6 +30,60 @@ afterEach(() => {
 });
 
 describe("Codex app-server attempt context", () => {
+  it.each([
+    {
+      name: "native filesystem execution",
+      nativeToolSurfaceEnabled: true,
+      dynamicTools: [],
+      injected: true,
+    },
+    {
+      name: "projected sandbox execution",
+      nativeToolSurfaceEnabled: false,
+      dynamicTools: [
+        {
+          type: "function",
+          name: "sandbox_exec",
+          description: "Run a sandbox command.",
+          inputSchema: { type: "object", properties: {} },
+        },
+      ],
+      injected: true,
+    },
+    {
+      name: "no filesystem execution",
+      nativeToolSurfaceEnabled: false,
+      dynamicTools: [
+        {
+          type: "function",
+          name: "message",
+          description: "Send a message.",
+          inputSchema: { type: "object", properties: {} },
+        },
+      ],
+      injected: false,
+    },
+  ])("gates skill catalogs on $name", ({ nativeToolSurfaceEnabled, dynamicTools, injected }) => {
+    const rendered = renderCodexSkillsCollaborationInstructions({
+      attempt: {} as EmbeddedRunAttemptParams,
+      skillsPrompt: "<available_skills><skill><name>demo</name></skill></available_skills>",
+      nativeToolSurfaceEnabled,
+      dynamicTools: dynamicTools as CodexDynamicToolSpec[],
+    });
+
+    if (!injected) {
+      expect(rendered).toBeUndefined();
+      return;
+    }
+    expect(rendered).toContain(
+      "Open and read each matching skill's listed <location> using the filesystem or execution capabilities available in this Codex session",
+    );
+    expect(rendered).toContain("<available_skills>");
+    expect(rendered).not.toContain("Use the read tool");
+    expect(rendered).not.toContain("skills.read");
+    expect(rendered).not.toMatch(/`(?:exec|node_exec|sandbox_exec)`/u);
+  });
+
   it("treats missing mirrored session history as empty without hook warning", async () => {
     const warn = vi.spyOn(embeddedAgentLog, "warn").mockImplementation(() => undefined);
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-attempt-context-history-"));

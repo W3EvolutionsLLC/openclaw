@@ -154,14 +154,22 @@ async function ensurePromptBlob(storePath: string, prompt: string): Promise<Sess
   return ref;
 }
 
-function stripPromptForPersistence(entry: SessionEntry, ref: SessionSkillPromptRef): SessionEntry {
-  const { prompt: _prompt, ...snapshot } = entry.skillsSnapshot!;
+function externalizeSnapshotPromptsForPersistence(
+  entry: SessionEntry,
+  refs: { prompt?: SessionSkillPromptRef; catalogPrompt?: SessionSkillPromptRef },
+): SessionEntry {
+  const snapshot = { ...entry.skillsSnapshot! };
+  if (refs.prompt) {
+    delete (snapshot as Partial<SessionSkillSnapshot>).prompt;
+    snapshot.promptRef = refs.prompt;
+  }
+  if (refs.catalogPrompt) {
+    delete snapshot.catalogPrompt;
+    snapshot.catalogPromptRef = refs.catalogPrompt;
+  }
   return {
     ...entry,
-    skillsSnapshot: {
-      ...snapshot,
-      promptRef: ref,
-    } as SessionSkillSnapshot,
+    skillsSnapshot: snapshot,
   };
 }
 
@@ -174,20 +182,38 @@ export function projectSessionStoreForPersistence(params: {
   const promptBlobs = new Map<string, SessionSkillPromptBlobProjection>();
   for (const [key, entry] of Object.entries(params.store)) {
     const prompt = entry.skillsSnapshot?.prompt;
-    if (!prompt || !shouldStorePromptAsBlob(prompt)) {
+    const catalogPrompt = entry.skillsSnapshot?.catalogPrompt;
+    const promptRef =
+      prompt && shouldStorePromptAsBlob(prompt) ? buildPromptRef(prompt) : undefined;
+    const catalogPromptRef =
+      catalogPrompt && shouldStorePromptAsBlob(catalogPrompt)
+        ? buildPromptRef(catalogPrompt)
+        : undefined;
+    if (!promptRef && !catalogPromptRef) {
       continue;
     }
-    const promptRef = buildPromptRef(prompt);
-    promptBlobs.set(promptRef.hash, {
-      ref: promptRef,
-      path: resolveSessionSkillPromptBlobPath(params.storePath, promptRef.hash),
-      prompt,
-    });
+    if (promptRef && prompt) {
+      promptBlobs.set(promptRef.hash, {
+        ref: promptRef,
+        path: resolveSessionSkillPromptBlobPath(params.storePath, promptRef.hash),
+        prompt,
+      });
+    }
+    if (catalogPromptRef && catalogPrompt) {
+      promptBlobs.set(catalogPromptRef.hash, {
+        ref: catalogPromptRef,
+        path: resolveSessionSkillPromptBlobPath(params.storePath, catalogPromptRef.hash),
+        prompt: catalogPrompt,
+      });
+    }
     if (persisted === params.store) {
       // Copy-on-write keeps callers that only inspect the projection from seeing partial mutation.
       persisted = { ...params.store };
     }
-    persisted[key] = stripPromptForPersistence(entry, promptRef);
+    persisted[key] = externalizeSnapshotPromptsForPersistence(entry, {
+      prompt: promptRef,
+      catalogPrompt: catalogPromptRef,
+    });
     changed = true;
   }
   return { store: persisted, changed, promptBlobs };
@@ -231,29 +257,47 @@ export function hydrateSessionStoreSkillPromptRefs(params: {
     }
     const entry = value as SessionEntry;
     const snapshot = entry.skillsSnapshot;
-    if (!snapshot || typeof snapshot.prompt === "string") {
+    if (!snapshot) {
       continue;
     }
-    const promptRef = parsePromptRef((snapshot as { promptRef?: unknown }).promptRef);
-    const prompt = promptRef ? readValidPromptBlob(params.storePath, promptRef) : null;
-    if (!prompt) {
+    const promptMissing = typeof snapshot.prompt !== "string";
+    const catalogPromptMissing =
+      typeof snapshot.catalogPrompt !== "string" && snapshot.catalogPromptRef !== undefined;
+    if (!promptMissing && !catalogPromptMissing) {
+      continue;
+    }
+    const promptRef = promptMissing ? parsePromptRef(snapshot.promptRef) : null;
+    const catalogPromptRef = catalogPromptMissing
+      ? parsePromptRef(snapshot.catalogPromptRef)
+      : null;
+    const prompt = promptMissing
+      ? promptRef
+        ? readValidPromptBlob(params.storePath, promptRef)
+        : null
+      : snapshot.prompt;
+    const catalogPrompt = catalogPromptMissing
+      ? catalogPromptRef
+        ? readValidPromptBlob(params.storePath, catalogPromptRef)
+        : null
+      : snapshot.catalogPrompt;
+    if (!prompt || (catalogPromptMissing && catalogPrompt === null)) {
       // Missing or invalid blob means the snapshot is no longer trustworthy; drop it instead of
-      // leaving a promptRef that downstream prompt assembly cannot dereference.
+      // leaving a prompt ref that downstream prompt assembly cannot dereference.
       const nextEntry = { ...entry };
       delete nextEntry.skillsSnapshot;
       params.store[key] = nextEntry;
       changed = true;
       continue;
     }
-    const { promptRef: _promptRef, ...rest } = snapshot as typeof snapshot & {
-      promptRef?: SessionSkillPromptRef;
-    };
+    const hydratedSnapshot = { ...snapshot, prompt };
+    delete hydratedSnapshot.promptRef;
+    if (catalogPromptMissing && catalogPrompt !== null) {
+      hydratedSnapshot.catalogPrompt = catalogPrompt;
+      delete hydratedSnapshot.catalogPromptRef;
+    }
     params.store[key] = {
       ...entry,
-      skillsSnapshot: {
-        ...rest,
-        prompt,
-      },
+      skillsSnapshot: hydratedSnapshot,
     };
     changed = true;
   }

@@ -41,6 +41,7 @@ export async function prepareCodexAttemptContext(
     effectiveContextTokenBudget,
     effectiveRuntimeProviderId,
     effectiveRuntimeModelId,
+    nativeToolSurfaceEnabled,
     hookChannelId,
   } = runtime;
   const {
@@ -158,7 +159,9 @@ export async function prepareCodexAttemptContext(
   });
   const skillsCollaborationInstructions = renderCodexSkillsCollaborationInstructions({
     attempt: runtimeParams,
-    skillsPrompt: params.skillsSnapshot?.prompt,
+    skillsPrompt: params.skillsSnapshot?.catalogPrompt,
+    nativeToolSurfaceEnabled,
+    dynamicTools: toolBridge.availableSpecs,
   });
   const promptState = {
     promptText: params.prompt,

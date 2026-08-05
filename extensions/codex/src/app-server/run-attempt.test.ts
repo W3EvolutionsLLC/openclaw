@@ -1682,7 +1682,8 @@ describe("runCodexAppServerAttempt", () => {
       },
     });
     params.skillsSnapshot = {
-      prompt: "<available_skills><skill><name>demo</name></skill></available_skills>",
+      prompt: "EMBEDDED_ONLY_SKILLS_PROMPT",
+      catalogPrompt: "<available_skills><skill><name>demo</name></skill></available_skills>",
       skills: [],
     };
     const run = runCodexAppServerAttempt(params);
@@ -1708,6 +1709,10 @@ describe("runCodexAppServerAttempt", () => {
       turnStartParams.collaborationMode?.settings?.developer_instructions ?? "";
     expect(collaborationInstructions).toContain("## OpenClaw Skills");
     expect(collaborationInstructions).toContain("<available_skills>");
+    expect(collaborationInstructions).not.toContain("EMBEDDED_ONLY_SKILLS_PROMPT");
+    expect(collaborationInstructions).toContain(
+      "Open and read each matching skill's listed <location>",
+    );
     const inputText = turnStartParams.input?.[0]?.text ?? "";
     expect(inputText).not.toContain("## OpenClaw Skills");
     expect(inputText).not.toContain("<available_skills>");
@@ -1720,7 +1725,10 @@ describe("runCodexAppServerAttempt", () => {
     expect(trajectoryEvents.find((event) => event.type === "prompt.submitted")?.data?.prompt).toBe(
       inputText,
     );
-    expect(result.systemPromptReport?.skills.promptChars).toBe(params.skillsSnapshot.prompt.length);
+    expect(params.skillsSnapshot.catalogPrompt).toBeTruthy();
+    expect(result.systemPromptReport?.skills.promptChars).toBe(
+      params.skillsSnapshot.catalogPrompt?.length,
+    );
     expect(result.systemPromptReport?.skills.entries).toEqual([
       { name: "demo", blockChars: "<skill><name>demo</name></skill>".length },
     ]);

@@ -1352,7 +1352,7 @@ function truncateSkillDescription(description: string, maxChars: number): string
  */
 export function formatSkillsCompact(
   skills: Skill[],
-  opts?: { descriptionMaxChars?: number },
+  opts?: { descriptionMaxChars?: number; includeLoadInstruction?: boolean },
 ): string {
   if (skills.length === 0) {
     return "";
@@ -1363,9 +1363,13 @@ export function formatSkillsCompact(
   );
   const lines = [
     "\n\nThe following skills provide specialized instructions for specific tasks.",
-    descriptionMaxChars > 0
-      ? "Use the read tool to load a skill's file when the task matches its name or description."
-      : "Use the read tool to load a skill's file when the task matches its name.",
+    ...(opts?.includeLoadInstruction === false
+      ? []
+      : [
+          descriptionMaxChars > 0
+            ? "Use the read tool to load a skill's file when the task matches its name or description."
+            : "Use the read tool to load a skill's file when the task matches its name.",
+        ]),
     "If a skill's <version> differs from a previous turn, re-read its SKILL.md before using it.",
     "When a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.",
     "",
@@ -1422,6 +1426,7 @@ function buildRenderedSkillsPrompt(params: {
   total: number;
   format: SkillsPromptFormat;
   includeLimitNote?: boolean;
+  includeLoadInstruction?: boolean;
 }): string {
   // resolveCodeModeSkills in src/agents/code-mode-skills.ts parses this exact format; update both together.
   // The production-renderer parity test in src/agents/code-mode.test.ts enforces this coupling.
@@ -1439,17 +1444,25 @@ function buildRenderedSkillsPrompt(params: {
     params.format.kind === "compact"
       ? formatSkillsCompact(params.skills, {
           descriptionMaxChars: params.format.descriptionMaxChars,
+          includeLoadInstruction: params.includeLoadInstruction,
         })
-      : formatSkillsForPrompt(params.skills);
+      : formatSkillsForPrompt(params.skills, {
+          includeLoadInstruction: params.includeLoadInstruction,
+        });
   return [params.remoteNote, limitNote, catalog].filter(Boolean).join("\n");
 }
+
+type RenderedSkillsPrompts = {
+  prompt: string;
+  catalogPrompt: string;
+};
 
 function applySkillsPromptLimits(params: {
   skills: Skill[];
   config?: OpenClawConfig;
   agentId?: string;
   remoteNote?: string;
-}): string {
+}): RenderedSkillsPrompts {
   const limits = resolveSkillsLimits(params.config, params.agentId);
   const total = params.skills.length;
   const byCount = params.skills.slice(0, Math.max(0, limits.maxSkillsInPrompt));
@@ -1460,7 +1473,7 @@ function applySkillsPromptLimits(params: {
     skills: Skill[],
     format: SkillsPromptFormat,
     includeLimitNote = true,
-  ): string | undefined => {
+  ): RenderedSkillsPrompts | undefined => {
     // Optional context must disappear whole; clipping it could corrupt skill guidance or XML.
     const remoteNotes = params.remoteNote ? [params.remoteNote, undefined] : [undefined];
     for (const remoteNote of remoteNotes) {
@@ -1472,7 +1485,17 @@ function applySkillsPromptLimits(params: {
         includeLimitNote,
       });
       if (prompt.length <= limits.maxSkillsPromptChars) {
-        return prompt;
+        return {
+          prompt,
+          catalogPrompt: buildRenderedSkillsPrompt({
+            remoteNote,
+            skills,
+            total,
+            format,
+            includeLimitNote,
+            includeLoadInstruction: false,
+          }),
+        };
       }
     }
     return undefined;
@@ -1552,21 +1575,30 @@ function applySkillsPromptLimits(params: {
         skillsForPrompt,
         { kind: "compact", descriptionMaxChars },
         includeLimitNote,
-      ) ?? ""
+      ) ?? { prompt: "", catalogPrompt: "" }
     );
   }
 
-  return renderWithinLimit(skillsForPrompt, { kind: "full" }) ?? "";
+  return (
+    renderWithinLimit(skillsForPrompt, { kind: "full" }) ?? {
+      prompt: "",
+      catalogPrompt: "",
+    }
+  );
 }
 
 export function buildWorkspaceSkillSnapshot(
   workspaceDir: string,
   opts?: WorkspaceSkillBuildOptions & { snapshotVersion?: number },
 ): SkillSnapshot {
-  const { eligible, prompt, resolvedSkills } = resolveWorkspaceSkillPromptState(workspaceDir, opts);
+  const { eligible, prompt, catalogPrompt, resolvedSkills } = resolveWorkspaceSkillPromptState(
+    workspaceDir,
+    opts,
+  );
   const skillFilter = resolveEffectiveWorkspaceSkillFilter(opts);
   return {
     prompt,
+    catalogPrompt,
     skills: eligible.map((entry) => ({
       name: entry.skill.name,
       skillKey: resolveSkillKey(entry.skill, entry),
@@ -1625,6 +1657,7 @@ function resolveWorkspaceSkillPromptState(
 ): {
   eligible: SkillEntry[];
   prompt: string;
+  catalogPrompt: string;
   resolvedSkills: Skill[];
 } {
   const effectiveSkillFilter = resolveEffectiveWorkspaceSkillFilter(opts);
@@ -1651,13 +1684,13 @@ function resolveWorkspaceSkillPromptState(
   const promptSkills = compactSkillPaths(resolvedSkills).toSorted((a, b) =>
     a.name.localeCompare(b.name, "en"),
   );
-  const prompt = applySkillsPromptLimits({
+  const renderedPrompts = applySkillsPromptLimits({
     skills: promptSkills,
     config: opts?.config,
     agentId: opts?.agentId,
     remoteNote,
   });
-  return { eligible, prompt, resolvedSkills };
+  return { eligible, ...renderedPrompts, resolvedSkills };
 }
 
 export function resolveSkillsPromptForRun(params: {

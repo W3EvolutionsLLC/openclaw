@@ -937,6 +937,65 @@ describe("pruneUnreferencedSessionArtifacts", () => {
     });
   });
 
+  it("preserves both live prompt blobs and same-hash dual references during cleanup", async () => {
+    await withTempDir({ prefix: "openclaw-prune-prompt-blob-" }, async (dir) => {
+      const storePath = path.join(dir, "sessions.json");
+      const sharedPrompt = `<available_skills>\n${"shared prompt\n".repeat(200)}</available_skills>`;
+      const catalogPrompt = `<available_skills>\n${"catalog prompt\n".repeat(200)}</available_skills>`;
+      const store: Record<string, SessionEntry> = {
+        distinct: {
+          sessionId: "distinct",
+          updatedAt: 1,
+          skillsSnapshot: {
+            prompt: sharedPrompt,
+            catalogPrompt,
+            promptFormatVersion: 4,
+            skills: [{ name: "distinct" }],
+          },
+        },
+        deduped: {
+          sessionId: "deduped",
+          updatedAt: 2,
+          skillsSnapshot: {
+            prompt: sharedPrompt,
+            catalogPrompt: sharedPrompt,
+            promptFormatVersion: 4,
+            skills: [{ name: "deduped" }],
+          },
+        },
+      };
+      await saveSessionStore(storePath, store, { skipMaintenance: true });
+      const raw = JSON.parse(await fs.readFile(storePath, "utf-8")) as Record<string, SessionEntry>;
+      const refs = [
+        raw.distinct?.skillsSnapshot?.promptRef,
+        raw.distinct?.skillsSnapshot?.catalogPromptRef,
+        raw.deduped?.skillsSnapshot?.promptRef,
+        raw.deduped?.skillsSnapshot?.catalogPromptRef,
+      ];
+      expect(refs.every(Boolean)).toBe(true);
+      expect(refs[2]?.hash).toBe(refs[3]?.hash);
+      const hashes = new Set(refs.flatMap((ref) => (ref ? [ref.hash] : [])));
+      const staleTime = new Date(Date.now() - 10 * 60 * 1000);
+      const blobPaths = [...hashes].map((hash) =>
+        path.join(dir, "skills-prompts", "sha256", hash.slice(0, 2), `${hash}.txt`),
+      );
+      for (const blobPath of blobPaths) {
+        await fs.utimes(blobPath, staleTime, staleTime);
+      }
+
+      const result = await pruneUnreferencedSessionArtifacts({
+        store,
+        storePath,
+        olderThanMs: 0,
+      });
+
+      expect(result.removedFiles).toBe(0);
+      for (const blobPath of blobPaths) {
+        await expectPathExists(blobPath);
+      }
+    });
+  });
+
   it("preserves fresh unreferenced skills prompt blobs during normal artifact cleanup", async () => {
     await withTempDir({ prefix: "openclaw-prune-fresh-prompt-blob-" }, async (dir) => {
       const storePath = path.join(dir, "sessions.json");
