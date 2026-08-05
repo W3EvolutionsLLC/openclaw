@@ -601,8 +601,6 @@ jobs:
           CRABBOX_JOB: ${{ inputs.crabbox_job }}
         run: |
           $ErrorActionPreference = "Stop"
-          # Source sync after hydration can invalidate importer links; ready envs must re-verify dependencies.
-          $env:PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN = "install"
           $job = if ($env:CRABBOX_JOB) { $env:CRABBOX_JOB } else { "hydrate-windows-daemon" }
           if (-not $env:CRABBOX_ID -or $env:CRABBOX_ID -notmatch '^[A-Za-z0-9._-]+$') {
             Write-Error "Invalid crabbox_id"

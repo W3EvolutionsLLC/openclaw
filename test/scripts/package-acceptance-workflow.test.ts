@@ -1452,9 +1452,10 @@ describe("package acceptance workflow", () => {
     expect(hydrateWindowsFetch.run).toContain('"+refs/heads/main:refs/remotes/origin/main"');
     const markHydrateWindowsReady = workflowStep(hydrateWindowsDaemon, "Mark Crabbox ready");
     expect(markHydrateWindowsReady.shell).toBe("powershell");
-    expect(markHydrateWindowsReady.run).toContain(
+    expect(markHydrateWindowsReady.run).not.toContain(
       '$env:PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN = "install"',
     );
+    expect(markHydrateWindowsReady.run).toContain('"PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN"');
     expect(markHydrateWindowsReady.run).toContain('"NODE_BIN"');
     expect(markHydrateWindowsReady.run).toContain('"PNPM_HOME"');
     expect(markHydrateWindowsReady.run).toContain('"PATH"');
@@ -3103,6 +3104,12 @@ describe("package artifact reuse", () => {
       "Run Testbox",
     );
 
+    expect(readWorkflow(CI_CHECK_TESTBOX_WORKFLOW).env?.PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN).toBe(
+      "false",
+    );
+    expect(
+      readWorkflow(CI_CHECK_ARM_TESTBOX_WORKFLOW).env?.PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN,
+    ).toBe("false");
     expect(workflow).not.toContain('PNPM_CONFIG_STORE_DIR: "/tmp/openclaw-pnpm-store"');
     expect(workflow).not.toContain("PNPM_CONFIG_MODULES_DIR");
     expect(workflow).not.toContain("PNPM_CONFIG_VIRTUAL_STORE_DIR");
