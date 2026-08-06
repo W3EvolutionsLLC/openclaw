@@ -44,6 +44,9 @@ import {
   dashboardHtmlMarkerStatus,
   type GatewayHandle,
   CROSS_OS_FETCH_BODY_MAX_CHARS,
+  GATEWAY_NODE_COMPAT_BASELINE_SPEC,
+  GATEWAY_NODE_COMPAT_BASELINE_TAG,
+  GATEWAY_NODE_COMPAT_BASELINE_VERSION,
   CROSS_OS_GATEWAY_READY_TIMEOUT_MS,
   CROSS_OS_GATEWAY_STATUS_COMMAND_TIMEOUT_MS,
   CROSS_OS_GATEWAY_STATUS_RPC_TIMEOUT_MS,
@@ -979,6 +982,93 @@ describe("scripts/openclaw-cross-os-release-checks", () => {
       "OPENCLAW_CROSS_OS_OPENAI_MODEL: ${{ inputs.openai_model || vars.OPENCLAW_CROSS_OS_OPENAI_MODEL || 'openai/gpt-5.6-luna' }}",
     );
     expect(releaseChecks).toContain("openai_model: openai/gpt-5.6-luna");
+  });
+
+  it("wires the required Linux x64 Gateway/node compatibility producer", () => {
+    const workflow = readFileSync(
+      ".github/workflows/openclaw-cross-os-release-checks-reusable.yml",
+      "utf8",
+    );
+    const producer = readFileSync(
+      "scripts/lib/cross-os-release-checks/gateway-node-compat.ts",
+      "utf8",
+    );
+
+    expect(GATEWAY_NODE_COMPAT_BASELINE_TAG).toBe("v2026.5.7");
+    expect(GATEWAY_NODE_COMPAT_BASELINE_VERSION).toBe("2026.5.7");
+    expect(GATEWAY_NODE_COMPAT_BASELINE_SPEC).toBe("openclaw@2026.5.7");
+    expect(workflow).toContain("gateway_node_linux_compat:");
+    expect(workflow).toContain("Gateway/node compatibility / Linux x64");
+    expect(workflow).toContain(
+      "openclaw-gateway-node-compat-baseline-${{ github.run_id }}-${{ github.run_attempt }}",
+    );
+    expect(workflow).toContain("--gateway-node-compat true");
+    expect(workflow).toContain("Run packaged Gateway/node compatibility in tokenless container");
+    expect(workflow).toContain("--compat-baseline-version");
+    expect(workflow).toContain(
+      '--candidate-artifact-run-id "${{ needs.prepare.outputs.candidate_artifact_run_id }}"',
+    );
+    expect(workflow).toContain(
+      '--candidate-artifact-run-attempt "${{ needs.prepare.outputs.candidate_artifact_run_attempt }}"',
+    );
+    expect(workflow).toContain(
+      '--compat-baseline-artifact-run-id "${{ needs.prepare.outputs.compat_baseline_artifact_run_id }}"',
+    );
+    expect(workflow).toContain(
+      '--compat-baseline-artifact-run-attempt "${{ needs.prepare.outputs.compat_baseline_artifact_run_attempt }}"',
+    );
+    expect(workflow).toContain(
+      "GATEWAY_NODE_COMPAT_WORKFLOW_SHA: ${{ needs.prepare.outputs.workflow_ref }}",
+    );
+    expect(workflow).toContain("GITHUB_TOKEN: ${{ github.token }}");
+    const gatewayNodeJob = workflow.slice(workflow.indexOf("  gateway_node_linux_compat:"));
+    const setupObserverDependencies = gatewayNodeJob.indexOf(
+      "- name: Setup trusted Gateway/node observer dependencies",
+    );
+    const installObserverDependencies = gatewayNodeJob.indexOf(
+      "- name: Install trusted Gateway/node observer dependencies",
+    );
+    const runCompatibility = gatewayNodeJob.indexOf(
+      "- name: Run packaged Gateway/node compatibility in tokenless container",
+    );
+    expect(setupObserverDependencies).toBeGreaterThan(0);
+    expect(installObserverDependencies).toBeGreaterThan(setupObserverDependencies);
+    expect(runCompatibility).toBeGreaterThan(installObserverDependencies);
+    expect(gatewayNodeJob).toContain(
+      "run: pnpm install --filter . --frozen-lockfile --prefer-offline --ignore-scripts",
+    );
+    expect(gatewayNodeJob).not.toContain("--ignore-scripts=false");
+    expect(producer).toContain(
+      "node:24-bookworm-slim@sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d",
+    );
+    expect(producer).toContain('"--read-only"');
+    expect(producer).toContain('"--cap-drop"');
+    expect(producer).toContain('"no-new-privileges"');
+    expect(producer).toContain('"--pids-limit"');
+    expect(producer).toContain('"--network", "none"');
+    expect(producer).toContain('join(workflowRoot, "scripts")');
+    expect(producer).toContain('join(workflowRoot, "packages", "normalization-core")');
+    expect(producer).not.toContain('buildDockerBindMount(params.workflowRoot, "/workflow", true)');
+    expect(producer).not.toContain("/var/run/docker.sock");
+    expect(producer).not.toContain('"--privileged"');
+    expect(producer).not.toContain('"--env-file"');
+    expect(workflow).not.toContain("Validate prepared compatibility artifact bindings");
+    expect(workflow).not.toContain("Verify compatibility package hashes");
+    expect(workflow).not.toContain("--workflow-sha");
+    expect(workflow).not.toContain("--candidate-artifact-size");
+    expect(workflow).not.toContain("--compat-baseline-artifact-size");
+    expect(workflow).not.toContain("--job gateway_node_linux_compat");
+    expect(workflow).toContain("Upload Gateway/node compatibility failure diagnostics");
+    expect(workflow).toContain("gateway_node_compat_artifact_size:");
+    expect(workflow).toContain(
+      "artifact_size: ${{ steps.capture_gateway_node_compat_artifact.outputs.size }}",
+    );
+    expect(workflow).toContain(
+      "openclaw-gateway-node-linux-compat-${{ github.run_id }}-${{ github.run_attempt }}",
+    );
+    expect(workflow).toContain(
+      "gateway_node_linux_compat:\n    name: Gateway/node compatibility / Linux x64\n    needs: prepare\n    continue-on-error: ${{ inputs.advisory }}",
+    );
   });
 
   it("keeps release smoke plugin allowlists focused on agent-turn essentials", () => {
