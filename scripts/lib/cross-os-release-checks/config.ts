@@ -109,6 +109,11 @@ export const PUBLISHED_INSTALLER_BASE_URL = "https://openclaw.ai";
 export const GATEWAY_NODE_COMPAT_BASELINE_TAG = "v2026.5.7";
 export const GATEWAY_NODE_COMPAT_BASELINE_VERSION = "2026.5.7";
 export const GATEWAY_NODE_COMPAT_BASELINE_SPEC = `openclaw@${GATEWAY_NODE_COMPAT_BASELINE_VERSION}`;
+export const GATEWAY_NODE_COMPAT_BASELINE_SOURCE_SHA = "eeef4864494f859838fec1586bedbab1f8fa5702";
+export const GATEWAY_NODE_COMPAT_BASELINE_SHA256 =
+  "1fe195d8e3928062cfaf7f9ef616670cde25b35ea9631fcae5f8aaf8be2986fd";
+export const GATEWAY_NODE_COMPAT_BASELINE_NPM_INTEGRITY =
+  "sha512-hjvpgconK20YltQPrzDY6cehjM8ijQyZnLKhqLBTngiFEPum9gmXwCDsrisPEXVRFtzuMhap+w6zSEmSQ1047Q==";
 
 const SUPPORTED_MODES = new Set<CrossOsMode>(["fresh", "upgrade", "both"]);
 const SUPPORTED_SUITES = new Set<CrossOsSuite>([

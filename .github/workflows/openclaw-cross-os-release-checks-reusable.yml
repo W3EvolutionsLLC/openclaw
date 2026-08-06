@@ -624,6 +624,9 @@ jobs:
         env:
           BASELINE_TAG: v2026.5.7
           BASELINE_VERSION: 2026.5.7
+          BASELINE_SOURCE_SHA: eeef4864494f859838fec1586bedbab1f8fa5702
+          BASELINE_SHA256: 1fe195d8e3928062cfaf7f9ef616670cde25b35ea9631fcae5f8aaf8be2986fd
+          BASELINE_NPM_INTEGRITY: sha512-hjvpgconK20YltQPrzDY6cehjM8ijQyZnLKhqLBTngiFEPum9gmXwCDsrisPEXVRFtzuMhap+w6zSEmSQ1047Q==
           OUTPUT_DIR: ${{ runner.temp }}/openclaw-cross-os-release-checks/prepare/compat-baseline
         run: |
           set -euo pipefail
@@ -640,6 +643,10 @@ jobs:
             echo "Failed to resolve ${BASELINE_TAG} to one full source SHA." >&2
             exit 1
           }
+          [[ "${source_sha}" == "${BASELINE_SOURCE_SHA}" ]] || {
+            echo "Gateway/node compatibility baseline tag moved from ${BASELINE_SOURCE_SHA} to ${source_sha}." >&2
+            exit 1
+          }
           mkdir -p "${OUTPUT_DIR}"
           timeout --preserve-status 300s npm pack --ignore-scripts --json "openclaw@${BASELINE_VERSION}" --pack-destination "${OUTPUT_DIR}" > "${OUTPUT_DIR}/pack.json"
           echo "source_sha=${source_sha}" >> "$GITHUB_OUTPUT"
@@ -651,13 +658,21 @@ jobs:
           import { resolveNpmJsonEntries } from "./workflow/scripts/lib/npm-json-output.mjs";
           const packJson = path.join(process.env.OUTPUT_DIR, "pack.json");
           const payload = JSON.parse(fs.readFileSync(packJson, "utf8"));
-          const fileName = resolveNpmJsonEntries(payload).at(-1)?.filename?.trim() ?? "";
+          const entry = resolveNpmJsonEntries(payload).at(-1);
+          const fileName = entry?.filename?.trim() ?? "";
           if (!fileName.endsWith(".tgz") || fileName !== path.basename(fileName) || fileName !== path.win32.basename(fileName)) {
             throw new Error("Gateway/node compatibility baseline must be a local .tgz filename.");
           }
           const bytes = fs.readFileSync(path.join(process.env.OUTPUT_DIR, fileName));
+          const sha256 = crypto.createHash("sha256").update(bytes).digest("hex");
+          if (sha256 !== process.env.BASELINE_SHA256) {
+            throw new Error("Gateway/node compatibility baseline tarball SHA-256 mismatch.");
+          }
+          if (entry?.integrity !== process.env.BASELINE_NPM_INTEGRITY) {
+            throw new Error("Gateway/node compatibility baseline npm integrity mismatch.");
+          }
           process.stdout.write(`file_name=${fileName}\n`);
-          process.stdout.write(`sha256=${crypto.createHash("sha256").update(bytes).digest("hex")}\n`);
+          process.stdout.write(`sha256=${sha256}\n`);
           NODE
 
       - name: Capture candidate metadata

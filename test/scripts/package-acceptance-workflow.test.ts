@@ -42,6 +42,7 @@ const ANDROID_RELEASE_WORKFLOW = ".github/workflows/android-release.yml";
 const STABLE_MAIN_CLOSEOUT_WORKFLOW = ".github/workflows/openclaw-stable-main-closeout.yml";
 const WINDOWS_NODE_RELEASE_WORKFLOW = ".github/workflows/windows-node-release.yml";
 const FULL_RELEASE_VALIDATION_WORKFLOW = ".github/workflows/full-release-validation.yml";
+const RELEASE_EVIDENCE_PUBLICATION_WORKFLOW = ".github/workflows/release-evidence-publication.yml";
 const FULL_RELEASE_CHILD_DISPATCHES = [
   {
     jobName: "normal_ci",
@@ -164,6 +165,10 @@ type Workflow = {
   on?: {
     workflow_call?: {
       inputs?: Record<string, unknown>;
+    };
+    workflow_run?: {
+      types?: string[];
+      workflows?: string[];
     };
   };
 };
@@ -3917,7 +3922,40 @@ describe("package artifact reuse", () => {
     const summaryJob = workflowJob(FULL_RELEASE_VALIDATION_WORKFLOW, "summary");
     const evidenceReuseStep = workflowStep(evidenceReuseJob, "Find reusable validation evidence");
     const dispatchStep = workflowStep(npmTelegramJob, "Dispatch and monitor npm Telegram E2E");
+    const modeStep = workflowStep(summaryJob, "Select Gateway/node compatibility mode");
+    const collectorCheckout = workflowStep(
+      summaryJob,
+      "Checkout Gateway/node compatibility collector",
+    );
+    const collectorStep = workflowStep(summaryJob, "Collect Gateway/node compatibility evidence");
     const manifestStep = workflowStep(summaryJob, "Write release validation manifest");
+    const manifestUpload = workflowStep(summaryJob, "Upload release validation manifest");
+    const legacyManifestUpload = workflowStep(
+      summaryJob,
+      "Upload legacy release validation manifest alias",
+    );
+    const publicationWorkflow = readWorkflow(RELEASE_EVIDENCE_PUBLICATION_WORKFLOW);
+    const publicationJob = workflowJob(RELEASE_EVIDENCE_PUBLICATION_WORKFLOW, "publish");
+    const publicationCheckout = workflowStep(
+      publicationJob,
+      "Checkout trusted publication verifier",
+    );
+    const publicationVerify = workflowStep(
+      publicationJob,
+      "Verify exact completed release evidence",
+    );
+    const publicationDispatch = workflowStep(
+      publicationJob,
+      "Dispatch release evidence publication",
+    );
+    const publicationConfirm = workflowStep(
+      publicationJob,
+      "Confirm durable release evidence publication",
+    );
+    const manifestRun = manifestStep.run ?? "";
+    const manifestArtifactPath =
+      "${{ runner.temp }}/full-release-validation/full-release-validation-manifest.json";
+    const summaryStepNames = (summaryJob.steps ?? []).map((step) => step.name);
 
     expect(workflow).toContain("CHILD_WORKFLOW_REF: ${{ github.ref_name }}");
     expect(workflow).toContain('gh workflow run "$workflow" --ref "$CHILD_WORKFLOW_REF" "$@" 2>&1');
@@ -3957,6 +3995,37 @@ describe("package artifact reuse", () => {
       SCENARIO: "${{ inputs.npm_telegram_scenario }}",
       TARGET_SHA: "${{ needs.resolve_target.outputs.sha }}",
     });
+    expect(collectorCheckout.if).toContain("needs.release_checks.outputs.run_id != ''");
+    expect(collectorCheckout.if).toContain(
+      'contains(fromJSON(\'["all","release-checks","cross-os"]\'), inputs.rerun_group)',
+    );
+    expect(collectorCheckout.with).toMatchObject({
+      path: "workflow",
+      ref: "${{ github.sha }}",
+    });
+    expect(collectorStep.env).toMatchObject({
+      GH_TOKEN: "${{ github.token }}",
+      RELEASE_CHECKS_RUN_ID: "${{ needs.release_checks.outputs.run_id }}",
+      TARGET_SHA: "${{ needs.resolve_target.outputs.sha }}",
+    });
+    expectTextToIncludeAll(collectorStep.run, [
+      "gateway-node-compat-release-evidence.mjs collect",
+      '--workflow-sha "${GITHUB_SHA}"',
+      '--target-sha "${TARGET_SHA}"',
+      '--mode "${GATEWAY_NODE_COMPAT_MODE}"',
+    ]);
+    expect(modeStep.env).toEqual({
+      RERUN_GROUP: "${{ inputs.rerun_group }}",
+      WORKFLOW_FULL_REF: "${{ github.ref }}",
+    });
+    expectTextToIncludeAll(modeStep.run, [
+      'mode="not-selected"',
+      "all | release-checks | cross-os)",
+      '[[ "$WORKFLOW_FULL_REF" == refs/heads/tideclaw/alpha/* ]]',
+      'mode="advisory"',
+      'mode="required"',
+      '"GATEWAY_NODE_COMPAT_MODE=${mode}"',
+    ]);
     expect(manifestStep.env).toMatchObject({
       ALLOW_UNRELEASED_CHANGELOG:
         "${{ inputs.allow_unreleased_changelog || (inputs.target_context_ref == '' && (inputs.ref == 'main' || inputs.ref == 'refs/heads/main')) }}",
@@ -3964,7 +4033,62 @@ describe("package artifact reuse", () => {
       NPM_TELEGRAM_PROVIDER_MODE: "${{ inputs.npm_telegram_provider_mode }}",
       NPM_TELEGRAM_SCENARIO: "${{ inputs.npm_telegram_scenario }}",
     });
-    expectTextToIncludeAll(manifestStep.run, [
+    expectTextToIncludeAll(manifestRun, [
+      '--slurpfile gatewayNodeCompatibility "$GATEWAY_NODE_COMPAT_PATH"',
+      "gatewayNodeCompatibility: $gatewayNodeCompatibilityMode",
+      "{gatewayNodeCompatibility: $gatewayNodeCompatibility[0]}",
+      "releaseEvidencePublication:",
+      'requested: ($dispatchReleaseEvidence == "true")',
+      "releaseRef: $targetRef",
+      "packageSpec: $releaseEvidencePackageSpec",
+    ]);
+    const reuseManifestBranch = manifestRun.slice(
+      manifestRun.indexOf('if [[ "$EVIDENCE_REUSE" == "true" ]]'),
+      manifestRun.indexOf("exit 0"),
+    );
+    expect(reuseManifestBranch).not.toContain("gatewayNodeCompatibility");
+    expect(reuseManifestBranch).toContain(
+      '"${manifest_dir}/full-release-validation-manifest.json"',
+    );
+    for (const uploadStep of [manifestUpload, legacyManifestUpload]) {
+      expect(uploadStep.uses).toBe(UPLOAD_ARTIFACT_V7);
+      expect(uploadStep.with?.path).toBe(manifestArtifactPath);
+      expect(uploadStep.with?.path).not.toContain("gateway-node-compatibility.json");
+    }
+    expect(summaryStepNames).not.toContain("Request release evidence update");
+    expect(publicationWorkflow.on?.workflow_run).toMatchObject({
+      types: ["completed"],
+      workflows: ["Full Release Validation"],
+    });
+    expect(publicationJob.if).toContain("github.repository == 'openclaw/openclaw'");
+    expect(publicationCheckout.with?.ref).toBe("${{ github.sha }}");
+    expect(publicationVerify.run).toContain("node scripts/release-ci-summary.mjs");
+    expect(publicationVerify.run).toContain('--validate-run "$PARENT_RUN_ID"');
+    expect(publicationVerify.run).toContain(
+      "node scripts/release-evidence-publication.mjs prepare",
+    );
+    expect(publicationDispatch.if).toBe("steps.publication.outputs.should_dispatch == 'true'");
+    expectTextToIncludeAll(publicationDispatch.run, [
+      "OPENCLAW_RELEASES_DISPATCH_TOKEN is required",
+      "openclaw_full_release_validation_completed",
+      "full_validation_run_attempt",
+      "full_validation_head_sha",
+      "full_validation_updated_at",
+      "publication_key",
+      "https://api.github.com/repos/openclaw/releases/dispatches",
+    ]);
+    expect(publicationConfirm.if).toBe("steps.publication.outputs.should_dispatch == 'true'");
+    expectTextToIncludeAll(publicationConfirm.run, [
+      "release-evidence-publication.mjs confirm",
+      '--run-id "$FULL_VALIDATION_RUN_ID"',
+      '--run-attempt "$RUN_ATTEMPT"',
+      '--head-sha "$HEAD_SHA"',
+      '--updated-at "$UPDATED_AT"',
+      '--release-id "$RELEASE_ID"',
+      '--release-ref "$RELEASE_REF"',
+      '--package-spec "$PACKAGE_SPEC"',
+    ]);
+    expectTextToIncludeAll(manifestRun, [
       "npmTelegramPackageSpec: $npmTelegramPackageSpec",
       "npmTelegramProviderMode: $npmTelegramProviderMode",
       "npmTelegramScenario: $npmTelegramScenario",

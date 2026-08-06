@@ -45,6 +45,9 @@ import {
   type GatewayHandle,
   CROSS_OS_FETCH_BODY_MAX_CHARS,
   GATEWAY_NODE_COMPAT_BASELINE_SPEC,
+  GATEWAY_NODE_COMPAT_BASELINE_NPM_INTEGRITY,
+  GATEWAY_NODE_COMPAT_BASELINE_SHA256,
+  GATEWAY_NODE_COMPAT_BASELINE_SOURCE_SHA,
   GATEWAY_NODE_COMPAT_BASELINE_TAG,
   GATEWAY_NODE_COMPAT_BASELINE_VERSION,
   CROSS_OS_GATEWAY_READY_TIMEOUT_MS,
@@ -997,6 +1000,20 @@ describe("scripts/openclaw-cross-os-release-checks", () => {
     expect(GATEWAY_NODE_COMPAT_BASELINE_TAG).toBe("v2026.5.7");
     expect(GATEWAY_NODE_COMPAT_BASELINE_VERSION).toBe("2026.5.7");
     expect(GATEWAY_NODE_COMPAT_BASELINE_SPEC).toBe("openclaw@2026.5.7");
+    expect(GATEWAY_NODE_COMPAT_BASELINE_SOURCE_SHA).toBe(
+      "eeef4864494f859838fec1586bedbab1f8fa5702",
+    );
+    expect(GATEWAY_NODE_COMPAT_BASELINE_SHA256).toBe(
+      "1fe195d8e3928062cfaf7f9ef616670cde25b35ea9631fcae5f8aaf8be2986fd",
+    );
+    expect(GATEWAY_NODE_COMPAT_BASELINE_NPM_INTEGRITY).toBe(
+      "sha512-hjvpgconK20YltQPrzDY6cehjM8ijQyZnLKhqLBTngiFEPum9gmXwCDsrisPEXVRFtzuMhap+w6zSEmSQ1047Q==",
+    );
+    expect(workflow).toContain("BASELINE_SOURCE_SHA: eeef4864494f859838fec1586bedbab1f8fa5702");
+    expect(workflow).toContain(
+      "BASELINE_SHA256: 1fe195d8e3928062cfaf7f9ef616670cde25b35ea9631fcae5f8aaf8be2986fd",
+    );
+    expect(workflow).toContain("Gateway/node compatibility baseline npm integrity mismatch.");
     expect(workflow).toContain("gateway_node_linux_compat:");
     expect(workflow).toContain("Gateway/node compatibility / Linux x64");
     expect(workflow).toContain(

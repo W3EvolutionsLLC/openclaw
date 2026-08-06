@@ -26,7 +26,11 @@ import {
   validateGatewayNodeCompatEvidence,
   type GatewayNodeCompatOperation,
 } from "../../scripts/gateway-node-compat-evidence.mjs";
-import { GATEWAY_NODE_COMPAT_BASELINE_SPEC } from "../../scripts/lib/cross-os-release-checks/config.ts";
+import {
+  GATEWAY_NODE_COMPAT_BASELINE_SHA256,
+  GATEWAY_NODE_COMPAT_BASELINE_SOURCE_SHA,
+  GATEWAY_NODE_COMPAT_BASELINE_SPEC,
+} from "../../scripts/lib/cross-os-release-checks/config.ts";
 import {
   assertGatewayNodeCompatArtifactSafe,
   buildDisjointPackagedClientScript,
@@ -178,6 +182,8 @@ function artifactFixture(
 
 function parseParams(
   params: {
+    baselineSha256?: string;
+    baselineSourceSha?: string;
     candidateAttempt?: string;
     baselineAttempt?: string;
     candidateRunId?: string;
@@ -200,8 +206,9 @@ function parseParams(
       "candidate-artifact-run-attempt": params.candidateAttempt ?? "3",
       "compat-baseline-tgz": params.baselineTgz ?? "./baseline.tgz",
       "compat-baseline-version": "2026.5.7",
-      "compat-baseline-source-sha": SOURCE_SHA,
-      "compat-baseline-sha256": ARTIFACT_SHA,
+      "compat-baseline-source-sha":
+        params.baselineSourceSha ?? GATEWAY_NODE_COMPAT_BASELINE_SOURCE_SHA,
+      "compat-baseline-sha256": params.baselineSha256 ?? GATEWAY_NODE_COMPAT_BASELINE_SHA256,
       "compat-baseline-artifact-id": "11",
       "compat-baseline-artifact-digest": `sha256:${ARTIFACT_SHA}`,
       "compat-baseline-artifact-run-id": params.baselineRunId ?? producer.runId,
@@ -1037,6 +1044,12 @@ try { maliciousWriteFileSync("/openclaw-output/forged-ws.json", "{}\\n"); } catc
     expect(params.actions.workflowPath).toBe(actions.workflowPath);
     expect(() => parseParams({ candidateRunId: "788" })).toThrow(/current workflow run/u);
     expect(() => parseParams({ baselineAttempt: "4" })).toThrow(/newer than the consumer/u);
+    expect(() => parseParams({ baselineSourceSha: SOURCE_SHA })).toThrow(
+      /baseline provenance is not canonical/u,
+    );
+    expect(() => parseParams({ baselineSha256: ARTIFACT_SHA })).toThrow(
+      /baseline provenance is not canonical/u,
+    );
   });
 
   it("parses direct and called workflow refs without hardcoding a caller", () => {

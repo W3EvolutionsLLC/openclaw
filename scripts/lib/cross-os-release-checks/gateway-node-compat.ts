@@ -47,7 +47,11 @@ import type {
   ProcessIdentity,
   StoppableProcessHandle,
 } from "./config.ts";
-import { GATEWAY_NODE_COMPAT_BASELINE_VERSION } from "./config.ts";
+import {
+  GATEWAY_NODE_COMPAT_BASELINE_SHA256,
+  GATEWAY_NODE_COMPAT_BASELINE_SOURCE_SHA,
+  GATEWAY_NODE_COMPAT_BASELINE_VERSION,
+} from "./config.ts";
 import {
   binDirForPrefix,
   installTarballPackage,
@@ -321,7 +325,7 @@ function parsePackageSelection(
     `${prefix}-artifact-digest`,
     /^(?:sha256:)?[a-f0-9]{64}$/u,
   );
-  return {
+  const selection = {
     tgzPath: resolveRequiredPath(args, `${prefix}-tgz`),
     version: requireValue(args[`${prefix}-version`], `${prefix}-version`),
     sourceSha: requirePattern(
@@ -341,6 +345,15 @@ function parsePackageSelection(
       runAttempt,
     } satisfies ArtifactSelection,
   };
+  if (
+    prefix === "compat-baseline" &&
+    (selection.version !== GATEWAY_NODE_COMPAT_BASELINE_VERSION ||
+      selection.sourceSha !== GATEWAY_NODE_COMPAT_BASELINE_SOURCE_SHA ||
+      selection.sha256 !== GATEWAY_NODE_COMPAT_BASELINE_SHA256)
+  ) {
+    throw new Error("Gateway/node compatibility baseline provenance is not canonical.");
+  }
+  return selection;
 }
 
 export function validateGatewayNodeCompatArtifactBinding(params: {
@@ -920,6 +933,13 @@ function validateGatewayNodeCompatExecutionPlan(value: unknown): GatewayNodeComp
     "baseline",
     GATEWAY_NODE_COMPAT_CONTAINER_BASELINE_PATH,
   );
+  if (
+    baseline.version !== GATEWAY_NODE_COMPAT_BASELINE_VERSION ||
+    baseline.sourceSha !== GATEWAY_NODE_COMPAT_BASELINE_SOURCE_SHA ||
+    baseline.sha256 !== GATEWAY_NODE_COMPAT_BASELINE_SHA256
+  ) {
+    throw new Error("baseline package provenance is not canonical.");
+  }
   const producer = requirePlanObject(plan.producer, "producer");
   assertPlanKeys(producer, "producer", ["repository", "workflowSha", "runId", "runAttempt", "job"]);
   const repository = requirePlanString(producer.repository, "producer.repository", 255);
