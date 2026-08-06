@@ -110,11 +110,15 @@ function handleNodeHostReconnectPaused(
   exit(1);
 }
 
+const NODE_PLUGIN_TOOLS_UPDATE_METHOD = "node.pluginTools.update";
+const NODE_PROTOCOL_FEATURES_UPDATE_METHOD = "node.protocolFeatures.update";
+const NODE_SKILLS_UPDATE_METHOD = "node.skills.update";
+
 function isUnsupportedNodePluginToolsUpdateError(error: unknown): boolean {
   return (
     error instanceof GatewayClientRequestError &&
     error.gatewayCode === "INVALID_REQUEST" &&
-    error.message.includes("unknown method: node.pluginTools.update")
+    error.message.includes(`unknown method: ${NODE_PLUGIN_TOOLS_UPDATE_METHOD}`)
   );
 }
 
@@ -122,15 +126,7 @@ function isUnsupportedNodeSkillsUpdateError(error: unknown): boolean {
   return (
     error instanceof GatewayClientRequestError &&
     error.gatewayCode === "INVALID_REQUEST" &&
-    error.message.includes("unknown method: node.skills.update")
-  );
-}
-
-function isUnsupportedNodeProtocolFeaturesUpdateError(error: unknown): boolean {
-  return (
-    error instanceof GatewayClientRequestError &&
-    error.gatewayCode === "INVALID_REQUEST" &&
-    error.message.includes("unknown method: node.protocolFeatures.update")
+    error.message.includes(`unknown method: ${NODE_SKILLS_UPDATE_METHOD}`)
   );
 }
 
@@ -138,26 +134,27 @@ type NodeInvokeSessionEnvelopeMode = "authoritative" | "legacy";
 
 async function negotiateNodeInvokeSessionEnvelope(
   client: GatewayClient,
+  advertisedMethods: readonly string[],
 ): Promise<NodeInvokeSessionEnvelopeMode> {
+  if (!advertisedMethods.includes(NODE_PROTOCOL_FEATURES_UPDATE_METHOD)) {
+    return "legacy";
+  }
   try {
-    await client.request("node.protocolFeatures.update", {
+    await client.request(NODE_PROTOCOL_FEATURES_UPDATE_METHOD, {
       features: [NODE_INVOKE_SESSION_KEY_ENVELOPE_PROTOCOL_FEATURE],
     });
     return "authoritative";
   } catch (error) {
-    if (isUnsupportedNodeProtocolFeaturesUpdateError(error)) {
-      return "legacy";
-    }
     writeStderrLine(`node host protocol feature publish failed: ${String(error)}`);
-    // Only a confirmed unknown-method response enables the legacy nested field.
-    // Other failures keep omitted envelopes fail-closed while the connection lives.
+    // The advertised method set is the compatibility contract. Once advertised,
+    // request failures stay authoritative so authorization cannot enable legacy attribution.
     return "authoritative";
   }
 }
 
 async function publishNodePluginTools(client: GatewayClient, tools: unknown[]): Promise<void> {
   try {
-    await client.request("node.pluginTools.update", { tools });
+    await client.request(NODE_PLUGIN_TOOLS_UPDATE_METHOD, { tools });
   } catch (error) {
     if (isUnsupportedNodePluginToolsUpdateError(error)) {
       return;
@@ -168,7 +165,7 @@ async function publishNodePluginTools(client: GatewayClient, tools: unknown[]): 
 
 async function publishNodeSkills(client: GatewayClient, skills: unknown[]): Promise<void> {
   try {
-    await client.request("node.skills.update", { skills });
+    await client.request(NODE_SKILLS_UPDATE_METHOD, { skills });
   } catch (error) {
     if (isUnsupportedNodeSkillsUpdateError(error)) {
       return;
@@ -255,6 +252,7 @@ export async function runNodeHost(opts: NodeHostRunOptions): Promise<void> {
   const url = `${scheme}://${urlHost}:${port}${contextPath}`;
   let inventory: NodeHostInventory = preparedRuntime.initialInventory;
   let gatewayHelloReceived = false;
+  let gatewayAdvertisedMethods = new Set<string>();
   let gatewayConnectionGeneration = 0;
   let nodeInvokeSessionEnvelopeMode =
     Promise.resolve<NodeInvokeSessionEnvelopeMode>("authoritative");
@@ -292,10 +290,12 @@ export async function runNodeHost(opts: NodeHostRunOptions): Promise<void> {
     if (!gatewayHelloReceived) {
       return;
     }
-    if (inventory.skills) {
+    if (inventory.skills && gatewayAdvertisedMethods.has(NODE_SKILLS_UPDATE_METHOD)) {
       void publishNodeSkills(client, inventory.skills);
     }
-    void publishNodePluginTools(client, inventory.pluginTools);
+    if (gatewayAdvertisedMethods.has(NODE_PLUGIN_TOOLS_UPDATE_METHOD)) {
+      void publishNodePluginTools(client, inventory.pluginTools);
+    }
   };
 
   const client = new GatewayClient({
@@ -383,15 +383,19 @@ export async function runNodeHost(opts: NodeHostRunOptions): Promise<void> {
         envelopeModeAtReceipt,
       );
     },
-    onHelloOk: () => {
+    onHelloOk: (hello) => {
       writeStderrLine(`node host gateway connected: ${url}`);
       gatewayConnectionGeneration += 1;
       const connectionGeneration = gatewayConnectionGeneration;
       nodeInvokeEventDispatchByInvokeId.clear();
       queuedNodeInvokeCancellations.clear();
       gatewayHelloReceived = true;
+      gatewayAdvertisedMethods = new Set(hello.features.methods);
       nodeInvokeSessionEnvelopeNegotiationComplete = false;
-      nodeInvokeSessionEnvelopeMode = negotiateNodeInvokeSessionEnvelope(client).then((mode) => {
+      nodeInvokeSessionEnvelopeMode = negotiateNodeInvokeSessionEnvelope(
+        client,
+        hello.features.methods,
+      ).then((mode) => {
         if (connectionGeneration === gatewayConnectionGeneration) {
           nodeInvokeSessionEnvelopeNegotiationComplete = true;
         }
@@ -418,6 +422,7 @@ export async function runNodeHost(opts: NodeHostRunOptions): Promise<void> {
       nodeInvokeEventDispatchByInvokeId.clear();
       queuedNodeInvokeCancellations.clear();
       gatewayHelloReceived = false;
+      gatewayAdvertisedMethods.clear();
       nodeInvokeSessionEnvelopeMode = Promise.resolve("authoritative");
       nodeInvokeSessionEnvelopeNegotiationComplete = true;
       activeRuntime.cancelAll();
@@ -432,6 +437,7 @@ export async function runNodeHost(opts: NodeHostRunOptions): Promise<void> {
     },
     onManifestChanged: (manifest) => {
       gatewayHelloReceived = false;
+      gatewayAdvertisedMethods.clear();
       client.updateNodeManifest(manifest);
     },
   });

@@ -7,6 +7,10 @@ import type { NodeInvokeRequestPayload } from "./invoke-types.js";
 import { startNodeHostMcpManager, type NodeHostMcpManager } from "./mcp.js";
 import { runNodeHost } from "./runner.js";
 
+const NODE_PLUGIN_TOOLS_UPDATE_METHOD = "node.pluginTools.update";
+const NODE_PROTOCOL_FEATURES_UPDATE_METHOD = "node.protocolFeatures.update";
+const NODE_SKILLS_UPDATE_METHOD = "node.skills.update";
+
 const mocks = vi.hoisted(() => ({
   capturedGatewayClientOptions: [] as GatewayClientOptions[],
   capturedConfiguredGatewayConfigs: [] as Array<{ contextPath?: string }>,
@@ -529,7 +533,10 @@ describe("runNodeHost", () => {
 
     options?.onHelloOk?.({
       protocol: 1,
-      features: { methods: [], events: [] },
+      features: {
+        methods: [NODE_PROTOCOL_FEATURES_UPDATE_METHOD, NODE_PLUGIN_TOOLS_UPDATE_METHOD],
+        events: [],
+      },
     } as unknown as Parameters<NonNullable<GatewayClientOptions["onHelloOk"]>>[0]);
 
     expect(client?.request).toHaveBeenCalledWith("node.protocolFeatures.update", {
@@ -548,6 +555,61 @@ describe("runNodeHost", () => {
     });
   });
 
+  it("suppresses repeated optional publications when the gateway omits their methods", async () => {
+    mocks.nodeSkillDescriptors = [
+      {
+        name: "release-helper",
+        description: "Prepare a release",
+        content: "---\nname: release-helper\ndescription: Prepare a release\n---\n",
+      },
+    ];
+    mocks.startGatewayClientWhenEventLoopReady.mockResolvedValueOnce({
+      ready: true,
+      aborted: false,
+      elapsedMs: 0,
+    });
+    const processOnceSpy = vi.spyOn(process, "once");
+    const previousExitCode = process.exitCode;
+    try {
+      const running = runNodeHost({ gatewayHost: "127.0.0.1", gatewayPort: 18789 });
+      await vi.waitFor(() => expect(mocks.availabilityChanged).toBeDefined());
+      const client = mocks.capturedGatewayClients[0];
+      lastCapturedOptions()?.onHelloOk?.({
+        protocol: 3,
+        features: { methods: ["health", "node.invoke.result", "node.event"], events: [] },
+      } as unknown as Parameters<NonNullable<GatewayClientOptions["onHelloOk"]>>[0]);
+
+      for (let index = 0; index < 10; index += 1) {
+        mocks.availabilityChanged?.();
+      }
+
+      expect(client?.request).not.toHaveBeenCalledWith(
+        NODE_PROTOCOL_FEATURES_UPDATE_METHOD,
+        expect.anything(),
+      );
+      expect(client?.request).not.toHaveBeenCalledWith(
+        NODE_PLUGIN_TOOLS_UPDATE_METHOD,
+        expect.anything(),
+      );
+      expect(client?.request).not.toHaveBeenCalledWith(
+        NODE_SKILLS_UPDATE_METHOD,
+        expect.anything(),
+      );
+
+      const onSigterm = processOnceSpy.mock.calls.find(([event]) => event === "SIGTERM")?.[1];
+      onSigterm?.("SIGTERM");
+      await running;
+    } finally {
+      for (const [event, listener] of processOnceSpy.mock.calls) {
+        if ((event === "SIGINT" || event === "SIGTERM") && typeof listener === "function") {
+          process.off(event, listener);
+        }
+      }
+      process.exitCode = previousExitCode;
+      processOnceSpy.mockRestore();
+    }
+  });
+
   it("clears gateway plugin tools when the final node-hosted tool disappears", async () => {
     mocks.startGatewayClientWhenEventLoopReady.mockResolvedValueOnce({
       ready: true,
@@ -562,7 +624,7 @@ describe("runNodeHost", () => {
       const client = mocks.capturedGatewayClients[0];
       lastCapturedOptions()?.onHelloOk?.({
         protocol: 1,
-        features: { methods: [], events: [] },
+        features: { methods: [NODE_PLUGIN_TOOLS_UPDATE_METHOD], events: [] },
       } as unknown as Parameters<NonNullable<GatewayClientOptions["onHelloOk"]>>[0]);
       expect(client?.request).toHaveBeenCalledWith("node.pluginTools.update", {
         tools: [expect.objectContaining({ name: "remote_echo" })],
@@ -606,7 +668,7 @@ describe("runNodeHost", () => {
     );
     options?.onHelloOk?.({
       protocol: 1,
-      features: { methods: [], events: [] },
+      features: { methods: [NODE_SKILLS_UPDATE_METHOD], events: [] },
     } as unknown as Parameters<NonNullable<GatewayClientOptions["onHelloOk"]>>[0]);
     expect(mocks.capturedGatewayClients[0]?.request).toHaveBeenCalledWith("node.skills.update", {
       skills: mocks.nodeSkillDescriptors,
@@ -624,7 +686,7 @@ describe("runNodeHost", () => {
     );
     lastCapturedOptions()?.onHelloOk?.({
       protocol: 1,
-      features: { methods: [], events: [] },
+      features: { methods: [NODE_SKILLS_UPDATE_METHOD], events: [] },
     } as unknown as Parameters<NonNullable<GatewayClientOptions["onHelloOk"]>>[0]);
 
     expect(mocks.capturedGatewayClients[0]?.request).not.toHaveBeenCalledWith(
@@ -654,7 +716,7 @@ describe("runNodeHost", () => {
     expect(options?.commands).toContain("mcp.tools.call.v1");
     options?.onHelloOk?.({
       protocol: 1,
-      features: { methods: [], events: [] },
+      features: { methods: [NODE_PLUGIN_TOOLS_UPDATE_METHOD], events: [] },
     } as unknown as Parameters<NonNullable<GatewayClientOptions["onHelloOk"]>>[0]);
     expect(mocks.capturedGatewayClients[0]?.request).toHaveBeenCalledWith(
       "node.pluginTools.update",
@@ -679,7 +741,7 @@ describe("runNodeHost", () => {
     await vi.waitFor(() => expect(lastCapturedOptions()).toBeDefined());
     lastCapturedOptions()?.onHelloOk?.({
       protocol: 1,
-      features: { methods: [], events: [] },
+      features: { methods: [NODE_PLUGIN_TOOLS_UPDATE_METHOD], events: [] },
     } as unknown as Parameters<NonNullable<GatewayClientOptions["onHelloOk"]>>[0]);
     expect(mocks.capturedGatewayClients[0]?.request).toHaveBeenCalledWith(
       "node.pluginTools.update",

@@ -130,10 +130,16 @@ vi.mock("./runtime.js", async (importOriginal) => {
   };
 });
 
-function hello(options: GatewayClientOptions | undefined) {
+const NODE_PROTOCOL_FEATURES_UPDATE_METHOD = "node.protocolFeatures.update";
+const V2026_5_7_NODE_METHODS = ["health", "node.invoke.result", "node.event"];
+
+function hello(
+  options: GatewayClientOptions | undefined,
+  methods: string[] = [NODE_PROTOCOL_FEATURES_UPDATE_METHOD],
+) {
   options?.onHelloOk?.({
-    protocol: 1,
-    features: { methods: [], events: [] },
+    protocol: 4,
+    features: { methods, events: [] },
   } as unknown as Parameters<NonNullable<GatewayClientOptions["onHelloOk"]>>[0]);
 }
 
@@ -410,12 +416,42 @@ describe("node-host session envelope negotiation", () => {
     await waitForProtocolFeaturesNegotiation(client);
   });
 
-  it("preserves absent envelopes only after an old gateway is confirmed", async () => {
+  it("preserves v2026.5.7 nested system.run session attribution from advertised methods", async () => {
+    const { options, client } = await startFakeNodeHost();
+
+    hello(options, V2026_5_7_NODE_METHODS);
+    options?.onEvent?.({
+      type: "event",
+      event: "node.invoke.request",
+      payload: {
+        id: "invoke-v2026-5-7",
+        nodeId: "node-1",
+        command: "system.run",
+        paramsJSON: '{"sessionKey":"agent:main:legacy-nested"}',
+      },
+    });
+
+    await vi.waitFor(() => expect(mocks.activeRuntime.invoke).toHaveBeenCalledOnce());
+    expect(client?.request).not.toHaveBeenCalledWith(
+      NODE_PROTOCOL_FEATURES_UPDATE_METHOD,
+      expect.anything(),
+    );
+    const payload = mocks.activeRuntime.invoke.mock.calls[0]?.[0];
+    expect(payload).toEqual(
+      expect.objectContaining({
+        id: "invoke-v2026-5-7",
+        paramsJSON: '{"sessionKey":"agent:main:legacy-nested"}',
+      }),
+    );
+    expect(payload && Object.hasOwn(payload, "sessionKey")).toBe(false);
+  });
+
+  it("keeps advertised authorization failures authoritative", async () => {
     const { options, client } = await startFakeNodeHost();
     client?.request.mockRejectedValueOnce(
       new GatewayClientRequestError({
         code: "INVALID_REQUEST",
-        message: "unknown method: node.protocolFeatures.update",
+        message: "unauthorized role: node",
       }),
     );
 
@@ -434,19 +470,18 @@ describe("node-host session envelope negotiation", () => {
 
     await vi.waitFor(() => expect(mocks.activeRuntime.invoke).toHaveBeenCalledOnce());
     const payload = mocks.activeRuntime.invoke.mock.calls[0]?.[0];
-    expect(payload && Object.hasOwn(payload, "sessionKey")).toBe(false);
+    expect(payload).toEqual(
+      expect.objectContaining({
+        id: "invoke-legacy",
+        sessionKey: null,
+      }),
+    );
   });
 
   it("renegotiates authoritative envelopes after reconnecting from an old gateway", async () => {
     const { options, client } = await startFakeNodeHost();
-    client?.request.mockRejectedValueOnce(
-      new GatewayClientRequestError({
-        code: "INVALID_REQUEST",
-        message: "unknown method: node.protocolFeatures.update",
-      }),
-    );
 
-    hello(options);
+    hello(options, V2026_5_7_NODE_METHODS);
     options?.onEvent?.({
       type: "event",
       event: "node.invoke.request",
@@ -465,7 +500,7 @@ describe("node-host session envelope negotiation", () => {
     const resolveNegotiation = deferNegotiation(client);
     hello(options);
     resolveNegotiation();
-    await waitForProtocolFeaturesNegotiation(client, 2);
+    await waitForProtocolFeaturesNegotiation(client);
     options?.onEvent?.({
       type: "event",
       event: "node.invoke.request",
@@ -485,6 +520,6 @@ describe("node-host session envelope negotiation", () => {
     );
     expect(
       client?.request.mock.calls.filter(([method]) => method === "node.protocolFeatures.update"),
-    ).toHaveLength(2);
+    ).toHaveLength(1);
   });
 });
