@@ -456,7 +456,7 @@ export const en = {
       runRegularly: "Run regularly",
       sharedAuthority:
         "Everyone who can message it can influence its use of the same files, accounts, and tools.",
-      title: "Security: read before enabling tools",
+      title: "Security disclaimer",
       toolAccess:
         "With tools enabled, it can read files and act through your accounts or connected services.",
     },

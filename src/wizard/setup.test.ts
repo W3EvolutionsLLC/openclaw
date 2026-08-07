@@ -1027,7 +1027,7 @@ describe("runSetupWizard", () => {
     );
 
     const calls = getWizardNoteCalls(note);
-    expect(calls[0]?.[1]).toBe("Security: read before enabling tools");
+    expect(calls[0]?.[1]).toBe("Security disclaimer");
     expect(confirm).toHaveBeenCalledOnce();
     expect(confirm).toHaveBeenCalledWith(
       expect.objectContaining({
