@@ -50,6 +50,13 @@ function isMainModule() {
 async function main(argv: string[]) {
   const args = parseArgs(argv);
 
+  if (args["gateway-node-compat"] === "true") {
+    const { runGatewayNodeCompatProducer } =
+      await import("./lib/cross-os-release-checks/gateway-node-compat.ts");
+    await runGatewayNodeCompatProducer(args);
+    return;
+  }
+
   if (args["resolve-matrix"] === "true") {
     const mode = args["mode"] ?? "both";
     const ref = args["ref"]?.trim() || "main";
