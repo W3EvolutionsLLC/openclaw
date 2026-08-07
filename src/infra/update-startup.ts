@@ -40,7 +40,7 @@ import { detectRespawnSupervisor, type RespawnSupervisor } from "./supervisor-ma
 import {
   channelToNpmTag,
   normalizeUpdateChannel,
-  resolveRegistryUpdateChannel,
+  resolveEffectiveUpdateChannel,
   DEFAULT_PACKAGE_CHANNEL,
   type UpdateChannel,
 } from "./update-channels.js";
@@ -534,17 +534,26 @@ export async function runGatewayUpdateCheck(params: {
   if (params.isNixMode) {
     return;
   }
-  const configuredChannel = resolveRegistryUpdateChannel({
-    configChannel: normalizeUpdateChannel(params.cfg.update?.channel),
+  const configChannel = normalizeUpdateChannel(params.cfg.update?.channel);
+  const configuredChannel = resolveEffectiveUpdateChannel({
+    configChannel,
     currentVersion: VERSION,
-  });
+    installKind: "unknown",
+  }).channel;
+  const mightUseInstalledExtendedStableChannel =
+    configChannel === null &&
+    resolveEffectiveUpdateChannel({
+      configChannel,
+      currentVersion: VERSION,
+      installKind: "package",
+    }).channel === "extended-stable";
   const auto = resolveAutoUpdatePolicy(params.cfg);
   const autoDisabledByEnv = isTruthyEnvValue(process.env.OPENCLAW_NO_AUTO_UPDATE);
   const autoDisabledByExternalSupervisor = isGatewayExternallySupervised();
+  const shouldRunUpdateHints = params.cfg.update?.checkOnStart !== false;
   const isAutoUpdateChannel = configuredChannel === "stable" || configuredChannel === "beta";
   const shouldRunAutoUpdate =
     isAutoUpdateChannel && auto.enabled && !autoDisabledByEnv && !autoDisabledByExternalSupervisor;
-  const shouldRunUpdateHints = params.cfg.update?.checkOnStart !== false;
   if (!shouldRunUpdateHints && !shouldRunAutoUpdate) {
     if (configuredChannel === "extended-stable") {
       setUpdateAvailableCache({
@@ -556,9 +565,16 @@ export async function runGatewayUpdateCheck(params: {
   }
 
   let installStatus: Awaited<ReturnType<typeof resolveStartupInstallStatus>> | undefined;
-  if (configuredChannel === "extended-stable") {
+  let channel = configuredChannel;
+  if (configuredChannel === "extended-stable" || mightUseInstalledExtendedStableChannel) {
     installStatus = await resolveStartupInstallStatus();
-    if (installStatus.status.installKind !== "package") {
+    channel = resolveEffectiveUpdateChannel({
+      configChannel,
+      currentVersion: VERSION,
+      installKind: installStatus.status.installKind,
+      git: installStatus.status.git,
+    }).channel;
+    if (channel === "extended-stable" && installStatus.status.installKind !== "package") {
       setUpdateAvailableCache({
         next: null,
         onUpdateAvailableChange: params.onUpdateAvailableChange,
@@ -573,11 +589,10 @@ export async function runGatewayUpdateCheck(params: {
   const rawNowIsValid = asDateTimestampMs(rawNow) !== undefined;
   const lastCheckedAt = state.lastCheckedAt ? Date.parse(state.lastCheckedAt) : null;
   const persistedAvailable = shouldRunUpdateHints
-    ? resolvePersistedUpdateAvailable(state, configuredChannel)
+    ? resolvePersistedUpdateAvailable(state, channel)
     : null;
   const hasExtendedStableCheckMarker = state.lastAvailableTag?.trim() === "extended-stable";
-  const shouldBypassSharedThrottle =
-    configuredChannel === "extended-stable" && !hasExtendedStableCheckMarker;
+  const shouldBypassSharedThrottle = channel === "extended-stable" && !hasExtendedStableCheckMarker;
   if (shouldRunUpdateHints) {
     setUpdateAvailableCache({
       next: persistedAvailable,
@@ -622,7 +637,6 @@ export async function runGatewayUpdateCheck(params: {
     return;
   }
 
-  const channel = configuredChannel;
   const resolved = await resolveNpmChannelTag({ channel, timeoutMs: 2500 });
   const tag = resolved.tag;
   if (!resolved.version) {
