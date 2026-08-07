@@ -22,7 +22,10 @@ import {
 } from "../../tool-search.js";
 import { resolveAgentToolSurfacePlan } from "../../tool-surface-plan.js";
 import type { ComputerContextEpoch } from "../../tools/computer-tool.js";
-import type { CronCreatorToolAllowlistEntry } from "../../tools/cron-tool.js";
+import type {
+  CronCreatorToolAllowlistEntry,
+  CronToolsAllowCaptureRef,
+} from "../../tools/cron-tool.js";
 import { log } from "../logger.js";
 import { resolveEmbeddedAttemptExecutionAttribution } from "./attempt-execution-attribution.js";
 import {
@@ -114,6 +117,7 @@ export function prepareEmbeddedAttemptToolBase(params: {
   const toolSearchTargetTranscriptProjections: ToolSearchTargetTranscriptProjection[] = [];
   const codeModeSkills = attempt.toolsAllow?.length ? [] : params.codeModeSkills;
   const cronCreatorToolAllowlist: CronCreatorToolAllowlistEntry[] = [];
+  const cronCreatorToolAllowlistCaptureRef: CronToolsAllowCaptureRef = {};
   const inheritedToolAllowlist: string[] = [];
   const spawnWorkspaceDir =
     params.effectiveCwd !== params.effectiveWorkspace
@@ -306,6 +310,7 @@ export function prepareEmbeddedAttemptToolBase(params: {
           runtimeToolAllowlist: effectiveToolsAllow,
           inheritedToolAllowlistRef: inheritedToolAllowlist,
           cronCreatorToolAllowlistRef: cronCreatorToolAllowlist,
+          cronCreatorToolAllowlistCaptureRef,
           authProfileStore: attempt.authProfileStore,
           recordToolPrepStage: params.markCoreToolStage,
           onToolOutcome: attempt.onToolOutcome,
@@ -338,6 +343,7 @@ export function prepareEmbeddedAttemptToolBase(params: {
     codeModeSkills,
     computerContextEpoch,
     cronCreatorToolAllowlist,
+    cronCreatorToolAllowlistCaptureRef,
     effectiveToolsAllow,
     forceDirectMessageTool,
     inheritedToolAllowlist,

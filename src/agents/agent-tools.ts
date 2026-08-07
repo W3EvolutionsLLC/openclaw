@@ -102,6 +102,7 @@ import {
 import {
   replaceWithEffectiveCronCreatorToolAllowlist,
   type CronCreatorToolAllowlistEntry,
+  type CronToolsAllowCaptureRef,
 } from "./tools/cron-tool.js";
 import { wrapToolWithGatewayCallerIdentity } from "./tools/gateway-caller-context.js";
 
@@ -312,6 +313,8 @@ type OpenClawCodingToolsOptions = {
   inheritedToolAllowlistRef?: string[];
   /** Mutable cron creator cap ref for callers that append final runtime tools later. */
   cronCreatorToolAllowlistRef?: CronCreatorToolAllowlistEntry[];
+  /** Mutable proof that the cron cap reached the final executable surface. */
+  cronCreatorToolAllowlistCaptureRef?: CronToolsAllowCaptureRef;
   /** If true, the model has native vision capability */
   modelHasVision?: boolean;
   /** Mutable model-context generation used to expire screenshot coordinate frames. */
@@ -657,6 +660,7 @@ export function createOpenClawCodingToolsInternal(
   const shouldInheritEffectiveToolAllowlist =
     toolPolicyInheritanceSources.some(hasRestrictiveAllowPolicy);
   const cronCreatorToolAllowlist = options?.cronCreatorToolAllowlistRef ?? [];
+  const cronCreatorToolAllowlistCaptureRef = options?.cronCreatorToolAllowlistCaptureRef;
   const gatewayCallerAccountId =
     options?.scheduledToolPolicy?.ownerAccountId ?? options?.agentAccountId;
   // Plugin-only plans bypass createOpenClawTools, so the capability gate must
@@ -790,6 +794,7 @@ export function createOpenClawCodingToolsInternal(
             pluginToolAllowlist,
             pluginToolDenylist,
             cronCreatorToolAllowlist,
+            cronCreatorToolAllowlistCaptureRef,
             currentChannelId: options?.currentChannelId,
             currentChatType: options?.chatType,
             currentMessagingTarget: options?.currentMessagingTarget,
