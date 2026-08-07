@@ -239,10 +239,16 @@ export const updateHandlers: GatewayRequestHandlers = {
         cwd: root,
         argv1: process.argv[1],
       });
+      const installKind =
+        installSurface.kind === "git"
+          ? "git"
+          : installSurface.kind === "global" || installSurface.kind === "package-root"
+            ? "package"
+            : "unknown";
       const effectiveChannel = resolveEffectiveUpdateChannel({
         configChannel,
         currentVersion: VERSION,
-        installKind: installSurface.kind === "global" ? "package" : installSurface.kind,
+        installKind,
       }).channel;
       const supervisor = detectRespawnSupervisor(process.env, process.platform);
       const hasHandoffContext = supervisor
