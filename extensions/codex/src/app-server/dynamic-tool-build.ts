@@ -102,6 +102,7 @@ type DynamicToolBuildParams = {
   profilerEnabled?: boolean;
   cronCreatorToolAllowlistRef?: OpenClawCodingToolsOptions["cronCreatorToolAllowlistRef"];
   cronCreatorToolAllowlistCaptureRef?: OpenClawCodingToolsOptions["cronCreatorToolAllowlistCaptureRef"];
+  resolveCronCreatorToolAuthority?: OpenClawCodingToolsOptions["resolveCronCreatorToolAuthority"];
   forceHeartbeatTool?: boolean;
   ignoreDisableMessageTool?: boolean;
   ignoreRuntimePlan?: boolean;
@@ -352,6 +353,7 @@ export async function buildDynamicTools(input: DynamicToolBuildParams) {
     allocateToolOutcomeOrdinal: params.allocateToolOutcomeOrdinal,
     cronCreatorToolAllowlistRef: input.cronCreatorToolAllowlistRef,
     cronCreatorToolAllowlistCaptureRef: input.cronCreatorToolAllowlistCaptureRef,
+    resolveCronCreatorToolAuthority: input.resolveCronCreatorToolAuthority,
   });
   const codexScopedTools = addCodexMessageToolOnlyFinalControl(
     allTools,

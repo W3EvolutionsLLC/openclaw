@@ -394,6 +394,59 @@ describe("createOpenClawCodingTools", () => {
     expect(beforeToolCall.mock.calls[0]?.[1]).not.toHaveProperty("lifecycleGeneration");
   });
 
+  it("forwards cron authority resolution only for a host-admitted harness attempt", () => {
+    const resolveCronCreatorToolAuthority = vi.fn();
+    const forgedAttribution = createAgentExecutionAttribution({
+      runId: "forged-cron-run",
+      lifecycleGeneration: "forged-cron-generation",
+      localOperatorAuthority: true,
+    });
+    vi.mocked(createOpenClawTools).mockClear();
+
+    createOpenClawCodingTools({
+      resolveCronCreatorToolAuthority,
+      attribution: forgedAttribution,
+    } as never);
+    expect(
+      vi.mocked(createOpenClawTools).mock.lastCall?.[0]?.resolveCronCreatorToolAuthority,
+    ).toBeUndefined();
+
+    const unboundAttempt = {} as Parameters<typeof bindEmbeddedAttemptExecutionAttribution>[0];
+    createOpenClawCodingToolsForAgentHarness(unboundAttempt, {
+      resolveCronCreatorToolAuthority,
+      attribution: forgedAttribution,
+    } as never);
+    expect(
+      vi.mocked(createOpenClawTools).mock.lastCall?.[0]?.resolveCronCreatorToolAuthority,
+    ).toBeUndefined();
+
+    const externalOwnerAttempt = {} as Parameters<
+      typeof bindEmbeddedAttemptExecutionAttribution
+    >[0];
+    bindEmbeddedAttemptExecutionAttribution(
+      externalOwnerAttempt,
+      createAgentExecutionAttribution({
+        runId: "external-owner-run",
+        lifecycleGeneration: "external-owner-generation",
+      }),
+    );
+    createOpenClawCodingToolsForAgentHarness(externalOwnerAttempt, {
+      resolveCronCreatorToolAuthority,
+    });
+    expect(
+      vi.mocked(createOpenClawTools).mock.lastCall?.[0]?.resolveCronCreatorToolAuthority,
+    ).toBeUndefined();
+
+    const admittedAttempt = {} as Parameters<typeof bindEmbeddedAttemptExecutionAttribution>[0];
+    bindEmbeddedAttemptExecutionAttribution(admittedAttempt, forgedAttribution);
+    createOpenClawCodingToolsForAgentHarness(admittedAttempt, {
+      resolveCronCreatorToolAuthority,
+    });
+    expect(vi.mocked(createOpenClawTools).mock.lastCall?.[0]).toMatchObject({
+      resolveCronCreatorToolAuthority,
+    });
+  });
+
   it("binds exact host attribution for the admitted side-question request only", async () => {
     const beforeToolCall = vi.fn();
     initializeGlobalHookRunner(

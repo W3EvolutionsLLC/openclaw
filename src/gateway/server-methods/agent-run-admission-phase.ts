@@ -1,9 +1,8 @@
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { ErrorCodes, errorShape } from "../../../packages/gateway-protocol/src/index.js";
-import {
-  createAgentExecutionAttribution,
-  type AgentExecutionIdentityAdmission,
-  type AgentExecutionAttribution,
+import type {
+  AgentExecutionIdentityAdmission,
+  AgentExecutionAttribution,
 } from "../../agents/agent-execution-attribution.js";
 import {
   clearEmbeddedAgentRunAbortabilityForRunId,
@@ -39,6 +38,7 @@ import {
 import type { AgentDeliveryPhaseResult } from "./agent-delivery-phase.js";
 import type { RestoredCronContinuation } from "./agent-handler-helpers.js";
 import type { AgentRunRequest } from "./agent-request-types.js";
+import { createGatewayAgentExecutionAttribution } from "./agent-run-local-operator-authority.js";
 import {
   isConfirmedAcpManualSpawnTaskOwner,
   registerPluginSubagentRunFromGateway,
@@ -259,15 +259,16 @@ export async function prepareAgentRunDispatch(params: {
     });
     return undefined;
   }
-  const attribution = createAgentExecutionAttribution({
+  const attribution = createGatewayAgentExecutionAttribution({
     runId: params.runId,
     lifecycleGeneration: params.lifecycleGeneration,
     sessionKey: params.resolvedSessionKey,
     sessionId: params.getAdmittedSessionId(),
     agentId: params.activeSessionAgentId,
-    ...(params.executionIdentityAdmission
-      ? { executionIdentityAdmission: params.executionIdentityAdmission }
-      : {}),
+    client: params.client,
+    inputProvenance: params.inputProvenance,
+    hasRestoredCronContinuation: params.restoredCronContinuation !== undefined,
+    executionIdentityAdmission: params.executionIdentityAdmission,
   });
   if (!activeRunAbort.registered) {
     activeGatewayWorkAdmission.release();

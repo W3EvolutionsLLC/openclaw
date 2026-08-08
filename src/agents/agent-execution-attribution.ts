@@ -18,6 +18,8 @@ export type AgentExecutionAttribution = Readonly<{
   createdAt: number;
   lifecycleGeneration: string;
   executionIdentityAdmission?: AgentExecutionIdentityAdmission;
+  /** Verified local authenticated operator ingress; never inferred by a harness. */
+  localOperatorAuthority?: true;
   sessionKey?: string;
   sessionId?: string;
   agentId?: string;
@@ -43,6 +45,7 @@ export function createAgentExecutionAttribution(params: {
   sessionId?: string;
   agentId?: string;
   executionIdentityAdmission?: AgentExecutionIdentityAdmission;
+  localOperatorAuthority?: true;
 }): AgentExecutionAttribution {
   const runId = requireAttributionField(params.runId, "runId");
   const executionIdentityAdmission = Object.hasOwn(params, "executionIdentityAdmission")
@@ -71,6 +74,7 @@ export function createAgentExecutionAttribution(params: {
           }),
         }
       : {}),
+    ...(params.localOperatorAuthority === true ? { localOperatorAuthority: true as const } : {}),
     ...(sessionKey ? { sessionKey } : {}),
     ...(sessionId ? { sessionId } : {}),
     ...(agentId ? { agentId } : {}),

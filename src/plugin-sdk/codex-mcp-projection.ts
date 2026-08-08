@@ -25,17 +25,6 @@ export async function materializeStaticMcpToolsForScheduledHarnessRun(
   return materialize(params);
 }
 
-/** Apply the shared harness policy pipeline to an already-bound Codex MCP catalog. */
-export async function projectMcpCatalogToolsForHarnessPolicy(
-  ...params: Parameters<
-    typeof import("../agents/agent-bundle-mcp-harness.js").projectMcpCatalogToolsForHarnessPolicy
-  >
-) {
-  const { projectMcpCatalogToolsForHarnessPolicy: project } =
-    await import("../agents/agent-bundle-mcp-harness.js");
-  return project(...params);
-}
-
 /** Capture the final Codex dynamic-tool surface for cron creator authority. */
 export async function captureFinalCodexCronCreatorToolAllowlist(
   target: CronCreatorToolAllowlistEntry[],
