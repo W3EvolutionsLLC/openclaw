@@ -122,6 +122,12 @@ function completionEvent(sessionId: string, queueKey = DEFAULT_SESSION_KEY) {
   );
 }
 
+function completionEventWithOutput(output: string) {
+  return peekSystemEventEntries(DEFAULT_SESSION_KEY).find((event) =>
+    event.text.includes(`:: ${output}`),
+  );
+}
+
 beforeEach(() => {
   resetProcessRegistryForTests();
   resetSystemEventsForTest();
@@ -211,14 +217,13 @@ describe("notify-on-exit acknowledgement", () => {
     await first.finish();
     await second.finish();
     const firstId = first.run.session.id;
-    const secondId = second.run.session.id;
 
-    expect(completionEvent(firstId)).toBeDefined();
-    expect(completionEvent(secondId)).toBeDefined();
+    expect(completionEventWithOutput("first")).toBeDefined();
+    expect(completionEventWithOutput("second")).toBeDefined();
     await executeProcess("poll", firstId);
 
-    expect(completionEvent(firstId)).toBeUndefined();
-    expect(completionEvent(secondId)).toBeDefined();
+    expect(completionEventWithOutput("first")).toBeUndefined();
+    expect(completionEventWithOutput("second")).toBeDefined();
   });
 
   it("preserves an unpolled completion when its finished session is cleared", async () => {
