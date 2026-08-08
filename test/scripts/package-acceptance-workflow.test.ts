@@ -90,6 +90,8 @@ const RELEASE_MAINTAINER_SKILL = resolve(
   ".agents/skills/release-openclaw-maintainer/SKILL.md",
 );
 const QA_LIVE_TRANSPORTS_WORKFLOW = ".github/workflows/qa-live-transports-convex.yml";
+const QA_LIVE_RUNTIME_PROOF_IF =
+  "github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.run_live_runtime_proof == true)";
 const UPDATE_MIGRATION_WORKFLOW = ".github/workflows/update-migration.yml";
 const CI_CHECK_TESTBOX_WORKFLOW = ".github/workflows/ci-check-testbox.yml";
 const CI_CHECK_ARM_TESTBOX_WORKFLOW = ".github/workflows/ci-check-arm-testbox.yml";
@@ -165,6 +167,9 @@ type Workflow = {
     workflow_call?: {
       inputs?: Record<string, unknown>;
     };
+    workflow_dispatch?: {
+      inputs?: Record<string, unknown>;
+    };
   };
 };
 
@@ -192,6 +197,35 @@ function workflowStep(job: WorkflowJob, stepName: string): WorkflowStep {
     throw new Error(`Expected workflow step ${stepName}`);
   }
   return step;
+}
+
+function runQaSelectedRefGuard(params: {
+  eventName: string;
+  expectedSha?: string;
+  inputRef: string;
+  runLiveRuntimeProof: boolean;
+}) {
+  const validateScript =
+    workflowStep(
+      workflowJob(QA_LIVE_TRANSPORTS_WORKFLOW, "validate_selected_ref"),
+      "Validate selected ref",
+    ).run ?? "";
+  const guardEnd = validateScript.indexOf("\ngit fetch --no-tags origin");
+  if (guardEnd < 0) {
+    throw new Error("Expected selected-ref trust fetch after local validation");
+  }
+
+  return spawnSync("bash", ["-c", validateScript.slice(0, guardEnd)], {
+    cwd: REPO_ROOT,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      EVENT_NAME: params.eventName,
+      EXPECTED_SHA: params.expectedSha ?? "",
+      INPUT_REF: params.inputRef,
+      RUN_LIVE_RUNTIME_PROOF: String(params.runLiveRuntimeProof),
+    },
+  });
 }
 
 function shellFunctionSource(source: string, functionName: string): string {
@@ -3450,6 +3484,130 @@ describe("package artifact reuse", () => {
     }
   });
 
+  it("pins manually selected live runtime proof to the checked-out full SHA", () => {
+    const workflow = readWorkflow(QA_LIVE_TRANSPORTS_WORKFLOW);
+    const callInputs = workflow.on?.workflow_call?.inputs ?? {};
+    const dispatchInputs = workflow.on?.workflow_dispatch?.inputs ?? {};
+    const validateStep = workflowStep(
+      workflowJob(QA_LIVE_TRANSPORTS_WORKFLOW, "validate_selected_ref"),
+      "Validate selected ref",
+    );
+    const validateScript = validateStep.run ?? "";
+
+    expect(dispatchInputs.run_live_runtime_proof).toEqual({
+      description: "Run the blocking live runtime release proof",
+      required: false,
+      default: false,
+      type: "boolean",
+    });
+    expect(callInputs.run_live_runtime_proof).toBeUndefined();
+    expect(dispatchInputs.expected_sha).toBeUndefined();
+    expect(validateStep.env).toMatchObject({
+      EVENT_NAME: "${{ github.event_name }}",
+      EXPECTED_SHA: "${{ inputs.expected_sha }}",
+      INPUT_REF: "${{ github.event_name != 'schedule' && inputs.ref || github.sha }}",
+      RUN_LIVE_RUNTIME_PROOF: "${{ inputs.run_live_runtime_proof }}",
+    });
+    expect(validateScript).toContain(
+      '[[ "${EVENT_NAME}" == "workflow_dispatch" && "${RUN_LIVE_RUNTIME_PROOF}" == "true" ]]',
+    );
+    expect(validateScript).toContain('[[ ! "${INPUT_REF}" =~ ^[0-9a-f]{40}$ ]]');
+    expect(validateScript).toContain('[[ "${selected_revision}" != "${INPUT_REF}" ]]');
+
+    const exactSha = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+    }).trim();
+    const manualCases = [
+      { inputRef: "main", selected: false, expectedStatus: 0, name: "unselected branch name" },
+      { inputRef: "main", selected: true, expectedStatus: 1, name: "selected branch name" },
+      { inputRef: exactSha.slice(0, 12), selected: true, expectedStatus: 1, name: "short SHA" },
+      {
+        inputRef: exactSha.toUpperCase(),
+        selected: true,
+        expectedStatus: 1,
+        name: "uppercase SHA",
+      },
+      { inputRef: "0".repeat(40), selected: true, expectedStatus: 1, name: "different full SHA" },
+      { inputRef: exactSha, selected: true, expectedStatus: 0, name: "checked-out full SHA" },
+    ] as const;
+    for (const testCase of manualCases) {
+      const result = runQaSelectedRefGuard({
+        eventName: "workflow_dispatch",
+        inputRef: testCase.inputRef,
+        runLiveRuntimeProof: testCase.selected,
+      });
+      expect(result.status, `${testCase.name}: ${result.stderr}`).toBe(testCase.expectedStatus);
+    }
+
+    const reusableMismatch = runQaSelectedRefGuard({
+      eventName: "workflow_call",
+      expectedSha: "0".repeat(40),
+      inputRef: "release/2026.8.1",
+      runLiveRuntimeProof: false,
+    });
+    expect(reusableMismatch.status).toBe(1);
+    expect(reusableMismatch.stderr).toContain(`expected ${"0".repeat(40)}`);
+    const reusableMatch = runQaSelectedRefGuard({
+      eventName: "workflow_call",
+      expectedSha: exactSha,
+      inputRef: "release/2026.8.1",
+      runLiveRuntimeProof: false,
+    });
+    expect(reusableMatch.status, reusableMatch.stderr).toBe(0);
+
+    for (const [trustCheck, snippet] of [
+      [
+        "main ancestor",
+        'git merge-base --is-ancestor "$selected_revision" refs/remotes/origin/main',
+      ],
+      ["release tag", "git tag --points-at \"$selected_revision\" | grep -Eq '^v'"],
+      ["release branch head", '[[ "$INPUT_REF" =~ ^release/[0-9]{4}\\.[0-9]+\\.[0-9]+$ ]]'],
+      [
+        "open same-repository PR head",
+        '.head.repo.full_name == "\'"${GITHUB_REPOSITORY}"\'" and .head.sha == "\'"${selected_revision}"\'"',
+      ],
+    ] as const) {
+      expect(validateScript, trustCheck).toContain(snippet);
+    }
+    expect(validateScript).toContain(
+      "git fetch --no-tags origin '+refs/heads/release/*:refs/remotes/origin/release/*'",
+    );
+    expect(validateScript).toContain(
+      "git for-each-ref --format='%(objectname)' refs/remotes/origin/release",
+    );
+    const manualReleaseFetch = validateScript.indexOf(
+      "git fetch --no-tags origin '+refs/heads/release/*:refs/remotes/origin/release/*'",
+    );
+    const manualReleaseFallback = validateScript.indexOf(
+      'if [[ -z "$trusted_reason" ]]',
+      manualReleaseFetch,
+    );
+    const manualReleaseBlock = validateScript.slice(manualReleaseFetch, manualReleaseFallback);
+    expect(manualReleaseBlock).not.toContain("'+refs/heads/*:refs/remotes/origin/*'");
+    expect(validateScript.match(/trusted_reason="repository-branch"/gu)).toHaveLength(1);
+  });
+
+  it("selects live runtime proof only for schedules or explicit direct dispatch", () => {
+    const job = workflowJob(QA_LIVE_TRANSPORTS_WORKFLOW, "run_live_runtime_token_efficiency");
+
+    expect(job.if).toBe(QA_LIVE_RUNTIME_PROOF_IF);
+    const cases = [
+      { eventName: "schedule", selected: false, expected: true },
+      { eventName: "workflow_dispatch", selected: true, expected: true },
+      { eventName: "workflow_dispatch", selected: false, expected: false },
+      { eventName: "workflow_call", selected: true, expected: false },
+    ] as const;
+    for (const testCase of cases) {
+      const enabled =
+        testCase.eventName === "schedule" ||
+        (testCase.eventName === "workflow_dispatch" && testCase.selected === true);
+      expect(enabled, `${testCase.eventName} selected=${testCase.selected}`).toBe(
+        testCase.expected,
+      );
+    }
+  });
+
   it("routes release Matrix through the QA Lab selector", () => {
     const releaseWorkflow = readFileSync(RELEASE_CHECKS_WORKFLOW, "utf8");
     const releaseTelegramWorkflow = readFileSync(RELEASE_TELEGRAM_QA_WORKFLOW, "utf8");
@@ -3628,26 +3786,58 @@ describe("package artifact reuse", () => {
     expect(reportStep.if).toBe("steps.run_lane.outcome == 'success'");
   });
 
-  it("runs the core gateway restart pair on its pinned live model", () => {
+  it("runs blocking gateway restart and inbound voice proof on pinned GPT-5.4", () => {
     const job = workflowJob(QA_LIVE_TRANSPORTS_WORKFLOW, "run_live_runtime_token_efficiency");
     const credentialStep = workflowStep(job, "Validate required QA credential env");
-    const runStep = workflowStep(job, "Run pinned GPT-5.4 gateway restart runtime pair");
+    const restartStep = workflowStep(job, "Run pinned GPT-5.4 gateway restart runtime pair");
+    const voiceStep = workflowStep(job, "Run pinned GPT-5.4 inbound voice talkback");
+    const reportStep = workflowStep(job, "Generate live runtime token-efficiency report");
+    const uploadStep = workflowStep(job, "Upload live runtime token-efficiency artifacts");
     const stepNames = job.steps?.map((step) => step.name) ?? [];
+    const voiceCommand = (voiceStep.run ?? "")
+      .split("\n")
+      .map((line) => line.trim().replace(/ \\$/u, ""))
+      .filter((line) => line === "pnpm openclaw qa suite" || line.startsWith("--"));
 
     expect(credentialStep.run).toContain('if [[ -z "${OPENAI_API_KEY:-}" ]]');
     expect(credentialStep.run).toContain("exit 1");
-    expect(runStep.run).toContain("--provider-mode live-frontier");
-    expect(runStep.run).toContain("--scenario gateway-restart-multi-live");
-    expect(runStep.run).toContain("--model openai/gpt-5.4");
-    expect(runStep.run).toContain("--alt-model openai/gpt-5.4");
-    expect(runStep.run).toContain("--runtime-pair openclaw,codex");
-    expect(runStep.run).toContain(
+    expect(restartStep.run).toContain("--provider-mode live-frontier");
+    expect(restartStep.run).toContain("--scenario gateway-restart-multi-live");
+    expect(restartStep.run).toContain("--model openai/gpt-5.4");
+    expect(restartStep.run).toContain("--alt-model openai/gpt-5.4");
+    expect(restartStep.run).toContain("--runtime-pair openclaw,codex");
+    expect(restartStep.run).toContain(
       "steps.run_lane.outputs.output_dir }}/gateway-restart-gpt-5.4-runtime-pair",
     );
-    expect(runStep.run).not.toContain("--allow-failures");
-    expect(stepNames.indexOf("Run pinned GPT-5.4 gateway restart runtime pair")).toBeLessThan(
-      stepNames.indexOf("Generate live runtime token-efficiency report"),
+    expect(restartStep.run).not.toContain("--allow-failures");
+    expect(voiceCommand).toEqual([
+      "pnpm openclaw qa suite",
+      "--repo-root .",
+      "--provider-mode live-frontier",
+      "--scenario inbound-voice-talkback-live",
+      "--concurrency 1",
+      "--model openai/gpt-5.4",
+      "--alt-model openai/gpt-5.4",
+      "--fast",
+      '--output-dir "${{ steps.run_lane.outputs.output_dir }}/inbound-voice-talkback-live-gpt-5.4"',
+    ]);
+    expect(voiceStep.if).toBeUndefined();
+    expect(voiceStep["continue-on-error"]).toBeUndefined();
+    expect(job["continue-on-error"]).toBeUndefined();
+    for (const forbiddenFlag of ["--runtime-pair", "--runtime-pair-lane", "--allow-failures"]) {
+      expect(voiceStep.run).not.toContain(forbiddenFlag);
+    }
+    expect(stepNames.indexOf(restartStep.name ?? "")).toBeLessThan(
+      stepNames.indexOf(voiceStep.name ?? ""),
     );
+    expect(stepNames.indexOf(voiceStep.name ?? "")).toBeLessThan(
+      stepNames.indexOf(reportStep.name ?? ""),
+    );
+    expect(stepNames.indexOf(reportStep.name ?? "")).toBeLessThan(
+      stepNames.indexOf(uploadStep.name ?? ""),
+    );
+    expect(job.steps?.filter((step) => step.uses === UPLOAD_ARTIFACT_V7)).toHaveLength(1);
+    expect(uploadStep.with?.path).toBe("${{ steps.run_lane.outputs.output_dir }}");
   });
 
   it("requires release-check QA evidence artifacts when lanes run", () => {

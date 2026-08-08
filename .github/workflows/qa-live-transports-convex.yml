@@ -75,6 +75,11 @@ on:
         required: true
         default: main
         type: string
+      run_live_runtime_proof:
+        description: Run the blocking live runtime release proof
+        required: false
+        default: false
+        type: boolean
       run_buzz:
         description: Run the Buzz live lane (requires a pooled Buzz credential)
         required: false
@@ -172,14 +177,27 @@ jobs:
       - name: Validate selected ref
         id: validate
         env:
+          EVENT_NAME: ${{ github.event_name }}
           EXPECTED_SHA: ${{ inputs.expected_sha }}
           GH_TOKEN: ${{ github.token }}
           INPUT_REF: ${{ github.event_name != 'schedule' && inputs.ref || github.sha }}
+          RUN_LIVE_RUNTIME_PROOF: ${{ inputs.run_live_runtime_proof }}
         shell: bash
         run: |
           set -euo pipefail
           selected_revision="$(git rev-parse HEAD)"
           trusted_reason=""
+
+          if [[ "${EVENT_NAME}" == "workflow_dispatch" && "${RUN_LIVE_RUNTIME_PROOF}" == "true" ]]; then
+            if [[ ! "${INPUT_REF}" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "Manual live runtime proof requires ref to be a full 40-character SHA." >&2
+              exit 1
+            fi
+            if [[ "${selected_revision}" != "${INPUT_REF}" ]]; then
+              echo "Manual live runtime proof ref ${INPUT_REF} resolved to ${selected_revision}." >&2
+              exit 1
+            fi
+          fi
 
           if [[ -n "${EXPECTED_SHA}" && "${selected_revision}" != "${EXPECTED_SHA}" ]]; then
             echo "Ref '${INPUT_REF}' resolved to ${selected_revision}, expected ${EXPECTED_SHA}." >&2
@@ -207,14 +225,22 @@ jobs:
               trusted_reason="release-branch-head"
             fi
           else
-            pr_head_count="$(
-              gh api \
-                -H "Accept: application/vnd.github+json" \
-                "repos/${GITHUB_REPOSITORY}/commits/${selected_revision}/pulls" \
-                --jq '[.[] | select(.state == "open" and .head.repo.full_name == "'"${GITHUB_REPOSITORY}"'" and .head.sha == "'"${selected_revision}"'")] | length'
-            )"
-            if [[ "$pr_head_count" != "0" ]]; then
-              trusted_reason="open-pr-head"
+            if [[ "${EVENT_NAME}" == "workflow_dispatch" && "${RUN_LIVE_RUNTIME_PROOF}" == "true" ]]; then
+              git fetch --no-tags origin '+refs/heads/release/*:refs/remotes/origin/release/*'
+              if git for-each-ref --format='%(objectname)' refs/remotes/origin/release | grep -Fxq "$selected_revision"; then
+                trusted_reason="release-branch-head"
+              fi
+            fi
+            if [[ -z "$trusted_reason" ]]; then
+              pr_head_count="$(
+                gh api \
+                  -H "Accept: application/vnd.github+json" \
+                  "repos/${GITHUB_REPOSITORY}/commits/${selected_revision}/pulls" \
+                  --jq '[.[] | select(.state == "open" and .head.repo.full_name == "'"${GITHUB_REPOSITORY}"'" and .head.sha == "'"${selected_revision}"'")] | length'
+              )"
+              if [[ "$pr_head_count" != "0" ]]; then
+                trusted_reason="open-pr-head"
+              fi
             fi
           fi
 
@@ -308,7 +334,7 @@ jobs:
   run_live_runtime_token_efficiency:
     name: Run live runtime token-efficiency lane
     needs: [authorize_actor, validate_selected_ref]
-    if: github.event_name == 'schedule'
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.run_live_runtime_proof == true)
     runs-on: blacksmith-16vcpu-ubuntu-2404
     timeout-minutes: 45
     environment: qa-live-shared
@@ -391,6 +417,24 @@ jobs:
             --runtime-pair openclaw,codex \
             --fast \
             --output-dir "${{ steps.run_lane.outputs.output_dir }}/gateway-restart-gpt-5.4-runtime-pair"
+
+      - name: Run pinned GPT-5.4 inbound voice talkback
+        shell: bash
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENCLAW_LIVE_OPENAI_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          set -euo pipefail
+
+          pnpm openclaw qa suite \
+            --repo-root . \
+            --provider-mode live-frontier \
+            --scenario inbound-voice-talkback-live \
+            --concurrency 1 \
+            --model openai/gpt-5.4 \
+            --alt-model openai/gpt-5.4 \
+            --fast \
+            --output-dir "${{ steps.run_lane.outputs.output_dir }}/inbound-voice-talkback-live-gpt-5.4"
 
       - name: Generate live runtime token-efficiency report
         if: steps.run_lane.outcome == 'success'
