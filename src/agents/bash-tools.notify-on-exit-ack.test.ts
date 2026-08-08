@@ -56,6 +56,7 @@ function createDeferred<T>(): Deferred<T> {
 }
 
 type NotifyProcessOptions = {
+  output?: string;
   sessionKey?: string;
   mainKey?: string;
   sessionScope?: "per-sender" | "global";
@@ -64,8 +65,9 @@ type NotifyProcessOptions = {
 
 async function startNotifyProcess(options: NotifyProcessOptions = {}) {
   const exit = createDeferred<RunExit>();
+  const output = options.output ?? "notify";
   supervisorMock.spawn.mockImplementationOnce(async (input: SpawnInput): Promise<ManagedRun> => {
-    input.onStdout?.("notify\n");
+    input.onStdout?.(`${output}\n`);
     return {
       runId: `run-${supervisorMock.spawn.mock.calls.length}`,
       startedAtMs: Date.now(),
@@ -75,7 +77,7 @@ async function startNotifyProcess(options: NotifyProcessOptions = {}) {
     };
   });
   const run = await runExecProcess({
-    command: "notify",
+    command: output,
     workdir: process.cwd(),
     env: {},
     usePty: false,
@@ -174,6 +176,8 @@ describe("notify-on-exit acknowledgement", () => {
 
     expect(readStatus(await executeProcess("poll", sessionId))).toBe("completed");
     expect(peekSystemEventEntries(queueKey)).toStrictEqual([before, after]);
+    expect(readStatus(await executeProcess("poll", sessionId))).toBe("completed");
+    expect(peekSystemEventEntries(queueKey)).toStrictEqual([before, after]);
   });
 
   it("leaves an existing completion when the producer enqueue is deduplicated", async () => {
@@ -202,8 +206,8 @@ describe("notify-on-exit acknowledgement", () => {
   });
 
   it("isolates completion acknowledgements for processes sharing a queue", async () => {
-    const first = await startNotifyProcess();
-    const second = await startNotifyProcess();
+    const first = await startNotifyProcess({ output: "first" });
+    const second = await startNotifyProcess({ output: "second" });
     await first.finish();
     await second.finish();
     const firstId = first.run.session.id;
