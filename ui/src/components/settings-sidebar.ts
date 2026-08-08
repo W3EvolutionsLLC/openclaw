@@ -39,9 +39,12 @@ type SettingsSidebarProps = {
   gatewayVersion: string;
   updateAvailable: UpdateAvailable | null;
   updateSchedule?: UpdateScheduleState | null;
+  heldUpdateCampaignId?: string | null;
   updateRunning: boolean;
   canUpdate?: boolean;
+  canHoldUpdate?: boolean;
   onUpdate: () => void;
+  onHoldUpdate?: () => Promise<boolean>;
   searchQuery: string;
   searchBlockMatches?: readonly SettingsSearchBlock[];
   onExit: () => void;
@@ -306,9 +309,12 @@ export function renderSettingsSidebar(props: SettingsSidebarProps) {
       <openclaw-sidebar-update-card
         .updateAvailable=${props.updateAvailable}
         .updateSchedule=${props.updateSchedule ?? null}
+        .heldUpdateCampaignId=${props.heldUpdateCampaignId ?? null}
         .updateRunning=${props.updateRunning}
         .canUpdate=${props.canUpdate ?? false}
+        .canHoldUpdate=${props.canHoldUpdate ?? false}
         .onUpdate=${props.onUpdate}
+        .onHoldUpdate=${props.onHoldUpdate ?? (async () => false)}
       ></openclaw-sidebar-update-card>
       <footer class="settings-sidebar__footer">
         ${props.offline
