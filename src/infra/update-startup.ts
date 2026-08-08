@@ -551,22 +551,17 @@ export async function runGatewayUpdateCheck(params: {
   const autoDisabledByEnv = isTruthyEnvValue(process.env.OPENCLAW_NO_AUTO_UPDATE);
   const autoDisabledByExternalSupervisor = isGatewayExternallySupervised();
   const shouldRunUpdateHints = params.cfg.update?.checkOnStart !== false;
-  const isAutoUpdateChannel = configuredChannel === "stable" || configuredChannel === "beta";
-  const shouldRunAutoUpdate =
-    isAutoUpdateChannel && auto.enabled && !autoDisabledByEnv && !autoDisabledByExternalSupervisor;
-  if (!shouldRunUpdateHints && !shouldRunAutoUpdate) {
-    if (configuredChannel === "extended-stable") {
-      setUpdateAvailableCache({
-        next: null,
-        onUpdateAvailableChange: params.onUpdateAvailableChange,
-      });
-    }
+  if (!shouldRunUpdateHints && configuredChannel === "extended-stable") {
+    setUpdateAvailableCache({
+      next: null,
+      onUpdateAvailableChange: params.onUpdateAvailableChange,
+    });
     return;
   }
 
   let installStatus: Awaited<ReturnType<typeof resolveStartupInstallStatus>> | undefined;
   let channel = configuredChannel;
-  if (configuredChannel === "extended-stable" || mightUseInstalledExtendedStableChannel) {
+  if (mightUseInstalledExtendedStableChannel) {
     installStatus = await resolveStartupInstallStatus();
     channel = resolveEffectiveUpdateChannel({
       configChannel,
@@ -581,6 +576,27 @@ export async function runGatewayUpdateCheck(params: {
       });
       return;
     }
+  } else if (configuredChannel === "extended-stable") {
+    installStatus = await resolveStartupInstallStatus();
+    if (installStatus.status.installKind !== "package") {
+      setUpdateAvailableCache({
+        next: null,
+        onUpdateAvailableChange: params.onUpdateAvailableChange,
+      });
+      return;
+    }
+  }
+  const isAutoUpdateChannel = channel === "stable" || channel === "beta";
+  const shouldRunAutoUpdate =
+    isAutoUpdateChannel && auto.enabled && !autoDisabledByEnv && !autoDisabledByExternalSupervisor;
+  if (!shouldRunUpdateHints && !shouldRunAutoUpdate) {
+    if (channel === "extended-stable") {
+      setUpdateAvailableCache({
+        next: null,
+        onUpdateAvailableChange: params.onUpdateAvailableChange,
+      });
+    }
+    return;
   }
 
   const state = await readState();
