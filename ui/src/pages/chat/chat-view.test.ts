@@ -5196,6 +5196,40 @@ describe("chat model controls", () => {
     expect(modelOption?.closest("openclaw-tooltip")).toBeNull();
   });
 
+  it("distinguishes model rows that use different agent runtimes", () => {
+    const { state } = createChatHeaderState({
+      model: "gpt-5.6",
+      modelProvider: "openai",
+      models: [
+        {
+          id: "gpt-5.6",
+          name: "GPT-5.6",
+          provider: "openai",
+          contextWindow: 1_000_000,
+          agentRuntime: { id: "openclaw", source: "model" },
+        },
+        {
+          id: "gpt-5.6-sol",
+          name: "GPT-5.6 Sol",
+          provider: "openai",
+          contextWindow: 1_000_000,
+          agentRuntime: { id: "codex", source: "model" },
+        },
+      ],
+    });
+    const container = renderModelControls(state);
+    const openClawMeta = container.querySelector(
+      '[data-chat-model-option="openai/gpt-5.6"] .chat-controls__model-option-meta',
+    );
+    const codexMeta = container.querySelector(
+      '[data-chat-model-option="openai/gpt-5.6-sol"] .chat-controls__model-option-meta',
+    );
+
+    expect(openClawMeta?.textContent).toBe("1M · OpenClaw");
+    expect(openClawMeta?.textContent).not.toContain("Codex");
+    expect(codexMeta?.textContent).toBe("1M · Codex");
+  });
+
   it("marks chat-only models in the active control and picker", () => {
     const { state } = createChatHeaderState({
       model: "qwen3-8b",
