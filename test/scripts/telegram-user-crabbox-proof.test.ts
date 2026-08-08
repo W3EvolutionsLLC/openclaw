@@ -28,6 +28,7 @@ import {
   renderTailscaleSshProxy,
   runCommand,
   runSutContainerAction,
+  selectCrabboxSshPort,
   signalCommandTree,
   stageFullSessionArtifacts,
   startLocalSut,
@@ -267,6 +268,48 @@ describe("telegram user Crabbox proof log polling", () => {
   it("allows cold remote setup to outlive ordinary command timeouts", () => {
     expect(REMOTE_SETUP_COMMAND_TIMEOUT_MS).toBeGreaterThan(COMMAND_TIMEOUT_MS);
     expect(REMOTE_SETUP_COMMAND_TIMEOUT_MS).toBeGreaterThanOrEqual(90 * 60 * 1000);
+  });
+
+  it.each([
+    {
+      inspect: { sshFallbackPorts: ["22", "2222", " 2200 ", "22"], sshPort: "2222" },
+      ports: ["2222", "22", "2200"],
+    },
+    {
+      inspect: { sshFallbackPorts: ["2200", "22", "2200"] },
+      ports: ["22", "2200"],
+    },
+    { inspect: {}, ports: ["22"] },
+  ])("selects ordered, deduplicated SSH candidates: $ports", async ({ inspect, ports }) => {
+    const probes: string[] = [];
+
+    await expect(
+      selectCrabboxSshPort({
+        inspect,
+        probe: async (port) => {
+          probes.push(port);
+          if (port !== ports.at(-1)) {
+            throw new Error("Connection refused");
+          }
+        },
+      }),
+    ).resolves.toBe(ports.at(-1));
+    expect(probes).toEqual(ports);
+  });
+
+  it("does not try a fallback after a non-connection failure", async () => {
+    const probes: string[] = [];
+
+    await expect(
+      selectCrabboxSshPort({
+        inspect: { sshFallbackPorts: ["22"], sshPort: "2222" },
+        probe: async (port) => {
+          probes.push(port);
+          throw new Error("Permission denied (publickey)");
+        },
+      }),
+    ).rejects.toThrow("Permission denied");
+    expect(probes).toEqual(["2222"]);
   });
 
   it("rejects loose numeric log tail limits instead of parsing prefixes", () => {
