@@ -419,6 +419,7 @@ jobs:
             --output-dir "${{ steps.run_lane.outputs.output_dir }}/gateway-restart-gpt-5.4-runtime-pair"
 
       - name: Run pinned GPT-5.4 inbound voice talkback
+        if: ${{ !cancelled() && steps.run_lane.outcome == 'success' }}
         shell: bash
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -437,7 +438,7 @@ jobs:
             --output-dir "${{ steps.run_lane.outputs.output_dir }}/inbound-voice-talkback-live-gpt-5.4"
 
       - name: Generate live runtime token-efficiency report
-        if: steps.run_lane.outcome == 'success'
+        if: ${{ !cancelled() && steps.run_lane.outcome == 'success' }}
         shell: bash
         run: |
           set -euo pipefail
