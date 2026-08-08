@@ -27,8 +27,13 @@ export type ChatModelPickerOption = {
   value: string;
 };
 
+// Known models.list runtime ids; mirrors src/status/agent-runtime-label.ts,
+// which cannot be imported here (it drags terminal sanitizers into the bundle).
 const AGENT_RUNTIME_LABELS: Readonly<Record<string, string>> = {
+  "claude-cli": "Claude CLI",
   codex: "Codex",
+  "codex-cli": "Codex",
+  "google-gemini-cli": "Gemini CLI",
   openclaw: "OpenClaw",
 };
 

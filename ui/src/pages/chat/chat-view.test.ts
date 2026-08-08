@@ -5215,19 +5215,34 @@ describe("chat model controls", () => {
           contextWindow: 1_000_000,
           agentRuntime: { id: "codex", source: "model" },
         },
+        {
+          id: "claude-opus-4-5",
+          name: "Claude Opus 4.5",
+          provider: "anthropic",
+          contextWindow: 200_000,
+          agentRuntime: { id: "claude-cli", source: "model" },
+        },
+        {
+          id: "gemini-3-pro",
+          name: "Gemini 3 Pro",
+          provider: "google",
+          contextWindow: 1_000_000,
+          agentRuntime: { id: "google-gemini-cli", source: "model" },
+        },
       ],
     });
     const container = renderModelControls(state);
-    const openClawMeta = container.querySelector(
-      '[data-chat-model-option="openai/gpt-5.6"] .chat-controls__model-option-meta',
-    );
-    const codexMeta = container.querySelector(
-      '[data-chat-model-option="openai/gpt-5.6-sol"] .chat-controls__model-option-meta',
-    );
+    const metaFor = (value: string) =>
+      container.querySelector(
+        `[data-chat-model-option="${value}"] .chat-controls__model-option-meta`,
+      )?.textContent;
 
-    expect(openClawMeta?.textContent).toBe("1M · OpenClaw");
-    expect(openClawMeta?.textContent).not.toContain("Codex");
-    expect(codexMeta?.textContent).toBe("1M · Codex");
+    expect(metaFor("openai/gpt-5.6")).toBe("1M · OpenClaw");
+    expect(metaFor("openai/gpt-5.6")).not.toContain("Codex");
+    expect(metaFor("openai/gpt-5.6-sol")).toBe("1M · Codex");
+    // Known CLI runtime ids map to their product labels, not capitalized ids.
+    expect(metaFor("anthropic/claude-opus-4-5")).toBe("200k · Claude CLI");
+    expect(metaFor("google/gemini-3-pro")).toBe("1M · Gemini CLI");
   });
 
   it("marks chat-only models in the active control and picker", () => {
