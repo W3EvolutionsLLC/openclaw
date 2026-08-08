@@ -277,6 +277,9 @@ function createConfig(params: {
       providers: {
         [provider.providerId]: {
           ...provider.config,
+          // The shared builder returns `as const` literals; the config type
+          // needs mutable model catalog and input arrays.
+          models: provider.config.models.map((model) => ({ ...model, input: [...model.input] })),
           request: { allowPrivateNetwork: true },
         },
       },
