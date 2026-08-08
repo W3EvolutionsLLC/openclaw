@@ -1,6 +1,6 @@
 // Dedicated sidebar for the full-page settings takeover (see app-host.ts).
 import { html, nothing } from "lit";
-import type { UpdateAvailable } from "../api/types.ts";
+import type { UpdateAvailable, UpdateScheduleState } from "../api/types.ts";
 import {
   cancelRoutePreload,
   navigationIconForRoute,
@@ -38,7 +38,9 @@ type SettingsSidebarProps = {
   lastError: string | null;
   gatewayVersion: string;
   updateAvailable: UpdateAvailable | null;
+  updateSchedule?: UpdateScheduleState | null;
   updateRunning: boolean;
+  canUpdate?: boolean;
   onUpdate: () => void;
   searchQuery: string;
   searchBlockMatches?: readonly SettingsSearchBlock[];
@@ -303,7 +305,9 @@ export function renderSettingsSidebar(props: SettingsSidebarProps) {
       </nav>
       <openclaw-sidebar-update-card
         .updateAvailable=${props.updateAvailable}
+        .updateSchedule=${props.updateSchedule ?? null}
         .updateRunning=${props.updateRunning}
+        .canUpdate=${props.canUpdate ?? false}
         .onUpdate=${props.onUpdate}
       ></openclaw-sidebar-update-card>
       <footer class="settings-sidebar__footer">
