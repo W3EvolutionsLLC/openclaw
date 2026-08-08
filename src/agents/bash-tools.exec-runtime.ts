@@ -16,7 +16,7 @@ import {
 } from "../infra/exec-approvals.js";
 import { requestHeartbeat } from "../infra/heartbeat-wake.js";
 import { findPathKey, mergePathPrepend, removePathPrepend } from "../infra/path-prepend.js";
-import { enqueueSystemEvent } from "../infra/system-events.js";
+import { enqueueSystemEventEntry } from "../infra/system-events.js";
 import { isSubagentSessionKey } from "../sessions/session-key-utils.js";
 /**
  * Bash exec runtime.
@@ -41,8 +41,10 @@ import { resolveSafeTimeoutDelayMs } from "../utils/timer-delay.js";
 import {
   addSession,
   appendOutput,
+  beginProcessCompletionEvent,
   createSessionSlug,
   markExited,
+  recordProcessCompletionEvent,
   tail,
 } from "./bash-process-registry.js";
 import { appendExecTimeoutRetryGuidance, renderExecUpdateText } from "./bash-tools.exec-output.js";
@@ -310,14 +312,16 @@ export function applyShellPath(env: Record<string, string>, shellPath?: string |
 }
 
 function maybeNotifyOnExit(session: ProcessSession, status: "completed" | "failed") {
-  if (!session.backgrounded || !session.notifyOnExit || session.exitNotified) {
+  if (!session.backgrounded || !session.notifyOnExit) {
     return;
   }
   const sessionKey = session.sessionKey?.trim();
   if (!sessionKey) {
     return;
   }
-  session.exitNotified = true;
+  if (!beginProcessCompletionEvent(session)) {
+    return;
+  }
   const exitLabel = session.exitSignal
     ? `signal ${session.exitSignal}`
     : `code ${session.exitCode ?? 0}`;
@@ -338,10 +342,14 @@ function maybeNotifyOnExit(session: ProcessSession, status: "completed" | "faile
     mainKey: session.mainKey,
     sessionScope: session.sessionScope,
   };
-  enqueueSystemEvent(eventText, {
-    sessionKey: resolveEventSessionKeyForPolicy(sessionKey, eventRouting),
+  const queueKey = resolveEventSessionKeyForPolicy(sessionKey, eventRouting);
+  const event = enqueueSystemEventEntry(eventText, {
+    sessionKey: queueKey,
     deliveryContext: session.notifyDeliveryContext,
   });
+  if (event) {
+    recordProcessCompletionEvent(session, { queueKey, event });
+  }
   // Subagent sessions receive exec results via process poll and announce flow;
   // the heartbeat would fall back to the main session and cause spurious wakes.
   if (!isSubagentSessionKey(sessionKey)) {

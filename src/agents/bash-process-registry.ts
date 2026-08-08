@@ -6,6 +6,7 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { sliceUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import type { EventSessionRoutingPolicy } from "../infra/event-session-routing.js";
+import type { SystemEvent } from "../infra/system-events.js";
 import type { TerminationReason } from "../process/supervisor/types.js";
 import type { DeliveryContext } from "../utils/delivery-context.js";
 import { readEnvInt } from "./bash-tools.shared.js";
@@ -40,6 +41,16 @@ type SessionStdin = {
   writable?: boolean;
   writableEnded?: boolean;
   writableFinished?: boolean;
+};
+
+type ProcessCompletionEventState =
+  | { kind: "initial" }
+  | { kind: "processed" }
+  | { kind: "enqueued"; queueKey: string; event: SystemEvent }
+  | { kind: "observed" };
+
+type ProcessCompletionEventLifecycle = {
+  state: ProcessCompletionEventState;
 };
 
 /** Mutable session state for a running bash exec process. */
@@ -113,6 +124,7 @@ interface FinishedSession {
 
 const runningSessions = new Map<string, ProcessSession>();
 const finishedSessions = new Map<string, FinishedSession>();
+const completionEvents = new WeakMap<object, ProcessCompletionEventLifecycle>();
 const activeBackgroundExecSessionIds = new Set<string>();
 let finishedSessionOutputChars = 0;
 
@@ -131,6 +143,7 @@ export function createSessionSlug(): string {
 
 /** Adds a running session and starts retention sweeping if needed. */
 export function addSession(session: ProcessSession) {
+  completionEvents.set(session, { state: { kind: "initial" } });
   runningSessions.set(session.id, session);
   startSweeper();
 }
@@ -143,6 +156,51 @@ export function getSession(id: string) {
 /** Returns a retained finished background session by id. */
 export function getFinishedSession(id: string) {
   return finishedSessions.get(id);
+}
+
+function getProcessCompletionEvent(owner: object): ProcessCompletionEventLifecycle {
+  const existing = completionEvents.get(owner);
+  if (existing) {
+    return existing;
+  }
+  const created: ProcessCompletionEventLifecycle = { state: { kind: "initial" } };
+  completionEvents.set(owner, created);
+  return created;
+}
+
+/** Claims the producer's one notify-on-exit pass unless poll observed it first. */
+export function beginProcessCompletionEvent(session: ProcessSession): boolean {
+  const completion = getProcessCompletionEvent(session);
+  if (completion.state.kind === "observed" || session.exitNotified) {
+    return false;
+  }
+  session.exitNotified = true;
+  completion.state = { kind: "processed" };
+  return true;
+}
+
+/** Records the exact successful completion enqueue for terminal poll acknowledgement. */
+export function recordProcessCompletionEvent(
+  session: ProcessSession,
+  receipt: { queueKey: string; event: SystemEvent },
+): void {
+  const completion = getProcessCompletionEvent(session);
+  if (completion.state.kind !== "observed") {
+    completion.state = { kind: "enqueued", ...receipt };
+  }
+}
+
+/** Marks terminal output observed and returns only an exact prior enqueue receipt. */
+export function observeProcessCompletionEvent(
+  owner: object,
+): Extract<ProcessCompletionEventState, { kind: "enqueued" }> | undefined {
+  const completion = getProcessCompletionEvent(owner);
+  const prior = completion.state;
+  if (prior.kind === "observed") {
+    return undefined;
+  }
+  completion.state = { kind: "observed" };
+  return prior.kind === "enqueued" ? prior : undefined;
 }
 
 function deleteFinishedSession(id: string): boolean {
@@ -296,7 +354,7 @@ function moveToFinished(session: ProcessSession, status: ProcessStatus) {
   // Keep full completed logs; evict older records rather than silently
   // truncating the process poll/log contract or dropping the newest result.
   deleteFinishedSession(session.id);
-  finishedSessions.set(session.id, {
+  const finished: FinishedSession = {
     id: session.id,
     command: session.command,
     scopeKey: session.scopeKey,
@@ -314,7 +372,11 @@ function moveToFinished(session: ProcessSession, status: ProcessStatus) {
     tail: session.tail,
     truncated: session.truncated,
     totalOutputChars: session.totalOutputChars,
-  });
+  };
+  // Retain the shared cell before producer enqueue so poll observation reaches
+  // the live owner without recomputing a queue key or event identity.
+  completionEvents.set(finished, getProcessCompletionEvent(session));
+  finishedSessions.set(session.id, finished);
   finishedSessionOutputChars += session.aggregated.length;
   while (
     finishedSessions.size > MAX_FINISHED_SESSION_COUNT ||

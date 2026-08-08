@@ -10,6 +10,7 @@ import type { OpenClawConfig } from "../config/config.js";
 import { requestHeartbeat, setHeartbeatWakeHandler } from "../infra/heartbeat-wake.js";
 import { applyPathPrepend, findPathKey } from "../infra/path-prepend.js";
 import {
+  enqueueSystemEventEntry,
   peekSystemEventEntries,
   peekSystemEvents,
   resetSystemEventsForTest,
@@ -24,6 +25,7 @@ import {
   type ProcessSession,
 } from "./bash-process-registry.js";
 import { resetProcessRegistryForTests } from "./bash-process-registry.test-support.js";
+import { runExecProcess } from "./bash-tools.exec-runtime.js";
 import { createExecTool, createProcessTool } from "./bash-tools.js";
 import { getBashShellConfig, sanitizeBinaryOutput } from "./shell-utils.js";
 
@@ -376,10 +378,12 @@ async function listProcessSessions(tool: ProcessToolInstance) {
 async function pollProcessSession(params: {
   tool: ProcessToolInstance;
   sessionId: string;
+  timeout?: number;
 }): Promise<ProcessPollResult> {
   const poll = await executeProcessTool(params.tool, {
     action: "poll",
     sessionId: params.sessionId,
+    ...(params.timeout !== undefined ? { timeout: params.timeout } : {}),
   });
   return {
     status: readProcessStatusOrRunning(poll.details),
@@ -404,17 +408,6 @@ function useCapturedEnv(keys: string[], afterCapture?: () => void) {
   afterEach(() => {
     envSnapshot.restore();
   });
-}
-
-async function waitForCompletion(sessionId: string) {
-  let status = PROCESS_STATUS_RUNNING;
-  await expect
-    .poll(async () => {
-      status = (await pollProcessSession({ tool: processTool, sessionId })).status;
-      return status;
-    }, BACKGROUND_POLL_OPTIONS)
-    .not.toBe(PROCESS_STATUS_RUNNING);
-  return status;
 }
 
 function requireSessionId(details: { sessionId?: string }): string {
@@ -476,12 +469,6 @@ async function drainNotifyEvents(sessionKey = DEFAULT_NOTIFY_SESSION_KEY) {
     isMainSession: false,
     isNewSession: false,
   });
-}
-
-async function runBackgroundCommandToCompletion(tool: ExecToolInstance, command: string) {
-  const sessionId = await startBackgroundCommand(tool, command);
-  const status = await waitForCompletion(sessionId);
-  return { sessionId, status };
 }
 
 type ProcessLogWindow = { offset?: number; limit?: number };
@@ -694,10 +681,14 @@ const runLongLogExpectationCase = async ({
 const runNotifyNoopCase = async ({ label, defaults, expectNotification }: NotifyNoopCase) => {
   const tool = createNotifyOnExitExecTool(defaults);
 
-  const { sessionId, status } = await runBackgroundCommandToCompletion(tool, COMMAND_NOOP);
-  expect(status).toBe(PROCESS_STATUS_COMPLETED);
+  const sessionId = await startBackgroundCommand(tool, COMMAND_NOOP);
+  await expect
+    .poll(() => getFinishedSession(sessionId)?.status, BACKGROUND_POLL_OPTIONS)
+    .toBe(PROCESS_STATUS_COMPLETED);
+  const finished = getFinishedSession(sessionId);
   const events = peekSystemEvents(DEFAULT_NOTIFY_SESSION_KEY);
   expectNotifyNoopEvents(events, expectNotification, sessionId, label);
+  expect(finished?.status).toBe(PROCESS_STATUS_COMPLETED);
 };
 
 describe("tool descriptions", () => {
@@ -817,6 +808,25 @@ describe("exec exit codes", () => {
 describe("exec notifyOnExit", () => {
   useCapturedEnv([...SHELL_ENV_KEYS], applyDefaultShellEnv);
 
+  async function startRawNotifyProcess(onSettledBeforeNotify?: () => void) {
+    const run = await runExecProcess({
+      command: shellEcho("notify"),
+      workdir: process.cwd(),
+      env: {},
+      usePty: false,
+      warnings: [],
+      maxOutput: 1000,
+      pendingMaxOutput: 1000,
+      notifyOnExit: true,
+      notifyOnExitEmptySuccess: false,
+      sessionKey: DEFAULT_NOTIFY_SESSION_KEY,
+      timeoutSec: null,
+      onSettledBeforeNotify,
+    });
+    markBackgrounded(run.session);
+    return run;
+  }
+
   async function drainPendingHeartbeatWakes(): Promise<void> {
     const handler = vi.fn(async () => ({ status: "ran" as const, durationMs: 0 }));
     const dispose = setHeartbeatWakeHandler(handler);
@@ -854,6 +864,110 @@ describe("exec notifyOnExit", () => {
     expect(hasEvent).toBe(true);
     expect(queuedEvent).toBeDefined();
     expect(formatted).toBeUndefined();
+  });
+
+  it("skips notification and wake when terminal poll wins the notify race", async () => {
+    const wakeHandler = vi.fn(async () => ({ status: "ran" as const, durationMs: 0 }));
+    const dispose = setHeartbeatWakeHandler(wakeHandler);
+    let sessionId = "";
+    let pollPromise: Promise<ProcessPollResult> | undefined;
+    try {
+      const run = await startRawNotifyProcess(() => {
+        pollPromise = pollProcessSession({ tool: processTool, sessionId });
+      });
+      sessionId = run.session.id;
+
+      await run.promise;
+      const poll = await expectDefined(pollPromise, "poll-before-notify test invariant");
+      await waitOneTurn();
+
+      expect(poll.status).toBe(PROCESS_STATUS_COMPLETED);
+      expect(getFinishedSession(sessionId)?.status).toBe(PROCESS_STATUS_COMPLETED);
+      expect(peekSystemEventEntries(DEFAULT_NOTIFY_SESSION_KEY)).toStrictEqual([]);
+      expect(wakeHandler).not.toHaveBeenCalled();
+    } finally {
+      dispose();
+    }
+  });
+
+  it("does not claim a duplicate event when enqueue returns no receipt", async () => {
+    const run = await startRawNotifyProcess();
+    const sessionId = run.session.id;
+    const duplicate = expectDefined(
+      enqueueSystemEventEntry(`Exec completed (${sessionId.slice(0, 8)}, code 0) :: notify`, {
+        sessionKey: DEFAULT_NOTIFY_SESSION_KEY,
+      }),
+      "prequeued completion test invariant",
+    );
+
+    await run.promise;
+    const poll = await pollProcessSession({ tool: processTool, sessionId });
+
+    expect(poll.status).toBe(PROCESS_STATUS_COMPLETED);
+    expect(peekSystemEventEntries(DEFAULT_NOTIFY_SESSION_KEY)).toStrictEqual([duplicate]);
+  });
+
+  it("acknowledges a retained completion when terminal poll consumes it", async () => {
+    const queueKey = "agent:ops:primary";
+    const sessionId = await startBackgroundCommand(
+      createNotifyOnExitExecTool({
+        sessionKey: "agent:ops:cron:nightly:run:abc",
+        mainKey: "primary",
+        sessionScope: "per-sender",
+      }),
+      shellEcho("notify"),
+    );
+    const { finished } = await waitForNotifyEvent(sessionId, queueKey);
+    const queuedEvent = peekSystemEventEntries(queueKey).find((event) =>
+      event.text.includes(sessionId.slice(0, 8)),
+    );
+
+    expect(finished?.status).toBe(PROCESS_STATUS_COMPLETED);
+    expect(queuedEvent).toBeDefined();
+    expect((await pollProcessSession({ tool: processTool, sessionId })).status).toBe(
+      PROCESS_STATUS_COMPLETED,
+    );
+    expect(hasNotifyEventForPrefix(sessionId.slice(0, 8), queueKey)).toBe(false);
+  });
+
+  it("acknowledges a live completion when a waiting poll observes exit", async () => {
+    const sessionId = await startBackgroundCommand(
+      createNotifyOnExitExecTool(),
+      shellEcho("notify"),
+    );
+    expect(getFinishedSession(sessionId)).toBeUndefined();
+
+    const poll = await pollProcessSession({ tool: processTool, sessionId, timeout: 1000 });
+
+    expect(poll.status).toBe(PROCESS_STATUS_COMPLETED);
+    expect(hasNotifyEventForPrefix(sessionId.slice(0, 8))).toBe(false);
+  });
+
+  it("keeps completion events isolated for processes sharing one queue", async () => {
+    const tool = createNotifyOnExitExecTool();
+    const firstSessionId = await startBackgroundCommand(tool, shellEcho("notify"));
+    const secondSessionId = await startBackgroundCommand(tool, shellEcho("notify"));
+    await waitForNotifyEvent(firstSessionId);
+    await waitForNotifyEvent(secondSessionId);
+
+    await pollProcessSession({ tool: processTool, sessionId: firstSessionId });
+
+    expect(hasNotifyEventForPrefix(firstSessionId.slice(0, 8))).toBe(false);
+    expect(hasNotifyEventForPrefix(secondSessionId.slice(0, 8))).toBe(true);
+  });
+
+  it("drops retained receipt state on cleanup without consuming an unpolled event", async () => {
+    const sessionId = await startBackgroundCommand(
+      createNotifyOnExitExecTool(),
+      shellEcho("notify"),
+    );
+    const { finished } = await waitForNotifyEvent(sessionId);
+    expect(finished?.status).toBe(PROCESS_STATUS_COMPLETED);
+
+    await executeProcessTool(processTool, { action: "clear", sessionId });
+
+    expect(getFinishedSession(sessionId)).toBeUndefined();
+    expect(hasNotifyEventForPrefix(sessionId.slice(0, 8))).toBe(true);
   });
 
   it("preserves the origin delivery context on background exec completion events", async () => {

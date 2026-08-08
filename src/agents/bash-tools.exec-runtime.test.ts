@@ -14,13 +14,19 @@ import {
   type DiagnosticEventPayload,
 } from "../infra/diagnostic-events.js";
 import type { GatewayActiveWorkInspectors } from "../infra/gateway-active-work.js";
+import type { SystemEvent } from "../infra/system-events.js";
 import type { ManagedRun } from "../process/supervisor/index.js";
 import type { RunExit, SpawnInput } from "../process/supervisor/types.js";
 import { MAX_SAFE_TIMEOUT_DELAY_MS } from "../utils/timer-delay.js";
 import type { BashSandboxConfig } from "./bash-tools.shared.js";
 
 const requestHeartbeatMock = vi.hoisted(() => vi.fn());
-const enqueueSystemEventMock = vi.hoisted(() => vi.fn());
+const enqueueSystemEventEntryMock = vi.hoisted(() => vi.fn());
+const minimalSystemEvent: SystemEvent = {
+  text: "Exec completed",
+  ts: 1,
+  contextKey: null,
+};
 const supervisorMock = vi.hoisted(() => ({
   spawn: vi.fn(),
 }));
@@ -30,7 +36,7 @@ vi.mock("../infra/heartbeat-wake.js", () => ({
 }));
 
 vi.mock("../infra/system-events.js", () => ({
-  enqueueSystemEvent: enqueueSystemEventMock,
+  enqueueSystemEventEntry: enqueueSystemEventEntryMock,
 }));
 
 vi.mock("../process/supervisor/index.js", () => ({
@@ -65,7 +71,8 @@ beforeEach(() => {
   resetGatewaySuspendCoordinatorForLifecycleRestart();
   resetProcessRegistryForTests();
   requestHeartbeatMock.mockClear();
-  enqueueSystemEventMock.mockClear();
+  enqueueSystemEventEntryMock.mockReset();
+  enqueueSystemEventEntryMock.mockReturnValue(minimalSystemEvent);
   supervisorMock.spawn.mockReset();
 });
 
@@ -201,7 +208,7 @@ function expectExecTarget(
 }
 
 function requireSystemEventCall(): [string, Record<string, unknown>] {
-  const call = enqueueSystemEventMock.mock.calls[0];
+  const call = enqueueSystemEventEntryMock.mock.calls[0];
   if (!call) {
     throw new Error("expected system event call");
   }
@@ -548,7 +555,7 @@ describe("exec notifyOnExit suppression", () => {
     const outcome = await runBackgroundedExit({ reason: "manual-cancel" });
 
     expect(outcome.status).toBe("failed");
-    expect(enqueueSystemEventMock).not.toHaveBeenCalled();
+    expect(enqueueSystemEventEntryMock).not.toHaveBeenCalled();
     expect(requestHeartbeatMock).not.toHaveBeenCalled();
   });
 
@@ -725,7 +732,7 @@ describe("sandbox exec finalization suspension", () => {
       expect(finalizeExec).toHaveBeenCalledOnce();
       expect(getActiveBackgroundExecSessionCount()).toBe(0);
       expect(run.session.finalizing).toBe(false);
-      expect(enqueueSystemEventMock).toHaveBeenCalledTimes(1);
+      expect(enqueueSystemEventEntryMock).toHaveBeenCalledTimes(1);
       expect(requireSystemEventCall()[0]).toContain(
         expectedStatus === "failed" ? "Exec failed" : "Exec completed",
       );

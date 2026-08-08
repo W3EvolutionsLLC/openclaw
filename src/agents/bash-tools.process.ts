@@ -5,6 +5,7 @@
  */
 import { createAbortError as createNamedAbortError } from "../infra/abort-signal.js";
 import { formatDurationCompact } from "../infra/format-time/format-duration.ts";
+import { consumeSelectedSystemEventEntries } from "../infra/system-events.js";
 import { getDiagnosticSessionState } from "../logging/diagnostic-session-state.js";
 import { killProcessTree } from "../process/kill-tree.js";
 import { getProcessSupervisor } from "../process/supervisor/index.js";
@@ -17,6 +18,7 @@ import {
   listFinishedSessions,
   listRunningSessions,
   markExited,
+  observeProcessCompletionEvent,
   setJobTtlMs,
 } from "./bash-process-registry.js";
 import { describeProcessTool } from "./bash-tools.descriptions.js";
@@ -144,6 +146,13 @@ function resetPollRetrySuggestion(sessionId: string): void {
     resetCommandPollCount(sessionState, sessionId);
   } catch {
     // Ignore diagnostics state failures for process tool behavior.
+  }
+}
+
+function acknowledgeProcessCompletionEvent(session: object): void {
+  const receipt = observeProcessCompletionEvent(session);
+  if (receipt) {
+    consumeSelectedSystemEventEntries(receipt.queueKey, [receipt.event]);
   }
 }
 
@@ -391,6 +400,7 @@ export function createProcessTool(
           if (!scopedSession) {
             if (scopedFinished) {
               resetPollRetrySuggestion(params.sessionId);
+              acknowledgeProcessCompletionEvent(scopedFinished);
               return {
                 content: [
                   {
@@ -450,6 +460,7 @@ export function createProcessTool(
           const exitCode = scopedSession.exitCode ?? 0;
           const exitSignal = scopedSession.exitSignal ?? undefined;
           if (exited) {
+            acknowledgeProcessCompletionEvent(scopedSession);
             const status = exitCode === 0 && exitSignal == null ? "completed" : "failed";
             markExited(
               scopedSession,
