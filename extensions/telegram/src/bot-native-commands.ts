@@ -670,7 +670,6 @@ type RegisterTelegramNativeCommandsParams = {
   mediaMaxBytes?: number;
   nativeEnabled: boolean;
   nativeSkillsEnabled: boolean;
-  nativeDisabledExplicit: boolean;
   resolveGroupPolicy: (chatId: string | number, cfg: OpenClawConfig) => ChannelGroupPolicy;
   resolveTelegramGroupConfig: (
     chatId: string | number,
@@ -913,7 +912,6 @@ export const registerTelegramNativeCommands = ({
   mediaMaxBytes,
   nativeEnabled,
   nativeSkillsEnabled,
-  nativeDisabledExplicit,
   resolveGroupPolicy,
   resolveTelegramGroupConfig,
   shouldSkipUpdate,
@@ -2090,17 +2088,6 @@ export const registerTelegramNativeCommands = ({
         });
       });
     }
-  } else if (nativeDisabledExplicit) {
-    withTelegramApiErrorLogging({
-      operation: "setMyCommands",
-      runtime,
-      fn: () => bot.api.setMyCommands([]),
-    }).catch(() => {});
-    withTelegramApiErrorLogging({
-      operation: "setMyCommands(all_group_chats)",
-      runtime,
-      fn: () => bot.api.setMyCommands([], { scope: { type: "all_group_chats" } }),
-    }).catch(() => {});
   }
 };
 /* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

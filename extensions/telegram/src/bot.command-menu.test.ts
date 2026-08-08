@@ -222,7 +222,7 @@ describe("createTelegramBot command menu", () => {
 
     await commandsSynced;
 
-    const registered = registeredCommands(0);
+    const registered = registeredCommands();
     expect(registered).toEqual([
       { command: "custom_backup", description: "Git backup" },
       { command: "custom_generate", description: "Create an image" },
