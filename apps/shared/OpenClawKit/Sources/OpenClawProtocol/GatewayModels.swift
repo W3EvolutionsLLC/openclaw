@@ -17379,17 +17379,20 @@ public struct DevicePairRemoveParams: Codable, Sendable {
 }
 
 public struct DevicePairSetupCodeParams: Codable, Sendable {
+    public let mode: AnyCodable?
     public let publicurl: String?
     public let preferremoteurl: Bool?
     public let includeqr: Bool?
     public let bootstrapprofile: String?
 
     public init(
+        mode: AnyCodable? = nil,
         publicurl: String? = nil,
         preferremoteurl: Bool? = nil,
         includeqr: Bool? = nil,
         bootstrapprofile: String? = nil)
     {
+        self.mode = mode
         self.publicurl = publicurl
         self.preferremoteurl = preferremoteurl
         self.includeqr = includeqr
@@ -17397,6 +17400,7 @@ public struct DevicePairSetupCodeParams: Codable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
+        case mode
         case publicurl = "publicUrl"
         case preferremoteurl = "preferRemoteUrl"
         case includeqr = "includeQr"

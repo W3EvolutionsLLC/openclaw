@@ -4,7 +4,6 @@ import {
   validateDevicePairConnectivityInspectResult,
   validateDevicePairConnectivityPlanResult,
 } from "../../packages/gateway-protocol/src/index.js";
-import type { SecretInput } from "../config/types.secrets.js";
 import { FULL_ACCESS_PAIRING_SETUP_BOOTSTRAP_PROFILE } from "../shared/device-bootstrap-profile.js";
 import {
   inspectPairingConnectivity,
@@ -25,11 +24,35 @@ const tokenConfig = {
   },
 };
 
+const serveConfig = {
+  gateway: {
+    tailscale: { mode: "serve" as const },
+    auth: { mode: "token" as const, token: "token" },
+  },
+};
+
+const namedServiceConfig = {
+  gateway: {
+    tailscale: { mode: "serve" as const, serviceName: "svc:openclaw" },
+    auth: { mode: "token" as const, token: "token" },
+  },
+};
+
+const unavailableAuthConfig = {
+  gateway: {
+    bind: "loopback" as const,
+    auth: {
+      mode: "token" as const,
+      token: { source: "env" as const, provider: "missing", id: "GATEWAY_TOKEN" },
+    },
+  },
+};
+
 describe("pairing connectivity", () => {
   it("inspects and plans LAN exposure without returning or minting secrets", async () => {
     const inspect = await inspectPairingConnectivity(tokenConfig, {
       configHash: "a".repeat(64),
-      configState: "pending",
+      configState: "applied",
       networkInterfaces: () => ({
         en0: [
           {
@@ -44,27 +67,162 @@ describe("pairing connectivity", () => {
       }),
       runCommandWithTimeout: vi.fn(async () => ({ code: 1, stdout: "", stderr: "" })),
     });
-    const plan = planPairingConnectivity(inspect, { mode: "lan" });
+    const plan = planPairingConnectivity(tokenConfig, inspect, {
+      mode: "lan",
+      operatorIsLocal: true,
+    });
 
     expect(plan).toEqual({
       status: "confirmation-required",
       mode: "lan",
       configHash: "a".repeat(64),
-      configState: "pending",
+      configState: "applied",
       urls: ["ws://192.168.1.20:18789"],
       exposure: "local-network",
       auth: "token",
       access: "limited",
       accessDowngraded: true,
       changes: ["expose-gateway-on-local-network"],
+      configWrite: {
+        patch: '{"gateway":{"bind":"lan"}}',
+        revert: { execution: "automatic", patch: '{"gateway":{"bind":"loopback"}}' },
+      },
       restartRequired: true,
       preservesCurrentRoute: false,
     });
+    expect(validateDevicePairConnectivityPlanResult(plan)).toBe(true);
     const serialized = JSON.stringify({ inspect, plan });
     expect(serialized).not.toContain("top-secret-token");
     expect(serialized).not.toMatch(
       /bootstrapToken|setupCode|qrDataUrl|password|SecretRef|AuthURL|stdout|stderr/,
     );
+  });
+
+  it.each([
+    {
+      name: "blocks every operator while unapplied config is pending",
+      configState: "pending" as const,
+      operatorIsLocal: true,
+      expected: {
+        status: "blocked",
+        blocker: "gateway-change-requires-applied-config",
+        changes: ["expose-gateway-on-local-network"],
+        action: { kind: "retry", target: "gateway-host", execution: "manual", resumable: true },
+      },
+    },
+    {
+      name: "keeps a remote operator's revert manual once config is applied",
+      configState: "applied" as const,
+      operatorIsLocal: false,
+      expected: {
+        status: "confirmation-required",
+        configWrite: {
+          patch: '{"gateway":{"bind":"lan"}}',
+          revert: { execution: "manual" },
+        },
+      },
+    },
+  ])("$name", async ({ configState, operatorIsLocal, expected }) => {
+    const inspect = await inspectPairingConnectivity(tokenConfig, {
+      configState,
+      networkInterfaces: () => ({
+        en0: [
+          {
+            address: "192.168.1.20",
+            family: "IPv4",
+            internal: false,
+            netmask: "255.255.255.0",
+            mac: "00:00:00:00:00:00",
+            cidr: "192.168.1.20/24",
+          },
+        ],
+      }),
+      runCommandWithTimeout: vi.fn(async () => ({ code: 1, stdout: "", stderr: "" })),
+    });
+    const plan = planPairingConnectivity(tokenConfig, inspect, { mode: "lan", operatorIsLocal });
+
+    expect(plan).toMatchObject(expected);
+    expect(validateDevicePairConnectivityPlanResult(plan)).toBe(true);
+  });
+
+  it("pins resolution to the planned route ahead of configured precedence", async () => {
+    const contendedConfig = {
+      gateway: {
+        bind: "lan" as const,
+        remote: { url: "wss://remote.example" },
+        tailscale: { mode: "serve" as const },
+        auth: { mode: "token" as const, token: "token" },
+      },
+    };
+    const networkInterfaces = () => ({
+      en0: [
+        {
+          address: "192.168.1.20",
+          family: "IPv4" as const,
+          internal: false,
+          netmask: "255.255.255.0",
+          mac: "00:00:00:00:00:00",
+          cidr: "192.168.1.20/24",
+        },
+      ],
+    });
+    const runCommandWithTimeout = vi.fn(async (argv: string[]) => ({
+      code: 0,
+      stdout: argv.includes("serve")
+        ? JSON.stringify({
+            TCP: { "443": { HTTPS: true } },
+            Web: { "node.tail.ts.net:443": { Handlers: { "/": { Proxy: "127.0.0.1:18789" } } } },
+          })
+        : JSON.stringify({ BackendState: "Running" }),
+    }));
+
+    await expect(
+      resolvePairingSetupConnectivityFromConfig(contendedConfig, {
+        publicUrl: "wss://configured.example",
+        routeMode: "lan",
+        networkInterfaces,
+        runCommandWithTimeout,
+      }),
+    ).resolves.toMatchObject({ ok: true, urls: ["ws://192.168.1.20:18789"] });
+    // Without the pin, the same config resolves the Tailscale route instead.
+    await expect(
+      resolvePairingSetupConnectivityFromConfig(contendedConfig, {
+        networkInterfaces,
+        runCommandWithTimeout,
+      }),
+    ).resolves.toMatchObject({ ok: true, urls: ["wss://node.tail.ts.net"] });
+  });
+
+  it("plans an already-exposed LAN gateway without a config write or restart", async () => {
+    const lanConfig = {
+      gateway: { bind: "lan" as const, auth: { mode: "token" as const, token: "token" } },
+    };
+    const inspect = await inspectPairingConnectivity(lanConfig, {
+      configState: "applied",
+      networkInterfaces: () => ({
+        en0: [
+          {
+            address: "192.168.1.20",
+            family: "IPv4",
+            internal: false,
+            netmask: "255.255.255.0",
+            mac: "00:00:00:00:00:00",
+            cidr: "192.168.1.20/24",
+          },
+        ],
+      }),
+      runCommandWithTimeout: vi.fn(async () => ({ code: 1, stdout: "", stderr: "" })),
+    });
+
+    const plan = planPairingConnectivity(lanConfig, inspect, { mode: "lan" });
+
+    expect(plan).toMatchObject({
+      status: "confirmation-required",
+      changes: [],
+      restartRequired: false,
+      preservesCurrentRoute: true,
+    });
+    expect(plan).not.toHaveProperty("configWrite");
   });
 
   it("uses the exact configured Tailscale route and caps every public projection", async () => {
@@ -83,16 +241,11 @@ describe("pairing connectivity", () => {
           })
         : JSON.stringify({ BackendState: "Running" }),
     }));
-    const inspect = await inspectPairingConnectivity(
-      {
-        gateway: {
-          tailscale: { mode: "serve" },
-          auth: { mode: "token", token: "token" },
-        },
-      },
-      { runCommandWithTimeout, networkInterfaces: () => ({}) },
-    );
-    const plan = planPairingConnectivity(inspect, { mode: "tailscale" });
+    const inspect = await inspectPairingConnectivity(serveConfig, {
+      runCommandWithTimeout,
+      networkInterfaces: () => ({}),
+    });
+    const plan = planPairingConnectivity(serveConfig, inspect, { mode: "tailscale" });
 
     expect(inspect.current).toMatchObject({ status: "ready" });
     expect(inspect.current.status === "ready" ? inspect.current.urls : []).toEqual(
@@ -175,18 +328,15 @@ describe("pairing connectivity", () => {
           })
         : JSON.stringify({ BackendState: "Running" }),
     }));
-    const inspect = await inspectPairingConnectivity(
-      {
-        gateway: {
-          tailscale: { mode: "serve", serviceName: "svc:openclaw" },
-          auth: { mode: "token", token: "token" },
-        },
-      },
-      { runCommandWithTimeout, networkInterfaces: () => ({}) },
-    );
+    const inspect = await inspectPairingConnectivity(namedServiceConfig, {
+      runCommandWithTimeout,
+      networkInterfaces: () => ({}),
+    });
 
     expect(inspect.current).toEqual({ status: "blocked", blocker: "route-unavailable" });
-    expect(planPairingConnectivity(inspect, { mode: "tailscale" })).toMatchObject({
+    expect(
+      planPairingConnectivity(namedServiceConfig, inspect, { mode: "tailscale" }),
+    ).toMatchObject({
       status: "blocked",
       blocker: "tailscale-serve-required",
       changes: [],
@@ -200,7 +350,7 @@ describe("pairing connectivity", () => {
       runCommandWithTimeout: vi.fn(async () => ({ code: 1, stdout: "", stderr: "" })),
     });
 
-    expect(planPairingConnectivity(inspect, { mode: "public" })).toMatchObject({
+    expect(planPairingConnectivity(tokenConfig, inspect, { mode: "public" })).toMatchObject({
       status: "blocked",
       blocker: "public-url-required",
     });
@@ -211,7 +361,9 @@ describe("pairing connectivity", () => {
       "wss://gateway.example.com?token=secret",
       "wss://gateway.example.com/#fragment",
     ]) {
-      expect(planPairingConnectivity(inspect, { mode: "public", publicUrl })).toMatchObject({
+      expect(
+        planPairingConnectivity(tokenConfig, inspect, { mode: "public", publicUrl }),
+      ).toMatchObject({
         status: "blocked",
       });
     }
@@ -221,7 +373,9 @@ describe("pairing connectivity", () => {
       "wss://gateway.example.com/",
       "wss://gateway.example.com:443/",
     ]) {
-      expect(planPairingConnectivity(inspect, { mode: "public", publicUrl })).toMatchObject({
+      expect(
+        planPairingConnectivity(tokenConfig, inspect, { mode: "public", publicUrl }),
+      ).toMatchObject({
         status: "confirmation-required",
         urls: ["wss://gateway.example.com"],
         exposure: "public-internet",
@@ -230,7 +384,7 @@ describe("pairing connectivity", () => {
       });
     }
     expect(
-      planPairingConnectivity(inspect, {
+      planPairingConnectivity(tokenConfig, inspect, {
         mode: "public",
         publicUrl: "wss://gateway.example.com:8443/",
       }),
@@ -239,6 +393,7 @@ describe("pairing connectivity", () => {
 
   it("keeps LAN and Public selectable when the optional Tailscale branch is unavailable", async () => {
     const inspect = await inspectPairingConnectivity(tokenConfig, {
+      configState: "applied",
       networkInterfaces: () => ({
         en0: [
           {
@@ -257,21 +412,23 @@ describe("pairing connectivity", () => {
     });
 
     expect(inspect.tailscale).toEqual({ status: "unavailable" });
-    expect(planPairingConnectivity(inspect, { mode: "tailscale" })).toEqual({
+    expect(planPairingConnectivity(tokenConfig, inspect, { mode: "tailscale" })).toEqual({
       status: "blocked",
       mode: "tailscale",
-      configState: "unknown",
+      configState: "applied",
       auth: "token",
       blocker: "tailscale-unavailable",
       changes: [],
       action: { kind: "retry", target: "gateway-host", execution: "manual", resumable: true },
     });
-    expect(planPairingConnectivity(inspect, { mode: "lan" })).toMatchObject({
+    expect(
+      planPairingConnectivity(tokenConfig, inspect, { mode: "lan", operatorIsLocal: true }),
+    ).toMatchObject({
       status: "confirmation-required",
       mode: "lan",
     });
     expect(
-      planPairingConnectivity(inspect, {
+      planPairingConnectivity(tokenConfig, inspect, {
         mode: "public",
         publicUrl: "wss://gateway.example.com",
       }),
@@ -305,17 +462,14 @@ describe("pairing connectivity", () => {
             },
           }),
     }));
-    const inspect = await inspectPairingConnectivity(
-      {
-        gateway: {
-          tailscale: { mode: "serve", serviceName: "svc:openclaw" },
-          auth: { mode: "token", token: "token" },
-        },
-      },
-      { runCommandWithTimeout, networkInterfaces: () => ({}) },
-    );
+    const inspect = await inspectPairingConnectivity(namedServiceConfig, {
+      runCommandWithTimeout,
+      networkInterfaces: () => ({}),
+    });
 
-    expect(planPairingConnectivity(inspect, { mode: "tailscale" })).toMatchObject({
+    expect(
+      planPairingConnectivity(namedServiceConfig, inspect, { mode: "tailscale" }),
+    ).toMatchObject({
       status: "blocked",
       blocker,
       changes: [],
@@ -328,7 +482,7 @@ describe("pairing connectivity", () => {
       networkInterfaces: () => ({}),
       runCommandWithTimeout: vi.fn(async () => ({ code: 1, stdout: "", stderr: "sensitive" })),
     });
-    const tailscalePlan = planPairingConnectivity(inspect, { mode: "tailscale" });
+    const tailscalePlan = planPairingConnectivity(tokenConfig, inspect, { mode: "tailscale" });
     const serialized = JSON.stringify(tailscalePlan);
 
     expect(serialized).not.toMatch(
@@ -358,19 +512,10 @@ describe("pairing connectivity", () => {
   });
 
   it("keeps unavailable active auth typed and blocks every plan without leaking config refs", async () => {
-    const unresolvedRefConfig = {
-      gateway: {
-        bind: "loopback" as const,
-        auth: {
-          mode: "token" as const,
-          token: { source: "env", provider: "missing", id: "GATEWAY_TOKEN" } satisfies SecretInput,
-        },
-      },
-    };
     // Without `activeAuth` the caller handed over raw config, so a value that
     // still reads as a SecretRef has to project as unavailable on its own.
     for (const activeAuth of ["unavailable" as const, undefined]) {
-      const inspect = await inspectPairingConnectivity(unresolvedRefConfig, {
+      const inspect = await inspectPairingConnectivity(unavailableAuthConfig, {
         ...(activeAuth ? { activeAuth } : {}),
         env: {},
         networkInterfaces: () => ({}),
@@ -386,7 +531,7 @@ describe("pairing connectivity", () => {
         { mode: "tailscale" as const },
         { mode: "public" as const, publicUrl: "wss://gateway.example.com" },
       ]) {
-        expect(planPairingConnectivity(inspect, request)).toMatchObject({
+        expect(planPairingConnectivity(unavailableAuthConfig, inspect, request)).toMatchObject({
           status: "blocked",
           blocker: "gateway-auth-unavailable",
         });
@@ -398,7 +543,7 @@ describe("pairing connectivity", () => {
     // The plugin-facing resolver takes raw config straight to a mint, so it is
     // the surface that must refuse before a bootstrap token exists.
     await expect(
-      resolvePairingSetupConnectivityFromConfig(unresolvedRefConfig, {
+      resolvePairingSetupConnectivityFromConfig(unavailableAuthConfig, {
         env: {},
         networkInterfaces: () => ({}),
       }),

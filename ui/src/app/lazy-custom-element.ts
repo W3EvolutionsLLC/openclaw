@@ -87,6 +87,17 @@ export const EXEC_APPROVAL_ELEMENT = {
   loadModule: () => import("../components/exec-approval.ts"),
 } satisfies OptionalCustomElement;
 
+// The pairing wizard, its endpoint probe, and its copy only matter once an
+// operator opens the dialog, so they stay off the startup path.
+const DEVICE_PAIR_SETUP_TAG = "openclaw-device-pair-setup";
+
+export const DEVICE_PAIR_SETUP_ELEMENT = {
+  tagName: DEVICE_PAIR_SETUP_TAG,
+  // This diagnostic uses the tag rather than user-facing copy.
+  label: DEVICE_PAIR_SETUP_TAG,
+  loadModule: () => import("../pages/devices/view-pairing.ts"),
+} satisfies OptionalCustomElement;
+
 const hostElementLoads = new WeakMap<UpdatingHost, Map<string, Promise<void>>>();
 
 export function isOptionalElementDefined(element: OptionalCustomElement): boolean {

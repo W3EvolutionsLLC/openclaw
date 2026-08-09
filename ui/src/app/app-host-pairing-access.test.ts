@@ -6,6 +6,9 @@ import type { GatewayBrowserClient } from "../api/gateway.ts";
 import type { ApplicationRuntime } from "./bootstrap.ts";
 import type { ApplicationContext, ApplicationGatewaySnapshot } from "./context.ts";
 import "./app-host.ts";
+// The dialog element is lazy in production; register it up front so this shell
+// render exercises the same markup an opened wizard produces.
+import "../pages/devices/view-pairing.ts";
 
 type PairingShell = HTMLElement & {
   runtime?: ApplicationRuntime;
@@ -51,18 +54,22 @@ function createPairingShell(params: {
         approvalErrors: new Map(),
         approvalNowMs: 0,
         approvalBusy: false,
-        devicePairSetupOpen: Boolean(params.setupCode),
-        devicePairSetupLoading: false,
-        devicePairSetupError: null,
-        devicePairSetup: params.setupCode
-          ? {
-              setupCode: params.setupCode,
-              gatewayUrl: "wss://gateway.example.test",
-              auth: "token",
-              urlSource: "test",
-            }
-          : null,
-        devicePairSetupAccess: "full",
+        devicePairWizard: {
+          open: Boolean(params.setupCode),
+          access: "full",
+          notice: null,
+          step: params.setupCode
+            ? {
+                kind: "code",
+                setup: {
+                  setupCode: params.setupCode,
+                  gatewayUrl: "wss://gateway.example.test",
+                  auth: "token",
+                  urlSource: "test",
+                },
+              }
+            : { kind: "inspecting" },
+        },
         devicePairPendingCount: 0,
         updateAvailable: null,
         updateRunning: false,
@@ -70,6 +77,14 @@ function createPairingShell(params: {
         controlUiRefreshRequired: false,
       },
       openDevicePairSetup,
+      devicePairing: {
+        setAccess: vi.fn(),
+        chooseRoute: vi.fn(async () => undefined),
+        setPublicUrl: vi.fn(),
+        submitPublicUrl: vi.fn(async () => undefined),
+        confirmLan: vi.fn(async () => undefined),
+        back: vi.fn(async () => undefined),
+      },
     },
     config: { current: {} },
     runtimeConfig: {
@@ -162,12 +177,17 @@ describe("application shell pairing access", () => {
       setupCode: "pair-mobile-secret",
     });
     renderSidebar();
-    const pairing = container.querySelector<HTMLElement>(".device-pair-setup");
-    if (!pairing) {
+    const dialog = container.querySelector<HTMLElement & { updateComplete: Promise<unknown> }>(
+      "openclaw-device-pair-setup",
+    );
+    if (!dialog) {
       throw new Error("Expected the application shell to render its mobile pairing dialog");
     }
-    document.body.append(pairing);
-    const button = pairing.querySelector<HTMLButtonElement>(".device-pair-setup__actions button");
+    // The lazily registered element only renders once it is connected.
+    document.body.append(dialog);
+    await dialog.updateComplete;
+    const pairing = dialog.querySelector<HTMLElement>(".device-pair-setup");
+    const button = pairing?.querySelector<HTMLButtonElement>(".device-pair-setup__actions button");
 
     button?.click();
 

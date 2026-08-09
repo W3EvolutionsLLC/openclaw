@@ -55,7 +55,12 @@ creation has a token or password auth path.
 2. Open the [Control UI](/web/control-ui), select **Nodes**, and click
    **Pair mobile device** on the **Devices** page. Full access is recommended
    and selected by default; choose Limited access only when you want to omit
-   administrative Gateway controls, then click **Create setup code**.
+   administrative Gateway controls. Then pick how the phone should reach the
+   Gateway — the current address, the local network, or a public `wss://`
+   address you already route here. The setup code appears once your browser has
+   confirmed that address answers. See
+   [Pairing](/channels/pairing#pair-from-the-control-ui-recommended) for what
+   the local-network option changes.
 
 3. In the iOS app, open **Settings** -> **Gateway**, scan the QR code (or paste
    the setup code), and connect.

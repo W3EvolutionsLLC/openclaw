@@ -41,6 +41,44 @@ describe("device pairing connectivity schemas", () => {
     );
   });
 
+  it("bounds the owner-produced config write and closes its revert shape", () => {
+    const validatePlan = Compile(DevicePairConnectivityPlanResultSchema);
+    const plan = {
+      status: "confirmation-required",
+      mode: "lan",
+      configState: "applied",
+      urls: ["ws://192.168.1.20:18789"],
+      exposure: "local-network",
+      auth: "token",
+      access: "limited",
+      accessDowngraded: true,
+      changes: ["expose-gateway-on-local-network"],
+      configWrite: {
+        patch: '{"gateway":{"bind":"lan"}}',
+        revert: { execution: "automatic", patch: '{"gateway":{"bind":"loopback"}}' },
+      },
+      restartRequired: true,
+      preservesCurrentRoute: false,
+    };
+
+    expect(validatePlan.Check(plan)).toBe(true);
+    expect(validatePlan.Check({ ...plan, configWrite: { ...plan.configWrite, revert: {} } })).toBe(
+      false,
+    );
+    expect(
+      validatePlan.Check({
+        ...plan,
+        configWrite: { ...plan.configWrite, patch: "x".repeat(4097) },
+      }),
+    ).toBe(false);
+    expect(
+      validatePlan.Check({
+        ...plan,
+        configWrite: { ...plan.configWrite, revert: { execution: "manual" } },
+      }),
+    ).toBe(true);
+  });
+
   it("rejects unbounded and credential-bearing public URLs", () => {
     const validateParams = Compile(DevicePairConnectivityPlanParamsSchema);
     expect(validateParams.Check({ mode: "public", publicUrl: "wss://gateway.example.com" })).toBe(

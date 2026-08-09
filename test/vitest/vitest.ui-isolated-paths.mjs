@@ -4,6 +4,7 @@
 export const uiIsolatedTestFiles = [
   "ui/src/app/app-host.server-prefs.test.ts",
   "ui/src/app/bootstrap.test.ts",
+  "ui/src/app/overlays.test.ts",
   "ui/src/app/router-outlet.test.ts",
   "ui/src/components/resizable-divider.test.ts",
   "ui/src/components/viewer-facepile.test.ts",

@@ -97,6 +97,7 @@ const PairingConnectivityBlockerSchema = Type.Union([
   Type.Literal("route-unavailable"),
   Type.Literal("route-insecure"),
   Type.Literal("lan-unavailable"),
+  Type.Literal("gateway-change-requires-applied-config"),
   Type.Literal("tailscale-unavailable"),
   Type.Literal("tailscale-login-required"),
   Type.Literal("tailscale-not-running"),
@@ -130,6 +131,18 @@ const PairingConnectivityChangesSchema = Type.Array(
   Type.Literal("expose-gateway-on-local-network"),
   { maxItems: 1, uniqueItems: true },
 );
+const PairingConnectivityMergePatchSchema = Type.String({ minLength: 1, maxLength: 4096 });
+/** Owner-produced config documents applied verbatim through `config.patch`. */
+const PairingConnectivityConfigWriteSchema = closedObject({
+  patch: PairingConnectivityMergePatchSchema,
+  revert: Type.Union([
+    closedObject({
+      execution: Type.Literal("automatic"),
+      patch: PairingConnectivityMergePatchSchema,
+    }),
+    closedObject({ execution: Type.Literal("manual") }),
+  ]),
+});
 const PairingConnectivityConfigHashSchema = Type.String({ minLength: 1, maxLength: 128 });
 const PairingConnectivityConfigStateSchema = Type.Union([
   Type.Literal("applied"),
@@ -257,6 +270,7 @@ export const DevicePairConnectivityPlanResultSchema = Type.Union([
     access: PairingConnectivityAccessSchema,
     accessDowngraded: Type.Boolean(),
     changes: PairingConnectivityChangesSchema,
+    configWrite: Type.Optional(PairingConnectivityConfigWriteSchema),
     restartRequired: Type.Boolean(),
     preservesCurrentRoute: Type.Boolean(),
   }),
@@ -273,6 +287,12 @@ export const DevicePairConnectivityPlanResultSchema = Type.Union([
  * scopes for companion devices such as watchOS.
  */
 export const DevicePairSetupCodeParamsSchema = closedObject({
+  /**
+   * Pins issuance to a planned connectivity mode so a persisted public URL
+   * cannot outrank the route the caller inspected, planned, and verified.
+   * Omitted keeps the historic resolution order.
+   */
+  mode: Type.Optional(PairingConnectivityModeSchema),
   publicUrl: Type.Optional(NonEmptyString),
   preferRemoteUrl: Type.Optional(Type.Boolean()),
   includeQr: Type.Optional(Type.Boolean()),

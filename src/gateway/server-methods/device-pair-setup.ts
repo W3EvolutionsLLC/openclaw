@@ -105,7 +105,7 @@ export const devicePairSetupHandlers: GatewayRequestHandlers = {
       respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, formatForLog(err)));
     }
   },
-  "device.pair.connectivity.plan": async ({ params, respond, context }) => {
+  "device.pair.connectivity.plan": async ({ params, respond, client, context }) => {
     if (
       !assertValidParams(
         params,
@@ -122,9 +122,12 @@ export const devicePairSetupHandlers: GatewayRequestHandlers = {
       const inspected = await inspectCurrentPairingConnectivity(config, auth);
       respond(
         true,
-        planPairingConnectivity(inspected, {
+        planPairingConnectivity(config, inspected, {
           mode: params.mode,
           ...(typeof params.publicUrl === "string" ? { publicUrl: params.publicUrl } : {}),
+          // Handshake-attested loopback transport; a proxied or wire-claimed
+          // client never reaches this, so route-losing steps stay manual.
+          operatorIsLocal: client?.internal?.isLocalClient === true,
         }),
         undefined,
       );
@@ -147,14 +150,19 @@ export const devicePairSetupHandlers: GatewayRequestHandlers = {
       const config = context.getRuntimeConfig();
       const auth = projectPairingAuth(config, context.getResolvedAuth());
       const requestPublicUrl = typeof params.publicUrl === "string" ? params.publicUrl : undefined;
+      // A pinned mode resolves exactly the planned route, so a configured public
+      // URL, gateway.remote.url, or Tailscale route cannot outrank it.
       const configuredPublicUrl =
-        params.preferRemoteUrl === true ? undefined : readConfiguredDevicePairPublicUrl(config);
+        params.preferRemoteUrl === true || (params.mode !== undefined && params.mode !== "public")
+          ? undefined
+          : readConfiguredDevicePairPublicUrl(config);
       const publicUrl = requestPublicUrl ?? configuredPublicUrl;
       const resolved = await resolvePairingSetupFromConfig(config, {
         env: process.env,
         activeAuth: auth,
         getActiveAuth: () => projectPairingAuth(config, context.getResolvedAuth()),
         publicUrl,
+        ...(params.mode ? { routeMode: params.mode } : {}),
         preferRemoteUrl: params.preferRemoteUrl === true,
         ...(params.bootstrapProfile
           ? {

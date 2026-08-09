@@ -6,16 +6,12 @@ import type { GatewayEventFrame } from "../api/gateway.ts";
 import type { UpdateAvailable, UpdateHoldResult, UpdateScheduleState } from "../api/types.ts";
 import { controlUiVersionDiffersFrom, reloadControlUiIfStale } from "../build-info.ts";
 import { t } from "../i18n/index.ts";
-import {
-  closeDevicePairSetup as closeDevicePairSetupState,
-  createDevicePairSetupState,
-  openDevicePairSetup as openDevicePairSetupState,
-  readDevicePairSetupSnapshot,
-  refreshDevicePairSetup as refreshDevicePairSetupState,
-  setDevicePairSetupAccess as setPairAccess,
-  type DevicePairSetup,
-  type DevicePairSetupAccess,
-} from "../lib/device-pair-setup.ts";
+import type {
+  PairingConfigWriter,
+  PairingWizardActions,
+  PairingWizardDeps,
+  PairingWizardSnapshot,
+} from "../lib/pairing/wizard.ts";
 import {
   createDeviceAuthMigrationLoader,
   EMPTY_DEVICE_AUTH_MIGRATION,
@@ -36,9 +32,9 @@ import type { ApplicationGateway } from "./gateway.ts";
 import { readGatewayOperatorAccess } from "./operator-access.ts";
 import {
   createOverlayApprovalRefresher,
-  createOverlayPairingPendingCount,
   readOverlayOperatorAccessTransition,
 } from "./overlays-access.ts";
+import { createOverlayPairing, EMPTY_PAIRING_WIZARD_SNAPSHOT } from "./overlays-pairing.ts";
 import {
   createPendingUpdateReconciliation,
   createUpdateCampaignStatusPoller,
@@ -71,11 +67,7 @@ type ApplicationOverlaySnapshot = {
   approvalBusy: boolean;
   approvalErrors: ReadonlyMap<string, string>;
   approvalNowMs: number;
-  devicePairSetupOpen: boolean;
-  devicePairSetupLoading: boolean;
-  devicePairSetupError: string | null;
-  devicePairSetup: DevicePairSetup | null;
-  devicePairSetupAccess: DevicePairSetupAccess;
+  devicePairWizard: PairingWizardSnapshot;
   devicePairPendingCount: number;
   deviceAuthMigration: import("./device-auth-migration.ts").DeviceAuthMigrationSnapshot;
 };
@@ -88,9 +80,9 @@ export type ApplicationOverlays = {
   holdUpdate: () => Promise<boolean>;
   decideApproval: (decision: ExecApprovalDecision, approvalId?: string) => Promise<void>;
   openDevicePairSetup: () => Promise<void>;
-  refreshDevicePairSetup: () => Promise<void>;
-  setDevicePairSetupAccess: (access: DevicePairSetupAccess) => Promise<void>;
   closeDevicePairSetup: () => void;
+  /** Wizard verbs between opening and closing the pairing dialog. */
+  readonly devicePairing: PairingWizardActions;
   secureThisBrowser: () => Promise<void>;
   dispose: () => void;
 };
@@ -105,6 +97,10 @@ export function createApplicationOverlays(
     /** Barrier awaited after update-running is published and before update.run
      * is issued, so in-flight config writes cannot overlap the install. */
     drainConfigWrites?: () => Promise<void>;
+    /** Canonical config compare-and-set used by the pairing LAN step. */
+    pairingConfigWriter?: PairingConfigWriter;
+    /** Overrides the browser endpoint probe so tests stay off the network. */
+    pairingEndpointProbe?: PairingWizardDeps["probe"];
   } = {},
 ): ApplicationOverlays {
   let snapshot: ApplicationOverlaySnapshot = {
@@ -119,11 +115,7 @@ export function createApplicationOverlays(
     approvalBusy: false,
     approvalErrors: new Map(),
     approvalNowMs: Date.now(),
-    devicePairSetupOpen: false,
-    devicePairSetupLoading: false,
-    devicePairSetupError: null,
-    devicePairSetup: null,
-    devicePairSetupAccess: "full",
+    devicePairWizard: EMPTY_PAIRING_WIZARD_SNAPSHOT,
     devicePairPendingCount: 0,
     deviceAuthMigration: EMPTY_DEVICE_AUTH_MIGRATION,
   };
@@ -146,9 +138,12 @@ export function createApplicationOverlays(
     grantGeneration: number;
     id: string;
   } | null = null;
-  const devicePairSetupState = createDevicePairSetupState({
-    client: gateway.snapshot.client,
-    connected: gateway.snapshot.phase === "connected",
+  const pairing = createOverlayPairing({
+    gateway,
+    ...(hooks.pairingConfigWriter ? { config: hooks.pairingConfigWriter } : {}),
+    ...(hooks.pairingEndpointProbe ? { probe: hooks.pairingEndpointProbe } : {}),
+    isDisposed: () => disposed,
+    publish: () => publish(),
   });
   const promptState: ExecApprovalPromptState = {
     client: activeClient,
@@ -169,26 +164,14 @@ export function createApplicationOverlays(
       approvalBusy: promptState.execApprovalBusy,
       approvalErrors: new Map(promptState.execApprovalErrors),
       approvalNowMs: promptState.execApprovalNowMs ?? Date.now(),
-      ...readDevicePairSetupSnapshot(devicePairSetupState),
+      devicePairWizard: pairing.snapshot,
+      devicePairPendingCount: pairing.pendingCount,
     };
     for (const listener of listeners) {
       listener(snapshot);
     }
   };
   promptState.execApprovalChanged = publish;
-  const pairingPendingCount = createOverlayPairingPendingCount({
-    gateway,
-    state: devicePairSetupState,
-    isDisposed: () => disposed,
-    publish,
-  });
-  const publishDevicePairSetupOperation = async (operation: Promise<void>) => {
-    publish();
-    await operation;
-    if (!disposed) {
-      publish();
-    }
-  };
   const isCurrentClient = (client: NonNullable<typeof activeClient>) =>
     !disposed &&
     activeClient === client &&
@@ -287,8 +270,8 @@ export function createApplicationOverlays(
     if (accessTransition.adminRevoked || accessTransition.pairingSetupRevoked) {
       // Admin revocation invalidates bearer setup codes; losing both setup
       // authorities must also close a pairing-only operator's retained modal.
-      closeDevicePairSetupState(devicePairSetupState);
-      pairingPendingCount.invalidate({ clear: true });
+      pairing.close();
+      pairing.invalidatePending({ clear: true });
       if (accessTransition.adminRevoked) {
         updateRunGeneration += 1;
         updateVerification.cancel();
@@ -300,25 +283,23 @@ export function createApplicationOverlays(
       }
     }
     if (accessTransition.pairingChanged) {
-      pairingPendingCount.invalidate({
-        clear: !operatorAccess.canAdmin && !operatorAccess.canPair,
-      });
+      pairing.invalidatePending({ clear: !operatorAccess.canAdmin && !operatorAccess.canPair });
     }
     activeClient = next.client;
     activeHello = next.hello;
     connectedSource = nextConnectedSource;
     promptState.client = next.client;
-    devicePairSetupState.client = next.client;
-    devicePairSetupState.connected = connected;
+    pairing.syncConnection({ client: next.client, connected });
     if (connectedSourceChanged) {
       updateRunGeneration += 1;
       updateVerification.cancel();
     }
     if (previousClient !== next.client || !connected) {
       approvalDecision = null;
-      pairingPendingCount.invalidate({ clear: true });
+      // The pairing wizard deliberately survives here: changing gateway.* is
+      // expected to drop this connection, and the flow resumes on reconnect.
+      pairing.invalidatePending({ clear: true });
       deviceAuthMigration.reset();
-      closeDevicePairSetupState(devicePairSetupState);
     }
     if (connected && !operatorAccess.canReviewApprovals) {
       approvalDecision = null;
@@ -365,10 +346,10 @@ export function createApplicationOverlays(
     updateCampaignPoller.sync();
     if (
       accessTransition.pairingChanged &&
-      devicePairSetupState.devicePairSetupOpen &&
+      pairing.snapshot.open &&
       (operatorAccess.canAdmin || operatorAccess.canPair)
     ) {
-      void pairingPendingCount.refresh();
+      void pairing.refreshPending();
     }
     if (connectedSourceChanged) {
       connectedEpoch += 1;
@@ -388,7 +369,7 @@ export function createApplicationOverlays(
       return;
     }
     if (event.event === "device.pair.requested" || event.event === "device.pair.resolved") {
-      void pairingPendingCount.refresh();
+      void pairing.refreshPending();
       if (activeClient) {
         void deviceAuthMigration.refresh(activeClient, connectedEpoch);
       }
@@ -674,33 +655,13 @@ export function createApplicationOverlays(
       }
     },
     async openDevicePairSetup() {
-      const access = readGatewayOperatorAccess(gateway.snapshot);
-      if (disposed || (!access.canAdmin && !access.canPair)) {
-        return;
-      }
-      devicePairSetupState.pendingCount = 0;
-      const setupOperation = openDevicePairSetupState(devicePairSetupState);
-      // Pairing-list latency must not keep a ready setup code behind the loading state.
-      void pairingPendingCount.refresh();
-      await publishDevicePairSetupOperation(setupOperation);
-    },
-    async refreshDevicePairSetup() {
-      if (disposed || !readGatewayOperatorAccess(gateway.snapshot).canAdmin) {
-        return;
-      }
-      await publishDevicePairSetupOperation(refreshDevicePairSetupState(devicePairSetupState));
-    },
-    async setDevicePairSetupAccess(access) {
-      if (disposed || !readGatewayOperatorAccess(gateway.snapshot).canAdmin) {
-        return;
-      }
-      await publishDevicePairSetupOperation(setPairAccess(devicePairSetupState, access));
+      await pairing.open();
     },
     closeDevicePairSetup() {
-      pairingPendingCount.invalidate({ clear: true });
-      closeDevicePairSetupState(devicePairSetupState);
-      publish();
+      pairing.invalidatePending({ clear: true });
+      pairing.close();
     },
+    devicePairing: pairing.actions,
     async secureThisBrowser() {
       const client = activeClient;
       const epoch = connectedEpoch;
@@ -710,11 +671,11 @@ export function createApplicationOverlays(
       disposed = true;
       approvalDecision = null;
       updateRunGeneration += 1;
-      pairingPendingCount.invalidate();
+      pairing.invalidatePending();
       deviceAuthMigration.dispose();
       updateVerification.cancel();
       updateCampaignPoller.stop();
-      closeDevicePairSetupState(devicePairSetupState);
+      pairing.close();
       stopGateway();
       stopEvents();
       clearExecApprovalTimers(promptState);

@@ -176,7 +176,7 @@ export function registerOverlayPairingAccessTests() {
 
       try {
         await overlays.openDevicePairSetup();
-        expect(overlays.snapshot.devicePairSetupOpen).toBe(true);
+        expect(overlays.snapshot.devicePairWizard.open).toBe(true);
         expect(pairingRequests).toBe(1);
 
         harness.update({
@@ -184,7 +184,7 @@ export function registerOverlayPairingAccessTests() {
         });
         await flushMicrotasks();
 
-        expect(overlays.snapshot.devicePairSetupOpen).toBe(true);
+        expect(overlays.snapshot.devicePairWizard.open).toBe(true);
         expect(pairingRequests).toBe(2);
         expect(overlays.snapshot.devicePairPendingCount).toBe(2);
 
@@ -211,7 +211,7 @@ export function registerOverlayPairingAccessTests() {
       await overlays.openDevicePairSetup();
       await flushMicrotasks();
 
-      expect(overlays.snapshot.devicePairSetupOpen).toBe(true);
+      expect(overlays.snapshot.devicePairWizard.open).toBe(true);
       expect(overlays.snapshot.devicePairPendingCount).toBe(1);
       expect(request).toHaveBeenCalledWith("device.pair.list", {});
 
@@ -229,7 +229,7 @@ export function registerOverlayPairingAccessTests() {
           auth: { role: "operator", scopes: ["operator.read"] },
         } as ApplicationGatewaySnapshot["hello"],
       });
-      expect(overlays.snapshot.devicePairSetupOpen).toBe(false);
+      expect(overlays.snapshot.devicePairWizard.open).toBe(false);
       expect(overlays.snapshot.devicePairPendingCount).toBe(0);
       harness.emitDevicePairRequested();
       await flushMicrotasks();
@@ -250,6 +250,23 @@ export function registerOverlayPairingAccessTests() {
         if (method === "device.pair.list") {
           return Promise.resolve({ pending: [] });
         }
+        if (method === "device.pair.connectivity.inspect") {
+          return Promise.resolve({
+            configState: "applied",
+            auth: "token",
+            current: {
+              status: "ready",
+              urls: ["wss://gateway.test"],
+              source: "remote",
+              exposure: "public-internet",
+              access: "full",
+              accessDowngraded: false,
+            },
+            lan: { status: "unavailable" },
+            tailscale: { status: "unavailable" },
+            publicUrl: { status: "not-configured" },
+          });
+        }
         return Promise.resolve([]);
       });
       const harness = createGatewayHarness(client(request));
@@ -258,18 +275,20 @@ export function registerOverlayPairingAccessTests() {
           auth: { role: "operator", scopes: ["operator.admin"] },
         } as ApplicationGatewaySnapshot["hello"],
       });
-      const overlays = createApplicationOverlays(harness.gateway);
+      const overlays = createApplicationOverlays(harness.gateway, {
+        pairingEndpointProbe: async () => ({ status: "reachable" }),
+      });
       await overlays.openDevicePairSetup();
-      const mintingSetup = overlays.refreshDevicePairSetup();
-      expect(request).toHaveBeenCalledWith("device.pair.setupCode", {});
+      const mintingSetup = overlays.devicePairing.chooseRoute("current");
+      await vi.waitFor(() => expect(request).toHaveBeenCalledWith("device.pair.setupCode", {}));
 
       harness.update({
         hello: {
           auth: { role: "operator", scopes: ["operator.pairing"] },
         } as ApplicationGatewaySnapshot["hello"],
       });
-      expect(overlays.snapshot.devicePairSetupOpen).toBe(false);
-      expect(overlays.snapshot.devicePairSetup).toBeNull();
+      expect(overlays.snapshot.devicePairWizard.open).toBe(false);
+      expect(overlays.snapshot.devicePairWizard.step.kind).not.toBe("code");
 
       setup.resolve({
         setupCode: "retired-test-setup-code",
@@ -278,9 +297,8 @@ export function registerOverlayPairingAccessTests() {
       });
       await mintingSetup;
 
-      expect(overlays.snapshot.devicePairSetupOpen).toBe(false);
-      expect(overlays.snapshot.devicePairSetup).toBeNull();
-      expect(overlays.snapshot.devicePairSetupLoading).toBe(false);
+      expect(overlays.snapshot.devicePairWizard.open).toBe(false);
+      expect(overlays.snapshot.devicePairWizard.step.kind).not.toBe("code");
       expect(
         request.mock.calls.filter(([method]) => method === "device.pair.setupCode"),
       ).toHaveLength(1);
@@ -300,7 +318,7 @@ export function registerOverlayPairingAccessTests() {
       const overlays = createApplicationOverlays(harness.gateway);
       await overlays.openDevicePairSetup();
       await flushMicrotasks();
-      expect(overlays.snapshot.devicePairSetupOpen).toBe(true);
+      expect(overlays.snapshot.devicePairWizard.open).toBe(true);
       expect(overlays.snapshot.devicePairPendingCount).toBe(1);
 
       harness.update({
@@ -309,8 +327,8 @@ export function registerOverlayPairingAccessTests() {
         } as ApplicationGatewaySnapshot["hello"],
       });
 
-      expect(overlays.snapshot.devicePairSetupOpen).toBe(false);
-      expect(overlays.snapshot.devicePairSetup).toBeNull();
+      expect(overlays.snapshot.devicePairWizard.open).toBe(false);
+      expect(overlays.snapshot.devicePairWizard.step.kind).not.toBe("code");
       expect(overlays.snapshot.devicePairPendingCount).toBe(0);
       expect(request).not.toHaveBeenCalledWith("device.pair.setupCode", {});
       overlays.dispose();
@@ -329,11 +347,10 @@ export function registerOverlayPairingAccessTests() {
       const overlays = createApplicationOverlays(harness.gateway);
 
       await overlays.openDevicePairSetup();
-      await overlays.refreshDevicePairSetup();
 
       expect(request).not.toHaveBeenCalledWith("device.pair.list", {});
       expect(request).not.toHaveBeenCalledWith("device.pair.setupCode", {});
-      expect(overlays.snapshot.devicePairSetupOpen).toBe(false);
+      expect(overlays.snapshot.devicePairWizard.open).toBe(false);
       overlays.dispose();
     });
 
@@ -350,7 +367,6 @@ export function registerOverlayPairingAccessTests() {
       const overlays = createApplicationOverlays(harness.gateway);
 
       await overlays.openDevicePairSetup();
-      await overlays.refreshDevicePairSetup();
 
       expect(request).toHaveBeenCalledWith("device.pair.list", {});
       expect(request).not.toHaveBeenCalledWith("device.pair.setupCode", {});

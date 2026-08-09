@@ -334,6 +334,18 @@ export function bootstrapApplication(
   const runtimeConfig = createRuntimeConfigCapability(gateway);
   const overlays = createApplicationOverlays(gateway, {
     drainConfigWrites: () => runtimeConfig.waitForPendingWrites(),
+    pairingConfigWriter: {
+      refresh: () => runtimeConfig.refresh(),
+      readHash: () => runtimeConfig.state.configSnapshot?.hash ?? null,
+      patch: ({ raw, note, expectedHash }) =>
+        runtimeConfig.patch({
+          raw,
+          note,
+          // Rechecked at the writer's dispatch boundary, after queued writes drain.
+          canDispatch: () => runtimeConfig.state.configSnapshot?.hash === expectedHash,
+        }),
+      readError: () => runtimeConfig.state.lastError,
+    },
   });
   // App-updater interlock: writing config (or restarting the gateway) while
   // the updater runs can corrupt the install; pause config writes until the

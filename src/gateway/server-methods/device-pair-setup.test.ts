@@ -51,6 +51,7 @@ import { devicePairSetupHandlers } from "./device-pair-setup.js";
 function createOptions(
   params: Record<string, unknown>,
   config: Record<string, unknown> = {},
+  client: unknown = null,
 ): {
   options: GatewayRequestHandlerOptions;
   respond: ReturnType<typeof vi.fn>;
@@ -59,7 +60,7 @@ function createOptions(
   const options = {
     req: { type: "req", id: "req-1", method: "device.pair.setupCode", params },
     params,
-    client: null,
+    client,
     isWebchatConnect: () => false,
     respond,
     context: {
@@ -454,7 +455,10 @@ describe("device pairing connectivity preflight", () => {
       'devicePairSetupHandlers["device.pair.connectivity.plan"] test invariant',
     )(options);
 
-    expect(mocks.planPairingConnectivity).toHaveBeenCalledWith(inspected, { mode: "lan" });
+    expect(mocks.planPairingConnectivity).toHaveBeenCalledWith(activeConfig, inspected, {
+      mode: "lan",
+      operatorIsLocal: false,
+    });
     expect(mocks.inspectPairingConnectivity).toHaveBeenCalledWith(
       activeConfig,
       expect.objectContaining({ configState: "pending" }),
@@ -463,6 +467,59 @@ describe("device pairing connectivity preflight", () => {
     expect(options.context.getResolvedAuth).toHaveBeenCalledTimes(1);
     expect(respond).toHaveBeenCalledWith(true, planned, undefined);
     expect(mocks.resolvePairingSetupFromConfig).not.toHaveBeenCalled();
+  });
+
+  it("ignores a persisted public URL when issuance pins a planned route", async () => {
+    const activeConfig = {
+      gateway: { bind: "lan", auth: { mode: "token", token: "secret" } },
+      plugins: { entries: { "device-pair": { config: { publicUrl: "wss://persisted.example" } } } },
+    };
+    const { options } = createOptions({ mode: "lan" }, activeConfig);
+    await expectDefined(
+      devicePairSetupHandlers["device.pair.setupCode"],
+      'devicePairSetupHandlers["device.pair.setupCode"] test invariant',
+    )(options);
+
+    expect(mocks.resolvePairingSetupFromConfig).toHaveBeenCalledWith(
+      activeConfig,
+      expect.objectContaining({ publicUrl: undefined, routeMode: "lan" }),
+    );
+  });
+
+  it("keeps the persisted public URL for an unpinned request", async () => {
+    const activeConfig = {
+      gateway: { bind: "lan", auth: { mode: "token", token: "secret" } },
+      plugins: { entries: { "device-pair": { config: { publicUrl: "wss://persisted.example" } } } },
+    };
+    const { options } = createOptions({}, activeConfig);
+    await expectDefined(
+      devicePairSetupHandlers["device.pair.setupCode"],
+      'devicePairSetupHandlers["device.pair.setupCode"] test invariant',
+    )(options);
+
+    expect(mocks.resolvePairingSetupFromConfig).toHaveBeenCalledWith(
+      activeConfig,
+      expect.objectContaining({ publicUrl: "wss://persisted.example" }),
+    );
+  });
+
+  it("reports handshake-attested local transport to the planner", async () => {
+    mocks.inspectPairingConnectivity.mockResolvedValue({ configState: "applied" });
+    mocks.planPairingConnectivity.mockReturnValue({ status: "blocked" });
+    const activeConfig = { gateway: { bind: "loopback" } };
+    const { options } = createOptions({ mode: "lan" }, activeConfig, {
+      internal: { isLocalClient: true },
+    });
+    await expectDefined(
+      devicePairSetupHandlers["device.pair.connectivity.plan"],
+      'devicePairSetupHandlers["device.pair.connectivity.plan"] test invariant',
+    )(options);
+
+    expect(mocks.planPairingConnectivity).toHaveBeenCalledWith(
+      activeConfig,
+      expect.anything(),
+      expect.objectContaining({ operatorIsLocal: true }),
+    );
   });
 
   it("uses the same active config contract for inspection and setup issuance", async () => {

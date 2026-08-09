@@ -480,7 +480,7 @@ export const en: TranslationMap = {
       button: "Pair mobile device",
       adminRequired: "Administrator access is required to create setup codes.",
       title: "OpenClaw mobile",
-      subtitle: "Scan this QR code in the mobile app to connect a new phone.",
+      subtitle: "Connect a phone to this Gateway.",
       noApp: "Don't have the app yet?",
       getApps: "Get the apps",
       generating: "Creating a secure setup code…",
@@ -491,6 +491,69 @@ export const en: TranslationMap = {
       limitedAccess: "Limited access",
       limitedAccessHint:
         "Device capabilities, chat, and approvals without administrative controls.",
+      inspecting: "Checking how a phone can reach this Gateway…",
+      chooserTitle: "How should this phone reach the Gateway?",
+      routeCurrent: "Use this connection",
+      routeCurrentHint: "The address this browser already uses works for phones too.",
+      routeLan: "Local network",
+      routeLanHint: "Phones on the same network as this computer.",
+      routeLanInsecurePage:
+        "Unavailable from this secure page: the browser cannot check a plaintext local address.",
+      routePublic: "Public address",
+      routePublicHint: "You already route a secure wss:// address to this Gateway.",
+      noticeReverted: "The previous network setting was restored.",
+      publicTitle: "Public Gateway address",
+      publicHint:
+        "Enter the wss:// address that already reaches this Gateway. OpenClaw does not create a tunnel for you.",
+      publicTrust:
+        "OpenClaw checks that a Gateway answers at this address, but cannot confirm it is this one. Only enter an address you control.",
+      publicPlaceholder: "wss://gateway.example.com",
+      publicCheck: "Check address",
+      publicChecking: "Checking the address…",
+      lanTitle: "Expose the Gateway on your local network",
+      lanReach: "Devices on the same local network can reach this Gateway.",
+      lanAuth: "Every device still has to sign in to the Gateway.",
+      lanLimited: "A plaintext address issues Limited access instead of full control.",
+      lanScope: "This does not put the Gateway on the public internet.",
+      lanRestart: "The Gateway restarts, so this page reconnects on its own.",
+      lanConfirm: "Expose on local network",
+      applying: "Saving the network setting…",
+      awaitingRestart: "Waiting for the Gateway to restart…",
+      verifying: "Checking the address from this browser…",
+      reverting: "Restoring the previous network setting…",
+      conflictTitle: "Configuration changed",
+      conflictHint:
+        "Someone else edited the configuration. Review this change again before applying it.",
+      reviewAgain: "Review again",
+      unreachableTitle: "That address did not answer",
+      unreachableHint: "This browser could not reach a Gateway there.",
+      notAGatewayHint:
+        "Something answered there, but it did not complete the OpenClaw Gateway challenge.",
+      recoveryRestartPending:
+        "The Gateway has not picked up the new setting yet. Restart it on the Gateway host, then try again.",
+      recoveryUnproven: "The new address could not be confirmed from this browser.",
+      recoveryUnprovable:
+        "This page is served over HTTPS, so the browser refuses to check a plaintext local address. Open the Control UI over http:// on this network, or pair through a secure address.",
+      recoveryRevertManual:
+        "Undo this on the Gateway host. This browser is not connected locally, so restoring the previous setting from here could cut its own connection.",
+      recoveryEndpointMismatch:
+        "The Gateway issued a code for a different address than the one just checked. Review the configured pairing address on the Gateway host, then try again.",
+      recoveryRevertConflict:
+        "The Gateway network setting changed while this was running, so it was left alone. Review it on the Gateway host.",
+      recoveryRevertFailed:
+        "The previous setting could not be restored automatically. Change it on the Gateway host.",
+      blockedAuthRequired: "Set up Gateway sign-in before pairing a phone.",
+      blockedAuthUnavailable: "The configured Gateway credential could not be read.",
+      blockedAuthInvalid: "The Gateway has both a token and a password configured; pick one.",
+      blockedRouteUnavailable: "This Gateway has no address a phone can reach yet.",
+      blockedRouteInsecure: "The only available address is plaintext and cannot be used here.",
+      blockedLanUnavailable: "This computer has no local network address to advertise.",
+      blockedPendingConfig:
+        "Configuration is already waiting to be applied. Apply or discard it on the Gateway host first, then come back — restarting now would activate that change too.",
+      blockedPublicRequired: "Enter the address that reaches this Gateway.",
+      blockedPublicInvalid: "Enter a plain wss:// host, with no path, query, or credentials.",
+      blockedPublicInsecure: "Public pairing requires a secure wss:// address.",
+      blockedGatewayHost: "Finish this step on the Gateway host, then try again.",
       generateCode: "Create setup code",
       transportLimitedTitle: "Limited for network safety",
       transportLimitedHint:

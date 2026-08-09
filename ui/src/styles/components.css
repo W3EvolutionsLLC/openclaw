@@ -5070,6 +5070,117 @@ td.data-table-key-col {
   gap: 8px;
 }
 
+.device-pair-setup__prompt {
+  width: min(440px, 100%);
+  margin: 0;
+  color: var(--text-strong);
+  font-size: 14px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.device-pair-setup__routes {
+  display: grid;
+  width: min(440px, 100%);
+  gap: 8px;
+}
+
+.device-pair-setup__route {
+  display: grid;
+  gap: 3px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  cursor: pointer;
+  text-align: left;
+}
+
+.device-pair-setup__route:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 65%, var(--border));
+  background: var(--accent-subtle);
+}
+
+.device-pair-setup__route:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.device-pair-setup__route:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.device-pair-setup__route-label {
+  color: var(--text-strong);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.device-pair-setup__route-hint,
+.device-pair-setup__route-detail {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.device-pair-setup__route-detail {
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+}
+
+.device-pair-setup__notice {
+  width: min(440px, 100%);
+}
+
+.device-pair-setup__consequences {
+  display: grid;
+  width: min(440px, 100%);
+  gap: 6px;
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.device-pair-setup__form {
+  display: grid;
+  width: min(440px, 100%);
+  gap: 10px;
+}
+
+.device-pair-setup__field {
+  display: grid;
+  gap: 5px;
+  color: var(--text-strong);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.device-pair-setup__field input {
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font: inherit;
+  font-weight: 400;
+}
+
+.device-pair-setup__field input:focus-visible {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent) 65%, var(--border));
+  box-shadow: var(--focus-ring);
+}
+
+.device-pair-setup__hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .device-pair-setup__fallback {
   width: min(420px, 100%);
   color: var(--muted);

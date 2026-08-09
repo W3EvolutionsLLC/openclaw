@@ -9,7 +9,7 @@ import {
   formatCollapsedToolSummaryText,
   resolveCollapsedToolArgumentPreview,
 } from "../../../lib/chat/tool-cards.ts";
-import { renderToolCard, renderToolPreview } from "./chat-tool-cards.ts";
+import { isRunningToolCard, renderToolCard, renderToolPreview } from "./chat-tool-cards.ts";
 
 function requireFirstMockArg(
   mock: ReturnType<typeof vi.fn>,
@@ -964,5 +964,22 @@ describe("tool-cards", () => {
     const sidebar = requireFirstMockArg(onOpenSidebar, "sidebar open");
     expect(sidebar.kind).toBe("markdown");
     expect(sidebar.fullMessageRequest).toBeUndefined();
+  });
+});
+
+describe("isRunningToolCard", () => {
+  it("marks only live uncompleted cards as running while a run is active", () => {
+    const liveCard = { id: "t:1", name: "bash", live: true } as const;
+    const historicalCard = { id: "t:2", name: "bash" } as const;
+
+    expect(isRunningToolCard(liveCard, true)).toBe(true);
+    // Partial streamed output must not end the running state; only the final
+    // result event does.
+    expect(isRunningToolCard({ ...liveCard, outputText: "partial…" }, true)).toBe(true);
+    expect(isRunningToolCard({ ...liveCard, completed: true, outputText: "" }, true)).toBe(false);
+    // Historical transcript calls without results (e.g. aborted runs) must
+    // stay inert when a later run is active in the same session.
+    expect(isRunningToolCard(historicalCard, true)).toBe(false);
+    expect(isRunningToolCard(liveCard, false)).toBe(false);
   });
 });

@@ -142,18 +142,45 @@ Use an already connected Control UI session with `operator.admin` access:
 2. On the **Devices** page, click **Pair mobile device**.
 3. Keep **Full access (recommended)**, or select **Limited access** to omit
    administrative Gateway controls.
-4. Click **Create setup code**.
-5. On your phone, open the OpenClaw app → **Settings** → **Gateway**.
-6. Scan the QR code or paste the setup code, then connect.
+4. Choose how the phone should reach the Gateway:
+   - **Use this connection** — offered when the address this browser already
+     uses is one a phone can dial.
+   - **Local network** — offered when the host has a LAN address. The Control UI
+     shows what changes before anything is written: devices on the same local
+     network can reach the Gateway, sign-in is still required, a plaintext
+     address issues Limited access, and this is not exposure to the public
+     internet. Confirming applies the Gateway's own configuration change, so the
+     Gateway restarts and this page reconnects on its own.
+   - **Public address** — advanced. Enter a `wss://` address that already routes
+     to this Gateway. It is used once for this pairing and never stored, and
+     OpenClaw does not create a tunnel for you.
+5. The Control UI opens the chosen address from your browser and waits for the
+   Gateway's pre-auth challenge. The setup code and QR appear only after that
+   check succeeds, so a code is never issued for an address a phone could not
+   reach.
+6. On your phone, open the OpenClaw app → **Settings** → **Gateway**.
+7. Scan the QR code or paste the setup code, then connect.
+
+The browser check confirms that an OpenClaw Gateway answers at the address; it
+does not prove the responder is this Gateway, so only enter a public address you
+control. If the check fails after a local-network change, the Control UI
+restores the previous setting when that is safe and otherwise tells you what to
+change on the Gateway host.
+
+<Note>
+Serve the Control UI over `http://` when you pair through a plaintext local
+address. Browsers refuse plaintext WebSockets from an HTTPS page, so the
+**Local network** option is unavailable there and says so.
+</Note>
 
 Official OpenClaw iOS and Android apps are approved automatically when their
 setup-code metadata matches. If **Pending approval** shows a request (for
 example, for a non-official client or mismatched metadata), review its role and
 scopes before approving it.
 
-The button is disabled when the current Control UI session does not have
-administrator access. Use the CLI approval flow below from the Gateway host in
-that case.
+The wizard needs `operator.admin`: a pairing-only session opens straight into
+the review path instead. Use the CLI approval flow below from the Gateway host
+in that case.
 
 ### Pair via Telegram
 

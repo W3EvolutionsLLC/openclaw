@@ -396,7 +396,7 @@ export class ShellChromeOwner {
     const overlaySnapshot = host.context?.overlays.snapshot;
     if (
       host.commandPalette?.isOpen ||
-      overlaySnapshot?.devicePairSetupOpen ||
+      overlaySnapshot?.devicePairWizard.open ||
       (overlaySnapshot?.approvalQueue.length ?? 0) > 0 ||
       document.querySelector("dialog[open]")
     ) {
