@@ -250,7 +250,8 @@ export function readPluginSdkSurfaceBudgets(env: NodeJS.ProcessEnv = process.env
       // +3: channel streaming config reader re-exports and session-agent scope resolver.
       // +3: session-catalog terminal-start provider request and Gateway params/result contracts.
       // +1: worker desktop endpoint contract for desktop-capable worker leases.
-      4848,
+      // +2: canonical non-secret pairing connectivity resolver and typed result.
+      4850,
       env,
     ),
     publicFunctionExports: readPluginSdkSurfaceBudgetEnv(
@@ -303,7 +304,8 @@ export function readPluginSdkSurfaceBudgets(env: NodeJS.ProcessEnv = process.env
       // +1: simple channel secret contract factory replacing repeated collectors.
       // +4: focused agent scope functions for doctor migration enumeration.
       // +3: channel streaming config reader functions and session-agent scope resolver.
-      2920,
+      // +1: canonical non-secret pairing connectivity resolver.
+      2921,
       env,
     ),
     publicDeprecatedExports: readPluginSdkSurfaceBudgetEnv(
