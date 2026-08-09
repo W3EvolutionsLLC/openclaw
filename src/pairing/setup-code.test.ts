@@ -60,7 +60,10 @@ describe("pairing setup code", () => {
     };
   }
 
-  function createTailscaleRouteRunner(serviceName?: string) {
+  function createTailscaleRouteRunner(
+    serviceName?: string,
+    serviceApproval: "approved" | "required" = "approved",
+  ) {
     return vi.fn(async (argv: string[]) => ({
       code: 0,
       stdout: argv.includes("serve")
@@ -89,7 +92,12 @@ describe("pairing setup code", () => {
           )
         : JSON.stringify({
             BackendState: "Running",
-            Self: { DNSName: "mb-server.tailnet.ts.net." },
+            Self: {
+              DNSName: "mb-server.tailnet.ts.net.",
+              ...(serviceName && serviceApproval === "approved"
+                ? { CapMap: { "service-host": [{ [serviceName]: ["100.64.0.1"] }] } }
+                : {}),
+            },
           }),
       stderr: "",
     }));
@@ -953,6 +961,21 @@ describe("pairing setup code", () => {
       } satisfies ResolveSetupConfig,
       options: {
         runCommandWithTimeout: createTailscaleRouteRunner(),
+      } satisfies ResolveSetupOptions,
+      expectedError: "Configured Tailscale serve route is not available",
+    });
+  });
+
+  it("refuses to mint for a Tailscale Service the tailnet has not approved", async () => {
+    await expectResolvedSetupFailureCase({
+      config: {
+        gateway: {
+          tailscale: { mode: "serve", serviceName: "svc:openclaw" },
+          auth: { mode: "password", password: "secret" },
+        },
+      } satisfies ResolveSetupConfig,
+      options: {
+        runCommandWithTimeout: createTailscaleRouteRunner("svc:openclaw", "required"),
       } satisfies ResolveSetupOptions,
       expectedError: "Configured Tailscale serve route is not available",
     });

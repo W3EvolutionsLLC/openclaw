@@ -440,12 +440,14 @@ describe("shared/tailscale-status", () => {
         },
       },
     };
-    const run = vi.fn(async (argv: string[]) => ({
-      code: 0,
-      stdout: argv.includes("serve")
-        ? JSON.stringify(serveConfig)
-        : JSON.stringify({ BackendState: "Running" }),
-    }));
+    const runWithStatus = (self: Record<string, unknown>) =>
+      vi.fn(async (argv: string[]) => ({
+        code: 0,
+        stdout: argv.includes("serve")
+          ? JSON.stringify(serveConfig)
+          : JSON.stringify({ BackendState: "Running", Self: self }),
+      }));
+    const run = runWithStatus({ DNSName: "node.tail.ts.net." });
 
     await expect(
       resolveConfiguredTailscaleGatewayUrlsWithRunner({ mode: "serve", gatewayPort: 18789 }, run),
@@ -455,15 +457,57 @@ describe("shared/tailscale-status", () => {
     ).resolves.toEqual(["wss://public.tail.ts.net:8443"]);
     await expect(
       resolveConfiguredTailscaleGatewayUrlsWithRunner(
-        { mode: "serve", gatewayPort: 18789, serviceName: "svc:openclaw" },
-        run,
-      ),
-    ).resolves.toEqual(["wss://openclaw.tail.ts.net"]);
-    await expect(
-      resolveConfiguredTailscaleGatewayUrlsWithRunner(
         { mode: "serve", gatewayPort: 18789, serviceName: "svc:wrong" },
         run,
       ),
     ).resolves.toEqual([]);
+    // Issuance must apply the same approval gate the pairing plan applies, so an
+    // unapproved or unreadable Service resolves to no route at all.
+    for (const self of [
+      { DNSName: "node.tail.ts.net." },
+      { DNSName: "node.tail.ts.net.", CapMap: {} },
+      { DNSName: "node.tail.ts.net.", CapMap: { "service-host": [{ "svc:other": ["100.64.0.1"] }] } },
+    ]) {
+      await expect(
+        resolveConfiguredTailscaleGatewayUrlsWithRunner(
+          { mode: "serve", gatewayPort: 18789, serviceName: "svc:openclaw" },
+          runWithStatus(self),
+        ),
+      ).resolves.toEqual([]);
+    }
+    await expect(
+      resolveConfiguredTailscaleGatewayUrlsWithRunner(
+        { mode: "serve", gatewayPort: 18789, serviceName: "svc:openclaw" },
+        runWithStatus({
+          DNSName: "node.tail.ts.net.",
+          CapMap: { "service-host": [{ "svc:openclaw": ["100.64.0.1"] }] },
+        }),
+      ),
+    ).resolves.toEqual(["wss://openclaw.tail.ts.net"]);
+  });
+
+  it("keeps a Serve route matchable when status reports only a tailnet ip", async () => {
+    const run = vi.fn(async (argv: string[]) => ({
+      code: 0,
+      stdout: argv.includes("serve")
+        ? JSON.stringify({
+            TCP: { "443": { HTTPS: true } },
+            Web: { "node.tail.ts.net:443": { Handlers: { "/": { Proxy: "127.0.0.1:18789" } } } },
+          })
+        : JSON.stringify({
+            BackendState: "Running",
+            Self: { DNSName: "", TailscaleIPs: ["100.64.0.10"] },
+          }),
+    }));
+
+    // The IP fallback names the node, never the Serve hostname, so it must not
+    // become the expected route host.
+    await expect(
+      inspectTailscaleConnectivityWithRunner(18789, run),
+    ).resolves.toMatchObject({
+      status: "running",
+      host: "100.64.0.10",
+      serve: { status: "route-configured", urls: ["wss://node.tail.ts.net"] },
+    });
   });
 });

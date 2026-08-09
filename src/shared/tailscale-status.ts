@@ -153,6 +153,11 @@ function normalizeServiceName(serviceName: string | undefined): string | undefin
   return trimmed ? (trimmed.startsWith("svc:") ? trimmed : `svc:${trimmed}`) : undefined;
 }
 
+/** Tailnet hosts compose Serve/Service DNS names; raw tailnet IPs never do. */
+function isTailnetDnsHost(tailnetHost: string): boolean {
+  return !/^[\d.:]+$/.test(tailnetHost);
+}
+
 function hasPublishedConfig(config: z.infer<typeof TailscaleServeConfigSchema>): boolean {
   return (
     config.Tun === true ||
@@ -238,13 +243,17 @@ function extractPublishedGatewayUrls(
     return null;
   }
   const normalizedServiceName = normalizeServiceName(serviceName);
+  // Serve routes are published under DNS names, but `status --json` falls back
+  // to a tailnet IP when `DNSName` is absent. Matching Web route hosts against
+  // that IP would discard an otherwise working Serve route.
+  const dnsHost = host && isTailnetDnsHost(host) ? host : undefined;
   const expectedHost = normalizedServiceName
     ? (resolveTailscalePublishedHost({
         tailscaleMode: "serve",
-        tailnetHost: host ?? null,
+        tailnetHost: dnsHost ?? null,
         serviceName: normalizedServiceName,
       }) ?? undefined)
-    : host;
+    : dnsHost;
   const funnelHosts = parsed.AllowFunnel ?? {};
   const selected = normalizedServiceName ? parsed.Services?.[normalizedServiceName] : parsed;
   const acceptsServeHostPort = normalizedServiceName
@@ -404,6 +413,12 @@ export async function resolveConfiguredTailscaleGatewayUrlsWithRunner(
     runCommandWithTimeout,
     params.mode === "serve" ? params.serviceName : undefined,
   );
+  // A named Service carries traffic only once the tailnet approves it. Pairing
+  // plans already block `required` and `unknown`; issuance resolves through this
+  // helper, so without the same gate it would mint a code for a dead route.
+  if (inspected.status === "running" && (inspected.serviceApproval ?? "approved") !== "approved") {
+    return [];
+  }
   return selectTailscaleGatewayUrls(inspected, params.mode);
 }
 
@@ -433,8 +448,7 @@ export function resolveTailscalePublishedHost(params: {
   if (!serviceName) {
     return tailnetHost;
   }
-  // Tailscale Serve service names compose with DNS hosts, not raw tailnet IP addresses.
-  if (/^[\d.:]+$/.test(tailnetHost)) {
+  if (!isTailnetDnsHost(tailnetHost)) {
     return null;
   }
   const bareServiceName = serviceName.replace(/^svc:/, "");
