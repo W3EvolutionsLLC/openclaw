@@ -388,6 +388,8 @@ enum class GatewayMethod(
   DeviceTokenRotate("device.token.rotate"),
   DeviceTokenRevoke("device.token.revoke"),
   DevicePairSetupCode("device.pair.setupCode"),
+  DevicePairConnectivityInspect("device.pair.connectivity.inspect"),
+  DevicePairConnectivityPlan("device.pair.connectivity.plan"),
   NodeRename("node.rename"),
   NodeList("node.list"),
   NodeDescribe("node.describe"),

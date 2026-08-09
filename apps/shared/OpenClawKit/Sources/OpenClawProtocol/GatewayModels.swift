@@ -17446,6 +17446,64 @@ public struct DevicePairSetupCodeResult: Codable, Sendable {
     }
 }
 
+public struct DevicePairConnectivityInspectParams: Codable, Sendable {}
+
+public struct DevicePairConnectivityInspectResult: Codable, Sendable {
+    public let confighash: String?
+    public let configstate: AnyCodable
+    public let auth: AnyCodable
+    public let current: AnyCodable
+    public let lan: AnyCodable
+    public let tailscale: AnyCodable
+    public let publicurl: AnyCodable
+
+    public init(
+        confighash: String? = nil,
+        configstate: AnyCodable,
+        auth: AnyCodable,
+        current: AnyCodable,
+        lan: AnyCodable,
+        tailscale: AnyCodable,
+        publicurl: AnyCodable)
+    {
+        self.confighash = confighash
+        self.configstate = configstate
+        self.auth = auth
+        self.current = current
+        self.lan = lan
+        self.tailscale = tailscale
+        self.publicurl = publicurl
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case confighash = "configHash"
+        case configstate = "configState"
+        case auth
+        case current
+        case lan
+        case tailscale
+        case publicurl = "publicUrl"
+    }
+}
+
+public struct DevicePairConnectivityPlanParams: Codable, Sendable {
+    public let mode: AnyCodable
+    public let publicurl: String?
+
+    public init(
+        mode: AnyCodable,
+        publicurl: String? = nil)
+    {
+        self.mode = mode
+        self.publicurl = publicurl
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case mode
+        case publicurl = "publicUrl"
+    }
+}
+
 public struct DevicePairRenameParams: Codable, Sendable {
     public let deviceid: String
     public let label: String
