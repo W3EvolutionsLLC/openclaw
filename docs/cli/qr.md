@@ -31,7 +31,7 @@ openclaw devices approve <requestId>
 
 ## Options
 
-- `--remote`: prefer `gateway.remote.url`; falls back to `gateway.tailscale.mode=serve|funnel` if that URL is unset. Ignores `device-pair` plugin `publicUrl`.
+- `--remote`: prefer `gateway.remote.url`; falls back to a published `gateway.tailscale.mode=serve|funnel` route if that URL is unset. Ignores `device-pair` plugin `publicUrl`.
 - `--url <url>`: override the gateway URL used in the payload
 - `--public-url <url>`: override the public URL used in the payload
 - `--token <token>`: override the gateway token the bootstrap flow authenticates against
@@ -67,6 +67,8 @@ Mobile pairing fails closed for Tailscale/public `ws://` gateway URLs: use Tails
 When the selected Gateway URL comes from `gateway.bind=lan`, OpenClaw also checks persistent `tailscale serve status --json` routes. Any HTTPS Serve root that proxies the active Gateway's loopback port is included as a fallback. The QR command adds this fallback only for `lan`; `custom` and `tailnet` keep their explicitly advertised routes. Current iOS clients probe the advertised routes in order and save the first reachable one; the legacy `url` field remains unchanged for older clients.
 
 With `--remote`, one of `gateway.remote.url` or `gateway.tailscale.mode=serve|funnel` is required.
+
+A configured `gateway.tailscale.mode` alone is not enough to publish a Tailscale URL. OpenClaw reads `tailscale serve status --json` and uses the route only when Tailscale is running and an HTTPS route actually proxies this Gateway's port. Otherwise the command fails with `Configured Tailscale serve route is not available.` instead of handing out a setup code for an address the phone cannot reach — publish the route with `tailscale serve`, then run `openclaw qr` again.
 
 ## Auth resolution (no `--remote`)
 

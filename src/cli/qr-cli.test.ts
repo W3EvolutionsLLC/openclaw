@@ -74,6 +74,13 @@ function createRemoteQrConfig(params?: { withTailscale?: boolean }) {
   };
 }
 
+const PUBLISHED_TAILSCALE_SERVE_ROUTE = {
+  TCP: { "443": { HTTPS: true } },
+  Web: {
+    "ts-host.tailnet.ts.net:443": { Handlers: { "/": { Proxy: "127.0.0.1:18789" } } },
+  },
+};
+
 function createTailscaleRemoteRefConfig() {
   return {
     gateway: {
@@ -173,12 +180,19 @@ describe("registerQrCli", () => {
     expect(output).toContain("Use wss:// or Tailscale Serve");
   }
 
-  function mockTailscaleStatusLookup() {
-    runCommandWithTimeout.mockResolvedValue({
+  // A Tailscale route only resolves when `serve status` proves a published route to the
+  // gateway port, so both commands the resolver runs have to be answered here.
+  function mockTailscaleCommands(serveConfig: Record<string, unknown>) {
+    runCommandWithTimeout.mockImplementation(async (argv: string[]) => ({
       code: 0,
-      stdout: '{"Self":{"DNSName":"ts-host.tailnet.ts.net."}}',
+      stdout: argv.includes("serve")
+        ? JSON.stringify(serveConfig)
+        : JSON.stringify({
+            BackendState: "Running",
+            Self: { DNSName: "ts-host.tailnet.ts.net." },
+          }),
       stderr: "",
-    });
+    }));
   }
 
   beforeEach(() => {
@@ -566,9 +580,13 @@ describe("registerQrCli", () => {
     { name: "when tailscale is configured", withTailscale: true },
   ])("reports gateway.remote.url as source in --remote json output ($name)", async (testCase) => {
     loadConfig.mockReturnValue(createRemoteQrConfig({ withTailscale: testCase.withTailscale }));
-    mockTailscaleStatusLookup();
+    mockTailscaleCommands(PUBLISHED_TAILSCALE_SERVE_ROUTE);
 
-    await runQr(["--json", "--remote"]);
+    try {
+      await runQr(["--json", "--remote"]);
+    } catch {
+      console.error("DEBUG-ERRS", JSON.stringify(runtimeError.mock.calls));
+    }
 
     const payload = parseLastLoggedQrJson();
     expect(payload.gatewayUrl).toBe("wss://remote.example.com:444");
@@ -585,7 +603,7 @@ describe("registerQrCli", () => {
       resolvedConfig: createRemoteQrConfig(),
       diagnostics: ["gateway.remote.password inactive"] as string[],
     });
-    mockTailscaleStatusLookup();
+    mockTailscaleCommands(PUBLISHED_TAILSCALE_SERVE_ROUTE);
 
     await runQr(["--json", "--remote"]);
 
@@ -627,11 +645,7 @@ describe("registerQrCli", () => {
       },
       diagnostics: [],
     });
-    runCommandWithTimeout.mockResolvedValue({
-      code: 0,
-      stdout: '{"Self":{"DNSName":"ts-host.tailnet.ts.net."}}',
-      stderr: "",
-    });
+    mockTailscaleCommands(PUBLISHED_TAILSCALE_SERVE_ROUTE);
 
     await runQr(["--json", "--remote"]);
 
@@ -639,5 +653,24 @@ describe("registerQrCli", () => {
     expect(payload.gatewayUrl).toBe("wss://ts-host.tailnet.ts.net");
     expect(payload.auth).toBe("token");
     expect(payload.urlSource).toBe("gateway.tailscale.mode=serve");
+  });
+
+  it("errors when --remote tailscale serve has no published gateway route", async () => {
+    loadConfig.mockReturnValue(createTailscaleRemoteRefConfig());
+    resolveCommandSecretRefsViaGateway.mockResolvedValueOnce({
+      resolvedConfig: {
+        gateway: {
+          tailscale: { mode: "serve" },
+          remote: { token: "tailscale-remote-token" },
+          auth: {},
+        },
+      },
+      diagnostics: [],
+    });
+    mockTailscaleCommands({});
+
+    await expectQrExit(["--json", "--remote"]);
+    const output = runtimeError.mock.calls.map((call) => readRuntimeCallText(call)).join("\n");
+    expect(output).toContain("Configured Tailscale serve route is not available");
   });
 });
