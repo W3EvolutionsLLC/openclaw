@@ -9,6 +9,7 @@ import {
   assertExplicitGatewayAuthModeWhenBothConfigured,
   hasAmbiguousGatewayAuthModeConfig,
 } from "../gateway/auth-mode-policy.js";
+import { normalizeWebSocketProtocol } from "../gateway/net.js";
 import { resolveAdvertisedLanHost } from "../infra/advertised-lan-host.js";
 import {
   pickMatchingExternalInterfaceAddress,
@@ -172,8 +173,7 @@ function describeSecureMobilePairingFix(source?: string): string {
 function validateMobilePairingUrl(url: string, source?: string): string | null {
   try {
     const parsed = new URL(url);
-    const protocol =
-      parsed.protocol === "https:" ? "wss:" : parsed.protocol === "http:" ? "ws:" : parsed.protocol;
+    const protocol = normalizeWebSocketProtocol(parsed.protocol);
     return protocol === "wss:" ||
       (protocol === "ws:" && isPairingCleartextAllowedHost(parsed.hostname))
       ? null
@@ -189,8 +189,7 @@ function parseNormalizedGatewayUrl(raw: string): string | null {
     if (parsed.username || parsed.password || !parsed.hostname) {
       return null;
     }
-    const scheme = parsed.protocol.slice(0, -1);
-    const normalizedScheme = scheme === "http" ? "ws" : scheme === "https" ? "wss" : scheme;
+    const normalizedScheme = normalizeWebSocketProtocol(parsed.protocol).slice(0, -1);
     if (normalizedScheme !== "ws" && normalizedScheme !== "wss") {
       return null;
     }
