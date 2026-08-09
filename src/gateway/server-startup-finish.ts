@@ -210,6 +210,7 @@ export async function finishGatewayStartup(params: {
       runtimeState,
       sessionCompanion,
       getRuntimeConfig,
+      getResolvedAuth,
       sessionObserver,
       getMcpAppSandboxPort,
       ensureSandboxHostPort,
