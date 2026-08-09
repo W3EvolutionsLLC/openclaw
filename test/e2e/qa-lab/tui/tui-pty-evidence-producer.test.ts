@@ -232,7 +232,6 @@ describe("TUI PTY evidence producer", () => {
   it("builds fake and local PTY commands with the required environment", () => {
     vi.stubEnv("OPENCLAW_TUI_PTY_INCLUDE_LOCAL", "1");
     vi.stubEnv("OPENCLAW_TUI_PTY_USE_BUILT_CLI", "inherited");
-    vi.stubEnv("OPENCLAW_VITEST_FS_MODULE_CACHE_PATH", "/cache-root");
     const fake = buildTuiPtyVitestCommand({
       cases: [makeCase()],
       cliMode: "source",
@@ -251,9 +250,6 @@ describe("TUI PTY evidence producer", () => {
       ]),
     );
     expect(fake.env.OPENCLAW_BEHAVIOR_EVIDENCE).toBe("1");
-    expect(fake.env.OPENCLAW_VITEST_FS_MODULE_CACHE_PATH).toMatch(
-      /^\/cache-root\/qa-tui\/[a-f0-9]{16}$/u,
-    );
     expect(fake.env.OPENCLAW_TUI_PTY_INCLUDE_LOCAL).toBeUndefined();
     expect(fake.env.OPENCLAW_TUI_PTY_USE_BUILT_CLI).toBeUndefined();
 
@@ -274,24 +270,6 @@ describe("TUI PTY evidence producer", () => {
     expect(local.args).toContain(LOCAL_FILE);
     expect(local.env.OPENCLAW_TUI_PTY_INCLUDE_LOCAL).toBe("1");
     expect(local.env.OPENCLAW_TUI_PTY_USE_BUILT_CLI).toBe("1");
-  });
-
-  it("gives concurrent report owners stable, distinct Vitest cache leaves", () => {
-    vi.stubEnv("OPENCLAW_VITEST_FS_MODULE_CACHE_PATH", "/cache-root");
-    const build = (reportPath: string) =>
-      buildTuiPtyVitestCommand({
-        cases: [makeCase()],
-        cliMode: "source",
-        repoRoot: "/repo",
-        reportPath,
-      }).env.OPENCLAW_VITEST_FS_MODULE_CACHE_PATH;
-
-    const first = build("/repo/.artifacts/tui-one/vitest-report.json");
-    const second = build("/repo/.artifacts/tui-two/vitest-report.json");
-    expect(first).toBe(build("/repo/.artifacts/tui-one/vitest-report.json"));
-    expect(first).toMatch(/^\/cache-root\/qa-tui\/[a-f0-9]{16}$/u);
-    expect(second).toMatch(/^\/cache-root\/qa-tui\/[a-f0-9]{16}$/u);
-    expect(first).not.toBe(second);
   });
 
   it("rejects wrong-file and unmatched-pattern reports", async () => {

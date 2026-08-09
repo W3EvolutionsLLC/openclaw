@@ -1,6 +1,5 @@
 // Runs allowlisted TUI PTY cases and emits authenticated QA script evidence.
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -269,16 +268,6 @@ export function buildTuiPtyVitestCommand(params: {
     ...process.env,
     OPENCLAW_BEHAVIOR_EVIDENCE: "1",
   };
-  const fsModuleCacheRoot =
-    env.OPENCLAW_VITEST_FS_MODULE_CACHE_PATH?.trim() ||
-    path.join(params.repoRoot, "node_modules", ".experimental-vitest-cache");
-  const cacheKey = createHash("sha256")
-    .update(path.relative(params.repoRoot, params.reportPath))
-    .digest("hex")
-    .slice(0, 16);
-  // Vitest metadata and invalidation are cache-root-wide. Keep each parallel
-  // evidence producer on a stable leaf while retaining cross-run transform reuse.
-  env.OPENCLAW_VITEST_FS_MODULE_CACHE_PATH = path.join(fsModuleCacheRoot, "qa-tui", cacheKey);
   if (usesLocalPty) {
     env.OPENCLAW_TUI_PTY_INCLUDE_LOCAL = "1";
   } else {

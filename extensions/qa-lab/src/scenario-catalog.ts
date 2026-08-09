@@ -111,7 +111,6 @@ const qaTestFileScenarioExecutionSchema = z.discriminatedUnion("kind", [
     kind: z.literal("script"),
     allowBlockedEvidence: z.boolean().optional(),
     args: z.array(z.string()).optional(),
-    parallelSafe: z.boolean().optional(),
     timeoutMs: z.number().int().positive().optional(),
   }),
 ]);

@@ -31,7 +31,6 @@ scenario:
     - test/e2e/qa-lab/runtime/diagnostic-events-boundary-runtime.ts
   execution:
     kind: script
-    parallelSafe: true
     path: test/e2e/qa-lab/runtime/diagnostic-events-boundary-runtime.ts
     config:
       requiredProviderMode: mock-openai
