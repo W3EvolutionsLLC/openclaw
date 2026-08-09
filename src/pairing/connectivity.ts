@@ -224,11 +224,10 @@ function normalizeOperatorPublicUrl(
   if (!trimmed) {
     return { ok: false, blocker: "public-url-required" };
   }
-  const authorityStart = trimmed.indexOf("://") + 3;
-  if (authorityStart < 3 || /[/?#]/.test(trimmed.slice(authorityStart))) {
-    return { ok: false, blocker: "public-url-invalid" };
-  }
   try {
+    // `new URL` is the only authority here: it already normalizes the default
+    // wss port away and reports credentials, path, query, and fragment, so a
+    // second textual scan can only contradict it (a trailing root `/` is legal).
     const parsed = new URL(trimmed);
     if (parsed.protocol !== "wss:") {
       return { ok: false, blocker: "public-url-insecure" };
@@ -237,7 +236,7 @@ function normalizeOperatorPublicUrl(
       parsed.username ||
       parsed.password ||
       !parsed.hostname ||
-      (parsed.pathname !== "" && parsed.pathname !== "/") ||
+      parsed.pathname !== "/" ||
       parsed.search ||
       parsed.hash
     ) {
@@ -245,7 +244,7 @@ function normalizeOperatorPublicUrl(
     }
     return {
       ok: true,
-      url: `wss://${parsed.hostname}${parsed.port && parsed.port !== "443" ? `:${parsed.port}` : ""}`,
+      url: `wss://${parsed.hostname}${parsed.port ? `:${parsed.port}` : ""}`,
     };
   } catch {
     return { ok: false, blocker: "public-url-invalid" };
@@ -271,18 +270,27 @@ function resolvePairingAuth(cfg: OpenClawConfig, env: NodeJS.ProcessEnv): Pairin
   }
   const mode = cfg.gateway?.auth?.mode;
   const defaults = cfg.secrets?.defaults;
-  const tokenRef = resolveSecretInputRef({ value: cfg.gateway?.auth?.token, defaults }).ref;
-  const passwordRef = resolveSecretInputRef({ value: cfg.gateway?.auth?.password, defaults }).ref;
+  // A value that still reads as a SecretRef was never materialized, so its
+  // credential is unknown to this process. Counting it as configured auth would
+  // let a caller mint a setup code for a Gateway that cannot honor it.
+  const unresolvedToken = Boolean(
+    resolveSecretInputRef({ value: cfg.gateway?.auth?.token, defaults }).ref,
+  );
+  const unresolvedPassword = Boolean(
+    resolveSecretInputRef({ value: cfg.gateway?.auth?.password, defaults }).ref,
+  );
   const envToken = Boolean(normalizeOptionalString(env.OPENCLAW_GATEWAY_TOKEN));
   const envPassword = Boolean(normalizeOptionalString(env.OPENCLAW_GATEWAY_PASSWORD));
-  const token = Boolean(tokenRef) || Boolean(normalizeSecretInputString(cfg.gateway?.auth?.token));
+  // An unresolved `${ENV}` template is still a string, so the ref check has to
+  // veto the literal read rather than merely sit beside it.
+  const token = !unresolvedToken && Boolean(normalizeSecretInputString(cfg.gateway?.auth?.token));
   const password =
-    Boolean(passwordRef) || Boolean(normalizeSecretInputString(cfg.gateway?.auth?.password));
+    !unresolvedPassword && Boolean(normalizeSecretInputString(cfg.gateway?.auth?.password));
   if (mode === "token") {
-    return envToken || token ? "token" : "missing";
+    return envToken || token ? "token" : unresolvedToken ? "unavailable" : "missing";
   }
   if (mode === "password") {
-    return envPassword || password ? "password" : "missing";
+    return envPassword || password ? "password" : unresolvedPassword ? "unavailable" : "missing";
   }
   if (envToken) {
     return "token";
@@ -290,7 +298,13 @@ function resolvePairingAuth(cfg: OpenClawConfig, env: NodeJS.ProcessEnv): Pairin
   if (envPassword) {
     return "password";
   }
-  return token ? "token" : password ? "password" : "missing";
+  if (token) {
+    return "token";
+  }
+  if (password) {
+    return "password";
+  }
+  return unresolvedToken || unresolvedPassword ? "unavailable" : "missing";
 }
 
 function pickTailnetIpv4(networkInterfaces: () => ReturnType<typeof os.networkInterfaces>) {

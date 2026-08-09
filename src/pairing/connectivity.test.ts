@@ -4,6 +4,7 @@ import {
   validateDevicePairConnectivityInspectResult,
   validateDevicePairConnectivityPlanResult,
 } from "../../packages/gateway-protocol/src/index.js";
+import type { SecretInput } from "../config/types.secrets.js";
 import { FULL_ACCESS_PAIRING_SETUP_BOOTSTRAP_PROFILE } from "../shared/device-bootstrap-profile.js";
 import {
   inspectPairingConnectivity,
@@ -208,18 +209,26 @@ describe("pairing connectivity", () => {
         status: "blocked",
       });
     }
+    // A pasted address normally carries the root slash and the default port.
+    for (const publicUrl of [
+      "wss://gateway.example.com:443",
+      "wss://gateway.example.com/",
+      "wss://gateway.example.com:443/",
+    ]) {
+      expect(planPairingConnectivity(inspect, { mode: "public", publicUrl })).toMatchObject({
+        status: "confirmation-required",
+        urls: ["wss://gateway.example.com"],
+        exposure: "public-internet",
+        changes: [],
+        restartRequired: false,
+      });
+    }
     expect(
       planPairingConnectivity(inspect, {
         mode: "public",
-        publicUrl: "wss://gateway.example.com:443",
+        publicUrl: "wss://gateway.example.com:8443/",
       }),
-    ).toMatchObject({
-      status: "confirmation-required",
-      urls: ["wss://gateway.example.com"],
-      exposure: "public-internet",
-      changes: [],
-      restartRequired: false,
-    });
+    ).toMatchObject({ status: "confirmation-required", urls: ["wss://gateway.example.com:8443"] });
   });
 
   it("keeps LAN and Public selectable when the optional Tailscale branch is unavailable", async () => {
@@ -276,40 +285,51 @@ describe("pairing connectivity", () => {
   });
 
   it("keeps unavailable active auth typed and blocks every plan without leaking config refs", async () => {
-    const inspect = await inspectPairingConnectivity(
-      {
-        gateway: {
-          bind: "loopback",
-          auth: {
-            mode: "token",
-            token: { source: "env", provider: "missing", id: "GATEWAY_TOKEN" },
-          },
+    const unresolvedRefConfig = {
+      gateway: {
+        bind: "loopback" as const,
+        auth: {
+          mode: "token" as const,
+          token: { source: "env", provider: "missing", id: "GATEWAY_TOKEN" } satisfies SecretInput,
         },
       },
-      {
-        activeAuth: "unavailable",
+    };
+    // Without `activeAuth` the caller handed over raw config, so a value that
+    // still reads as a SecretRef has to project as unavailable on its own.
+    for (const activeAuth of ["unavailable" as const, undefined]) {
+      const inspect = await inspectPairingConnectivity(unresolvedRefConfig, {
+        ...(activeAuth ? { activeAuth } : {}),
+        env: {},
         networkInterfaces: () => ({}),
         runCommandWithTimeout: vi.fn(async () => ({ code: 1, stdout: "" })),
-      },
-    );
-
-    expect(inspect).toMatchObject({
-      auth: "unavailable",
-      current: { status: "blocked", blocker: "gateway-auth-unavailable" },
-    });
-    for (const request of [
-      { mode: "lan" as const },
-      { mode: "tailscale" as const },
-      { mode: "public" as const, publicUrl: "wss://gateway.example.com" },
-    ]) {
-      expect(planPairingConnectivity(inspect, request)).toMatchObject({
-        status: "blocked",
-        blocker: "gateway-auth-unavailable",
       });
+
+      expect(inspect).toMatchObject({
+        auth: "unavailable",
+        current: { status: "blocked", blocker: "gateway-auth-unavailable" },
+      });
+      for (const request of [
+        { mode: "lan" as const },
+        { mode: "tailscale" as const },
+        { mode: "public" as const, publicUrl: "wss://gateway.example.com" },
+      ]) {
+        expect(planPairingConnectivity(inspect, request)).toMatchObject({
+          status: "blocked",
+          blocker: "gateway-auth-unavailable",
+        });
+      }
+      expect(JSON.stringify(inspect)).not.toMatch(
+        /GATEWAY_TOKEN|provider|SecretRef|bootstrapToken|setupCode|stdout|stderr/,
+      );
     }
-    expect(JSON.stringify(inspect)).not.toMatch(
-      /GATEWAY_TOKEN|provider|SecretRef|bootstrapToken|setupCode|stdout|stderr/,
-    );
+    // The plugin-facing resolver takes raw config straight to a mint, so it is
+    // the surface that must refuse before a bootstrap token exists.
+    await expect(
+      resolvePairingSetupConnectivityFromConfig(unresolvedRefConfig, {
+        env: {},
+        networkInterfaces: () => ({}),
+      }),
+    ).resolves.toEqual({ ok: false, error: "Gateway auth is configured but unavailable." });
   });
 
   it("keeps the setup resolver policy identical for LAN downgrade and secure public access", async () => {
