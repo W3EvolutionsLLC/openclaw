@@ -8,6 +8,7 @@ import { ErrorCodes, errorShape } from "../../../packages/gateway-protocol/src/i
 import { resolveDefaultAgentId } from "../../agents/agent-scope.js";
 import { resolveProviderIdForAuth } from "../../agents/provider-auth-aliases.js";
 import { createAgentRunRestartAbortError } from "../../agents/run-termination.js";
+import { createExecutionIdentityAdmission } from "../../audit/execution-identity-admission.js";
 import { dispatchInboundMessageWithProjectedDispatcher } from "../../auto-reply/dispatch.js";
 import { getAgentEventLifecycleGeneration } from "../../infra/agent-events.js";
 import {
@@ -164,6 +165,10 @@ export async function handleChatSend(
     });
 
   try {
+    const executionIdentityAdmission = createExecutionIdentityAdmission(
+      clientRunId,
+      hasGatewayAdminScope(client),
+    );
     const userTurn = createGatewayChatUserTurnController({
       agentId,
       cfg,
@@ -174,7 +179,7 @@ export async function handleChatSend(
       rawMessage,
       ...(restartSafeAdmission ? { restartAdmission: restartSafeAdmission } : {}),
       ...gatewayClientSenderFields(client),
-      senderIsOwner: hasGatewayAdminScope(client),
+      executionIdentityAdmission,
       sessionKey,
       ...(sessionLoadOptions ? { sessionLoadOptions } : {}),
       startedAt: admissionStartedAt,

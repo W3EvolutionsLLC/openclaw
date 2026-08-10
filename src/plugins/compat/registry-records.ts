@@ -12,6 +12,19 @@ export const PLUGIN_COMPAT_RECORDS = [
   ...DEPRECATION_MARKING_COMPAT_RECORDS,
   MEDIA_LEGACY_PROJECTION_COMPAT_RECORD,
   {
+    code: "agent-command-ingress-owner-assertion",
+    status: "removed",
+    owner: "agent-runtime",
+    introduced: "2026-07-11",
+    replacement: "host-minted execution identity admission; normal channel ingress",
+    docsPath: "/plugins/sdk-migration#agent-command-ingress-owner-authority",
+    surfaces: ["agentCommandFromIngress(...) senderIsOwner"],
+    diagnostics: ["one-time ignored owner-assertion warning"],
+    tests: ["src/commands/agent.test.ts", "src/plugin-sdk/agent-runtime-ingress-contract.test.ts"],
+    releaseNote:
+      "Plugin SDK agent ingress no longer accepts caller-asserted owner authority; authenticated hosts mint authority outside the public ingress payload.",
+  },
+  {
     code: "context-engine-legacy-host-param-default",
     status: "deprecated",
     owner: "sdk",

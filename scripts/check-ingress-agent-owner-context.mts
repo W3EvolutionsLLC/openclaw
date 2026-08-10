@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 // Ensures ingress agent command callsites pass explicit owner context.
-import path from "node:path";
 import ts from "typescript";
 import { bundledPluginFile } from "./lib/bundled-plugin-paths.mjs";
 import { runCallsiteGuard } from "./lib/callsite-guard.mts";
@@ -11,23 +10,34 @@ import {
   unwrapExpression,
 } from "./lib/ts-guard-utils.mts";
 
-const sourceRoots = ["src/gateway", bundledPluginFile("discord", "src/voice")];
-const enforcedFiles = new Set([
-  bundledPluginFile("discord", "src/voice/manager.ts"),
-  "src/gateway/openai-http.ts",
-  "src/gateway/openresponses-http.ts",
-  "src/gateway/server-methods/agent.ts",
-  "src/gateway/server-node-events.ts",
-]);
+const sourceRoots = [
+  "src",
+  bundledPluginFile("discord", "src/voice"),
+  "scripts/e2e/lib/codex-npm-plugin-live",
+];
 
 /**
- * Finds legacy `agentCommand(...)` call lines in ingress-owned source.
+ * Finds public ingress calls that still try to assert owner authority.
  */
-function findLegacyAgentCommandCallLines(content: string, fileName = "source.ts") {
+function findIngressOwnerAssertionLines(content: string, fileName = "source.ts") {
   const sourceFile = ts.createSourceFile(fileName, content, ts.ScriptTarget.Latest, true);
   return collectCallExpressionLines(ts, sourceFile, (node) => {
     const callee = unwrapExpression(node.expression);
-    return ts.isIdentifier(callee) && callee.text === "agentCommand" ? callee : null;
+    if (!ts.isIdentifier(callee) || callee.text !== "agentCommandFromIngress") {
+      return null;
+    }
+    const input = node.arguments[0] ? unwrapExpression(node.arguments[0]) : undefined;
+    if (!input || !ts.isObjectLiteralExpression(input)) {
+      return null;
+    }
+    const ownerProperty = input.properties.find((property) => {
+      if (!ts.isPropertyAssignment(property) && !ts.isShorthandPropertyAssignment(property)) {
+        return false;
+      }
+      const name = property.name;
+      return (ts.isIdentifier(name) || ts.isStringLiteral(name)) && name.text === "senderIsOwner";
+    });
+    return ownerProperty?.name ?? null;
   });
 }
 
@@ -38,11 +48,9 @@ async function main() {
   await runCallsiteGuard({
     importMetaUrl: import.meta.url,
     sourceRoots,
-    findCallLines: findLegacyAgentCommandCallLines,
-    skipRelativePath: (relPath) => !enforcedFiles.has(relPath.replaceAll(path.sep, "/")),
-    header: "Found ingress callsites using local agentCommand() (must be explicit owner-aware):",
-    footer:
-      "Use agentCommandFromIngress(...) and pass senderIsOwner explicitly at ingress boundaries.",
+    findCallLines: findIngressOwnerAssertionLines,
+    header: "Found public ingress callsites asserting owner authority:",
+    footer: "Owner authority must come from a host-minted execution identity admission.",
   });
 }
 

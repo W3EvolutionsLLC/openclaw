@@ -8,6 +8,7 @@ import { pathToFileURL } from "node:url";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { disposeRegisteredAgentHarnesses } from "../agents/harness/registry.js";
 import type { AnyAgentTool } from "../agents/tools/common.js";
+import { createExecutionIdentityAdmission } from "../audit/execution-identity-admission.js";
 import { getRuntimeConfig } from "../config/config.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { formatErrorMessage } from "../infra/errors.js";
@@ -24,7 +25,10 @@ const LEGACY_TOOL_NAMES = [
   "codex_session_interrupt",
 ] as const;
 const LEGACY_TOOL_NAME_SET = new Set<string>(LEGACY_TOOL_NAMES);
-const TRUSTED_STANDALONE_MCP_OWNER_CONTEXT = { senderIsOwner: true as const };
+const TRUSTED_STANDALONE_MCP_ADMISSION = createExecutionIdentityAdmission(
+  "codex-supervision-stdio",
+  true,
+);
 
 function withCodexSupervisionEnabled(config: OpenClawConfig): OpenClawConfig {
   const next = structuredClone(normalizePluginTargetConfig(config, "codex")) as OpenClawConfig &
@@ -62,7 +66,7 @@ function resolveCodexSupervisionTools(config: OpenClawConfig): AnyAgentTool[] {
     getRuntimeConfig: () => config,
     // This local stdio bridge is operator-launched and intentionally receives
     // the same trusted owner capability as an owner-authenticated agent turn.
-    ...TRUSTED_STANDALONE_MCP_OWNER_CONTEXT,
+    senderIsOwner: TRUSTED_STANDALONE_MCP_ADMISSION.senderIsOwner,
   };
   const toolAllowlist = [...LEGACY_TOOL_NAMES];
   const runtimeRegistry = ensureStandalonePluginToolRegistryLoaded({

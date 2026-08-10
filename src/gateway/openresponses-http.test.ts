@@ -198,6 +198,12 @@ function firstAgentOpts(callIndex = 0): Record<string, unknown> {
   return call[0] as Record<string, unknown>;
 }
 
+function firstAgentSenderIsOwner(callIndex = 0): boolean | undefined {
+  return (
+    firstAgentOpts(callIndex).executionIdentityAdmission as { senderIsOwner?: boolean } | undefined
+  )?.senderIsOwner;
+}
+
 async function ensureResponseConsumed(res: Response) {
   if (res.bodyUsed) {
     return;
@@ -1802,7 +1808,7 @@ describe("OpenResponses HTTP API (e2e)", () => {
           expect(parseSseEvents(body).map((event) => event.event)).toContain("response.completed");
         }
         expect(agentCommand).toHaveBeenCalledTimes(1);
-        expect(firstAgentOpts().senderIsOwner).toBe(senderIsOwner);
+        expect(firstAgentSenderIsOwner()).toBe(senderIsOwner);
       }
     }
   });
@@ -1861,7 +1867,7 @@ describe("OpenResponses HTTP API (e2e)", () => {
               expect(res.status).toBe(200);
               await ensureResponseConsumed(res);
               expect(agentCommand).toHaveBeenCalledTimes(1);
-              expect(firstAgentOpts().senderIsOwner).toBe(senderIsOwner);
+              expect(firstAgentSenderIsOwner()).toBe(senderIsOwner);
             }
           }
 
@@ -1961,7 +1967,7 @@ describe("OpenResponses HTTP API (e2e)", () => {
           expect(res.status).toBe(200);
           await ensureResponseConsumed(res);
           expect(agentCommand).toHaveBeenCalledTimes(1);
-          expect(firstAgentOpts().senderIsOwner).toBe(true);
+          expect(firstAgentSenderIsOwner()).toBe(true);
         }
 
         agentCommand.mockClear();

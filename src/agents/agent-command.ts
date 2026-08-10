@@ -50,7 +50,7 @@ import { persistSessionEntry, prepareCurrentRunDelivery } from "./command/sessio
 import { prepareEmbeddedSessionState } from "./command/session-preparation.js";
 import { clearRotatedSessionMetadata } from "./command/session.js";
 import type {
-  AgentCommandGatewayIngressOpts,
+  AgentCommandHostIngressOpts,
   AgentCommandIngressOpts,
   AgentCommandOpts,
 } from "./command/types.js";
@@ -65,8 +65,11 @@ import { createAgentRunRestartAbortError } from "./run-termination.js";
 import { measureAgentStartup } from "./startup-timing.js";
 
 type AgentCommandAdmissionIngress = Parameters<typeof executionIdentity.record>[0]["ingress"];
+type AgentCommandIngressInternalOpts = AgentCommandIngressOpts &
+  Pick<AgentCommandOpts, "executionIdentityAdmission">;
 
 const log = createSubsystemLogger("agents/agent-command");
+let legacyIngressOwnerAssertionWarned = false;
 
 async function agentCommandInternal(
   prepared: Awaited<ReturnType<typeof prepareAgentCommandExecution>>,
@@ -627,7 +630,7 @@ export async function agentCommandFromSystem(
 }
 
 async function agentCommandFromIngressInternal(
-  opts: AgentCommandGatewayIngressOpts,
+  opts: AgentCommandIngressInternalOpts,
   runtime: RuntimeEnv = defaultRuntime,
   deps?: CliDeps,
   recovery?: {
@@ -646,7 +649,7 @@ async function agentCommandFromIngressInternal(
       opts: {
         ...opts,
         lifecycleGeneration,
-        senderIsOwner: opts.senderIsOwner === true,
+        senderIsOwner: opts.executionIdentityAdmission?.senderIsOwner === true,
       },
       prepare: async (preparedOpts) => await prepareAgentCommandExecution(preparedOpts, runtime),
       restoreAdmittedRecovery: recovery?.restoreAdmittedRecovery,
@@ -674,21 +677,31 @@ export async function agentCommandFromIngress(
   runtime: RuntimeEnv = defaultRuntime,
   deps?: CliDeps,
 ) {
+  if (Object.hasOwn(opts as object, "senderIsOwner") && !legacyIngressOwnerAssertionWarned) {
+    legacyIngressOwnerAssertionWarned = true;
+    log.warn(
+      "agentCommandFromIngress senderIsOwner is ignored; owner authority must come from host admission",
+    );
+  }
   // Plugin SDK callers may be plain JavaScript. Enforce the private recovery
   // boundary at runtime so extra or inherited properties cannot author audit identity.
   return await agentCommandFromIngressInternal(
-    { ...opts, executionIdentityAdmission: undefined },
+    {
+      ...opts,
+      senderIsOwner: undefined,
+      executionIdentityAdmission: undefined,
+    } as AgentCommandIngressInternalOpts,
     runtime,
     deps,
   );
 }
 
-/** Internal Gateway entrypoint that restores a rejected restart-recovery admission. */
-export async function agentCommandFromGatewayIngress(
-  opts: AgentCommandGatewayIngressOpts,
-  runtime: RuntimeEnv,
-  deps: CliDeps | undefined,
-  recovery: {
+/** Internal host entrypoint for authenticated ingress and recovery. */
+export async function agentCommandFromHostIngress(
+  opts: AgentCommandHostIngressOpts,
+  runtime: RuntimeEnv = defaultRuntime,
+  deps?: CliDeps,
+  recovery?: {
     restoreAdmittedRecovery?: () => Promise<MainSessionRecoveryPendingTarget | undefined>;
   },
 ) {

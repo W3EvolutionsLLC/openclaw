@@ -37,7 +37,7 @@ vi.mock("../../config/config.js", () => ({
 }));
 
 vi.mock("../../commands/agent.js", () => ({
-  agentCommandFromGatewayIngress: agentIngressMocks.agentCommandFromIngress,
+  agentCommandFromHostIngress: agentIngressMocks.agentCommandFromIngress,
   agentCommandFromIngress: agentIngressMocks.agentCommandFromIngress,
 }));
 

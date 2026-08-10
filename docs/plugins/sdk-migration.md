@@ -83,6 +83,19 @@ External-plugin compatibility work follows this order:
 6. Remove only after the announced migration window, usually in a major
    release.
 
+### Agent command ingress owner authority
+
+`agentCommandFromIngress(...)` no longer accepts `senderIsOwner`. Owner authority
+is minted by the authenticated host and is intentionally unavailable through
+the Plugin SDK ingress payload. Channel plugins should call the ingress helper
+without an owner assertion and rely on the normal host/channel admission path.
+
+This field was removed without a behavior-preserving deprecation window because
+honoring it would preserve an authorization bypass. Plain JavaScript callers
+that still send the legacy property receive a one-time warning and the value is
+ignored. There is no public token or admission constructor replacement; trusted
+standalone host code must use its internal host-admission boundary.
+
 ### Channel state migration declarations
 
 Channel plugins should declare `doctorContract.stateMigrations: true` in

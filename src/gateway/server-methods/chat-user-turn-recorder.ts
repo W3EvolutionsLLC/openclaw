@@ -1,4 +1,5 @@
 import { runAgentHarnessBeforeMessageWriteHook } from "../../agents/harness/hook-helpers.js";
+import type { ExecutionIdentityAdmission } from "../../audit/execution-identity-admission.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { measureDiagnosticsTimelineSpan } from "../../infra/diagnostics-timeline.js";
 import type { InputProvenance } from "../../sessions/input-provenance.js";
@@ -36,7 +37,7 @@ export function createGatewayChatUserTurnController(params: {
   rawMessage: string;
   restartAdmission?: RestartSafeChatAdmission;
   sender?: UserTurnInput["sender"];
-  senderIsOwner: boolean;
+  executionIdentityAdmission: ExecutionIdentityAdmission;
   sessionKey: string;
   sessionLoadOptions?: { agentId?: string; clone?: boolean };
   startedAt: number;
@@ -48,7 +49,7 @@ export function createGatewayChatUserTurnController(params: {
     timestamp: params.now,
     idempotencyKey: buildRunUserTurnIdempotencyKey(params.clientRunId),
     ...(params.sender ? { sender: params.sender } : {}),
-    ...(params.senderIsOwner ? { senderIsOwner: true } : {}),
+    ...(params.executionIdentityAdmission.senderIsOwner ? { senderIsOwner: true } : {}),
     ...(params.provenance ? { provenance: params.provenance } : {}),
   };
   let inputPromise = Promise.resolve(baseInput);

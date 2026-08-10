@@ -9,7 +9,7 @@ import { isTimeoutError } from "../../agents/failover-error.js";
 import type { MainSessionRecoveryPendingTarget } from "../../agents/main-session-recovery-store.js";
 import { isAgentRunRestartAbortReason } from "../../agents/run-termination.js";
 import { normalizeAgentRunTimeoutPhase } from "../../agents/run-timeout-attribution.js";
-import { agentCommandFromGatewayIngress } from "../../commands/agent.js";
+import { agentCommandFromHostIngress } from "../../commands/agent.js";
 import { isAbortError } from "../../infra/abort-signal.js";
 import { clearAgentRunContext } from "../../infra/agent-run-registry.js";
 import { readErrorName } from "../../infra/errors.js";
@@ -104,7 +104,7 @@ export function deleteGatewayDedupeEntries(params: {
 }
 
 export function dispatchAgentRunFromGateway(params: {
-  ingressOpts: Parameters<typeof agentCommandFromGatewayIngress>[0];
+  ingressOpts: Parameters<typeof agentCommandFromHostIngress>[0];
   runId: string;
   cronCreatorAuthority?: GatewayCronCreatorAuthorityAdmission;
   dedupeKeys: readonly string[];
@@ -169,7 +169,7 @@ export function dispatchAgentRunFromGateway(params: {
     }
   };
   const runAgent = () =>
-    agentCommandFromGatewayIngress(params.ingressOpts, defaultRuntime, params.context.deps, {
+    agentCommandFromHostIngress(params.ingressOpts, defaultRuntime, params.context.deps, {
       restoreAdmittedRecovery: params.restoreAdmittedRecovery,
     });
   const agentRun = params.cronCreatorAuthority

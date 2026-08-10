@@ -134,6 +134,11 @@ export type ExecutionIdentityAdmissionFacts = Omit<
   assurance?: ExecutionIdentityAdmissionEnvelope["assurance"];
 };
 export type ExecutionIdentityAdmissionToken = Static<typeof ExecutionIdentityAdmissionTokenSchema>;
+export type ExecutionIdentityAdmission = Readonly<{
+  token: ExecutionIdentityAdmissionToken;
+  retryOnly: boolean;
+  senderIsOwner: boolean;
+}>;
 export type ExecutionIdentityAdmissionWork =
   | { kind: "capture"; envelope: ExecutionIdentityAdmissionEnvelope }
   | { kind: "retry-reference"; token: ExecutionIdentityAdmissionToken };
@@ -197,6 +202,23 @@ export function createExecutionIdentityAdmissionToken(
   };
   validateToken(token);
   return freezeEnvelope(token);
+}
+
+/** Mint host-owned run authority beside the bounded audit correlation. */
+export function createExecutionIdentityAdmission(
+  runId: string,
+  senderIsOwner: boolean,
+  identity?: Pick<ExecutionIdentityAdmission, "token" | "retryOnly">,
+): ExecutionIdentityAdmission {
+  const token = identity?.token ?? createExecutionIdentityAdmissionToken(runId);
+  if (identity?.retryOnly !== true && token.runId !== runId) {
+    throw new Error("execution identity admission token disagrees with the admitted run");
+  }
+  return Object.freeze({
+    token,
+    retryOnly: identity?.retryOnly === true,
+    senderIsOwner,
+  });
 }
 
 export function parseExecutionIdentityAdmissionToken(

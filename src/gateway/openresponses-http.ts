@@ -13,9 +13,10 @@ import { isClientToolNameConflictError } from "../agents/agent-tool-definition-a
 import type { ImageContent } from "../agents/command/types.js";
 import type { ClientToolDefinition } from "../agents/embedded-agent-runner/run/params.js";
 import { toOpenAiResponsesUsage } from "../agents/usage.js";
+import { createExecutionIdentityAdmission } from "../audit/execution-identity-admission.js";
 import { createDefaultDeps } from "../cli/deps.js";
 import type { CliDeps } from "../cli/deps.types.js";
-import { agentCommandFromIngress } from "../commands/agent.js";
+import { agentCommandFromHostIngress } from "../commands/agent.js";
 import type { GatewayHttpResponsesConfig } from "../config/types.gateway.js";
 import { emitAgentEvent, onAgentEvent } from "../infra/agent-events.js";
 import { pruneMapToMaxSize } from "../infra/map-size.js";
@@ -390,7 +391,7 @@ async function runResponsesAgentCommand(params: {
   deps: CliDeps;
   abortSignal?: AbortSignal;
 }) {
-  return agentCommandFromIngress(
+  return agentCommandFromHostIngress(
     {
       message: params.message,
       images: params.images.length > 0 ? params.images : undefined,
@@ -402,7 +403,10 @@ async function runResponsesAgentCommand(params: {
       runId: params.runId,
       deliver: false,
       messageChannel: params.messageChannel,
-      senderIsOwner: params.senderIsOwner,
+      executionIdentityAdmission: createExecutionIdentityAdmission(
+        params.runId,
+        params.senderIsOwner,
+      ),
       bestEffortDeliver: false,
       allowModelOverride: params.modelOverride !== undefined,
       abortSignal: params.abortSignal,

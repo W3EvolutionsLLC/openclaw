@@ -22,6 +22,7 @@ import {
 import { resolveScheduledToolPolicyContext } from "../../agents/scheduled-tool-policy.js";
 import { resolveIngressWorkspaceOverrideForSessionRun } from "../../agents/spawned-context.js";
 import { isExecutionIdentityCollectionEnabled } from "../../audit/audit-config.js";
+import { createExecutionIdentityAdmission } from "../../audit/execution-identity-admission.js";
 import {
   setChannelSourceTurnId,
   setChannelSourceTurnSameThreadRequired,
@@ -255,6 +256,19 @@ export function startAgentRunExecution(params: {
       const senderIsOwner = params.restoredCronContinuation
         ? true
         : clientHasAdminScope(params.client);
+      const recoveryExecutionIdentityAdmission =
+        resolveAgentRestartRecoveryExecutionIdentityAdmission({
+          collectionEnabled: isExecutionIdentityCollectionEnabled(params.cfg),
+          isRestartRecoveryResumeRun: params.isRestartRecoveryResumeRun,
+          retryOnly: params.request.internalExecutionIdentityRetry,
+          runId: params.runId,
+          sessionEntry: params.sessionEntry,
+        });
+      const executionIdentityAdmission = createExecutionIdentityAdmission(
+        params.runId,
+        senderIsOwner,
+        recoveryExecutionIdentityAdmission,
+      );
       const userTurnTranscriptRecorder =
         params.resolvedSessionKey &&
         params.resolvedSessionId &&
@@ -267,7 +281,7 @@ export function startAgentRunExecution(params: {
                 timestamp: Date.now(),
                 idempotencyKey: buildRunUserTurnIdempotencyKey(params.runId),
                 ...gatewayClientSenderFields(params.client),
-                senderIsOwner,
+                senderIsOwner: executionIdentityAdmission.senderIsOwner,
                 ...(params.inputProvenance ? { provenance: params.inputProvenance } : {}),
               },
               target: () => {
@@ -331,13 +345,6 @@ export function startAgentRunExecution(params: {
           params.client.internal.runtimePluginToolGrant?.pluginId
           ? params.client.internal.runtimePluginToolGrant
           : undefined;
-      const executionIdentityAdmission = resolveAgentRestartRecoveryExecutionIdentityAdmission({
-        collectionEnabled: isExecutionIdentityCollectionEnabled(params.cfg),
-        isRestartRecoveryResumeRun: params.isRestartRecoveryResumeRun,
-        retryOnly: params.request.internalExecutionIdentityRetry,
-        runId: params.runId,
-        sessionEntry: params.sessionEntry,
-      });
       const restartRecoveryChannelContext = resolveAgentRestartRecoveryChannelContext({
         canUseInternalRuntimeHandoff: params.canUseInternalRuntimeHandoff,
         expectedExistingSessionId: params.request.expectedExistingSessionId,
@@ -422,7 +429,6 @@ export function startAgentRunExecution(params: {
           acpTurnSource: params.request.acpTurnSource,
           internalEvents: params.request.internalEvents,
           inputProvenance: params.inputProvenance,
-          senderIsOwner,
           sessionEffects: params.sessionEffects,
           skipInitialSessionTouch: params.skipAgentInitialSessionTouch,
           preserveUserFacingSessionModelState:
@@ -435,7 +441,7 @@ export function startAgentRunExecution(params: {
           swarmOutputSchema: params.request.swarmOutputSchema,
           forceRestartSafeTools: params.request.forceRestartSafeTools,
           forceCodeModeTools: params.request.forceCodeModeTools,
-          ...(executionIdentityAdmission ? { executionIdentityAdmission } : {}),
+          executionIdentityAdmission,
           internalDeliveryMediaUrls: params.client?.internal?.internalDeliveryMediaUrls,
           internalDeliverySuppressText: params.client?.internal?.internalDeliverySuppressText,
           suppressPromptPersistence:

@@ -13,7 +13,7 @@ const performGatewaySessionResetMock = vi.hoisted(() => vi.fn());
 const parseMessageWithAttachmentsMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../../commands/agent.js", () => ({
-  agentCommandFromGatewayIngress: agentCommandFromIngressMock,
+  agentCommandFromHostIngress: agentCommandFromIngressMock,
   agentCommandFromIngress: agentCommandFromIngressMock,
 }));
 

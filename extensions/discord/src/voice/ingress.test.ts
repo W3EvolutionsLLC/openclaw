@@ -27,7 +27,7 @@ describe("Discord voice ingress execution correlation", () => {
       cfg: {} as never,
       discordConfig: {} as never,
       runtime: { log: vi.fn(), error: vi.fn() } as never,
-      context: { senderIsOwner: false, speakerLabel: "Guest" },
+      context: { senderIsOwner: true, speakerLabel: "Owner" },
       fetchGuildName: vi.fn(async () => "Guild"),
       speakerContext: {} as never,
     };
@@ -44,6 +44,7 @@ describe("Discord voice ingress execution correlation", () => {
     ]);
     for (const input of inputs) {
       expect(input).not.toHaveProperty("runId");
+      expect(input).not.toHaveProperty("senderIsOwner");
     }
   });
 });

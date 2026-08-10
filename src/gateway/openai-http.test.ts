@@ -149,7 +149,7 @@ type FirstAgentCommandOptions = {
   message?: string;
   messageChannel?: string;
   model?: string;
-  senderIsOwner?: boolean;
+  executionIdentityAdmission?: { senderIsOwner?: boolean };
   sessionKey?: string;
   streamParams?: {
     frequencyPenalty?: number;
@@ -3412,7 +3412,9 @@ describe("OpenAI-compatible HTTP API (e2e)", () => {
         expect(res.status).toBe(200);
         await res.text();
         expect(agentCommand).toHaveBeenCalledTimes(1);
-        expect(firstAgentCommandOptions()?.senderIsOwner).toBe(senderIsOwner);
+        expect(firstAgentCommandOptions()?.executionIdentityAdmission?.senderIsOwner).toBe(
+          senderIsOwner,
+        );
       }
     }
   });
@@ -3474,7 +3476,9 @@ describe("OpenAI-compatible HTTP API (e2e)", () => {
               expect(res.status).toBe(200);
               await res.text();
               expect(agentCommand).toHaveBeenCalledTimes(1);
-              expect(firstAgentCommandOptions()?.senderIsOwner).toBe(senderIsOwner);
+              expect(firstAgentCommandOptions()?.executionIdentityAdmission?.senderIsOwner).toBe(
+                senderIsOwner,
+              );
             }
           }
 
@@ -3528,7 +3532,7 @@ describe("OpenAI-compatible HTTP API (e2e)", () => {
           expect(res.status).toBe(200);
           await res.text();
           expect(agentCommand).toHaveBeenCalledTimes(1);
-          expect(firstAgentCommandOptions()?.senderIsOwner).toBe(true);
+          expect(firstAgentCommandOptions()?.executionIdentityAdmission?.senderIsOwner).toBe(true);
         }
 
         agentCommand.mockClear();

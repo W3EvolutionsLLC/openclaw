@@ -18,6 +18,7 @@ import * as modelSelectionModule from "../agents/model-selection.js";
 import { loadPreparedModelCatalog } from "../agents/prepared-model-catalog.js";
 import { isAgentRunRestartAbortReason } from "../agents/run-termination.js";
 import { ensureAgentWorkspace } from "../agents/workspace.js";
+import { createExecutionIdentityAdmission } from "../audit/execution-identity-admission.js";
 import { BASE_THINKING_LEVELS } from "../auto-reply/thinking.shared.js";
 import * as runtimeSnapshotModule from "../config/runtime-snapshot.js";
 import { parseSqliteSessionFileMarker } from "../config/sessions/legacy-sqlite-marker.js";
@@ -46,7 +47,12 @@ import {
   normalizeSessionDeliveryState,
 } from "../utils/delivery-context.shared.js";
 import { getAgentHarnessPluginMocks } from "./agent-command-state.test-mocks.js";
-import { agentCommand, agentCommandFromIngress, testing as agentCommandTesting } from "./agent.js";
+import {
+  agentCommand,
+  agentCommandFromHostIngress,
+  agentCommandFromIngress,
+  testing as agentCommandTesting,
+} from "./agent.js";
 import { createThrowingTestRuntime } from "./test-runtime-config-helpers.js";
 
 const configIoMocks = vi.hoisted(() => ({
@@ -451,7 +457,7 @@ describe("agentCommand", () => {
     ).rejects.toThrow("allowModelOverride must be explicitly set for ingress agent runs.");
   });
 
-  it("strips private recovery identity from runtime-shaped public ingress", async () => {
+  it("strips private admission and owner assertions from public ingress", async () => {
     await withTempHome(async (home) => {
       const store = path.join(home, "sessions.json");
       mockConfig(home, store);
@@ -465,6 +471,7 @@ describe("agentCommand", () => {
           createdAt: 1,
         },
         retryOnly: true,
+        senderIsOwner: true,
       };
       const priorDescriptor = Object.getOwnPropertyDescriptor(
         Object.prototype,
@@ -493,6 +500,7 @@ describe("agentCommand", () => {
               },
               retryOnly: true,
             },
+            senderIsOwner: true,
           } as never,
           runtime,
         );
@@ -500,6 +508,23 @@ describe("agentCommand", () => {
         expect(record).toHaveBeenCalledWith(
           expect.objectContaining({ admission: undefined, runId: "public-ingress-run" }),
         );
+        expect(
+          vi.mocked(attemptExecutionRuntime.runAgentAttempt).mock.calls.at(-1)?.[0],
+        ).toMatchObject({ opts: { senderIsOwner: false } });
+
+        await agentCommandFromHostIngress(
+          {
+            message: "host-admitted turn",
+            agentId: "main",
+            runId: "host-ingress-run",
+            allowModelOverride: false,
+            executionIdentityAdmission: createExecutionIdentityAdmission("host-ingress-run", true),
+          },
+          runtime,
+        );
+        expect(
+          vi.mocked(attemptExecutionRuntime.runAgentAttempt).mock.calls.at(-1)?.[0],
+        ).toMatchObject({ opts: { senderIsOwner: true } });
       } finally {
         record.mockRestore();
         if (priorDescriptor) {

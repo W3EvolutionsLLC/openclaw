@@ -10,10 +10,14 @@ const optionalRunIdCaller: PublicIngressOptions = {
 const privateRecoveryCorrelationIsHidden: "executionIdentityAdmission" extends keyof PublicIngressOptions
   ? false
   : true = true;
+const callerOwnerAssertionIsHidden: "senderIsOwner" extends keyof PublicIngressOptions
+  ? false
+  : true = true;
 
 describe("public agent ingress correlation contract", () => {
   it("keeps runId optional and private execution recovery state unavailable", () => {
     expect(optionalRunIdCaller).not.toHaveProperty("runId");
     expect(privateRecoveryCorrelationIsHidden).toBe(true);
+    expect(callerOwnerAssertionIsHidden).toBe(true);
   });
 });

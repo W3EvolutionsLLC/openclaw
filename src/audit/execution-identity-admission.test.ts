@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   configureExecutionIdentityAdmissionSink,
+  createExecutionIdentityAdmission,
   createExecutionIdentityAdmissionToken,
   enqueueExecutionIdentityContextAtAdmission,
   hasExecutionIdentityAdmissionSink,
@@ -54,6 +55,23 @@ function captureEnvelope(
 }
 
 describe("execution identity admission envelope", () => {
+  it("mints host owner authority beside a bounded run token", () => {
+    const admission = createExecutionIdentityAdmission("run-owner", true);
+
+    expect(admission).toMatchObject({
+      retryOnly: false,
+      senderIsOwner: true,
+      token: { runId: "run-owner" },
+    });
+    expect(Object.isFrozen(admission)).toBe(true);
+    expect(() =>
+      createExecutionIdentityAdmission("different-run", false, {
+        token: admission.token,
+        retryOnly: false,
+      }),
+    ).toThrow("token disagrees with the admitted run");
+  });
+
   it("captures a deterministic, deeply frozen, redacted envelope with fixed identity", () => {
     const envelope = captureEnvelope(
       facts({
