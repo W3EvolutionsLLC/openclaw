@@ -14,9 +14,17 @@ import {
   resolveAgentCredentialsForDiscovery,
   type DiscoverAuthStorageOptions,
 } from "./agent-auth-discovery.js";
+import {
+  ensureAuthProfileStore,
+  ensureAuthProfileStoreWithoutExternalProfiles,
+} from "./auth-profiles/store.js";
 import { resolveModelPluginMetadataSnapshot } from "./model-discovery-context.js";
 import type { PluginModelCatalogMetadataSnapshot } from "./plugin-model-catalog.js";
 import type { PersistedPluginModelCatalog } from "./plugin-model-catalog.js";
+import {
+  attachAuthStorageProfiles,
+  markAuthStorageCredentialFree,
+} from "./sessions/auth-storage-profiles.js";
 import {
   AuthStorage,
   ModelRegistry,
@@ -196,9 +204,27 @@ export function discoverAuthStorage(
   agentDir: string,
   options?: DiscoverAuthStorageOptions,
 ): AgentAuthStorage {
-  const credentials =
-    options?.skipCredentials === true ? {} : resolveAgentCredentialsForDiscovery(agentDir, options);
-  return AuthStorage.inMemory(credentials);
+  if (options?.skipCredentials === true) {
+    return markAuthStorageCredentialFree(AuthStorage.inMemory());
+  }
+  const credentials = resolveAgentCredentialsForDiscovery(agentDir, options);
+  const store =
+    options?.skipExternalAuthProfiles === true
+      ? ensureAuthProfileStoreWithoutExternalProfiles(agentDir, {
+          allowKeychainPrompt: false,
+          ...(options.inheritedAuthDir ? { inheritedAuthDir: options.inheritedAuthDir } : {}),
+          ...(options.readOnly === true ? { readOnly: true } : {}),
+        })
+      : ensureAuthProfileStore(agentDir, {
+          allowKeychainPrompt: false,
+          ...(options?.config ? { config: options.config } : {}),
+          ...(options?.externalCli ? { externalCli: options.externalCli } : {}),
+          ...(options?.inheritedAuthDir ? { inheritedAuthDir: options.inheritedAuthDir } : {}),
+          ...(options?.readOnly === true ? { readOnly: true } : {}),
+        });
+  const storage = AuthStorage.inMemory(credentials);
+  attachAuthStorageProfiles(storage, store);
+  return storage;
 }
 
 /** Creates the model registry used by agent model discovery. */

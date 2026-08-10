@@ -45,6 +45,12 @@ import {
   loginAuthStorageOAuthProvider,
   resolveAuthStoragePluginOAuthCredential,
 } from "./auth-storage-oauth-registry.js";
+import {
+  attachAuthStorageProfiles,
+  collectStateOnlyAuthProfileIds,
+  setAuthStorageRuntimeOverride,
+  syncAuthStorageDefaultProfiles,
+} from "./auth-storage-profiles.js";
 import { resolveConfigValue } from "./resolve-config-value.js";
 
 export type ApiKeyCredential = {
@@ -258,15 +264,6 @@ function applyAuthStorageData(
   return { ...store, profiles };
 }
 
-function collectStateOnlyAuthProfileIds(store: AuthProfileStore): string[] {
-  const referenced = new Set([
-    ...Object.values(store.order ?? {}).flat(),
-    ...Object.values(store.lastGood ?? {}),
-    ...Object.keys(store.usageStats ?? {}),
-  ]);
-  return [...referenced].filter((profileId) => !store.profiles[profileId]);
-}
-
 function loadSqliteAuthStorageStore(
   agentDir: string,
   database?: OpenClawAgentDatabase,
@@ -449,7 +446,12 @@ export class AuthStorage {
       getRuntimeAuthProfileStoreSnapshot(agentDir) ??
       loadAuthProfileStoreForSecretsRuntime(agentDir);
     assertAuthStorageSecretRefsMaterialized(preparedStore);
-    return new AuthStorage(new SqliteAuthStorageBackend(agentDir, preparedStore), agentDir);
+    const storage = new AuthStorage(
+      new SqliteAuthStorageBackend(agentDir, preparedStore),
+      agentDir,
+    );
+    attachAuthStorageProfiles(storage, preparedStore);
+    return storage;
   }
 
   /**
@@ -486,6 +488,7 @@ export class AuthStorage {
    */
   setRuntimeApiKey(provider: string, apiKey: string): void {
     this.runtimeOverrides.set(provider, apiKey);
+    setAuthStorageRuntimeOverride(this, provider, apiKey);
   }
 
   /**
@@ -493,6 +496,7 @@ export class AuthStorage {
    */
   removeRuntimeApiKey(provider: string): void {
     this.runtimeOverrides.delete(provider);
+    setAuthStorageRuntimeOverride(this, provider);
   }
 
   /**
@@ -520,10 +524,7 @@ export class AuthStorage {
   }
 
   private parseStorageData(content: string | undefined): AuthStorageData {
-    if (!content) {
-      return {};
-    }
-    return JSON.parse(content) as AuthStorageData;
+    return content ? (JSON.parse(content) as AuthStorageData) : {};
   }
 
   /**
@@ -537,6 +538,7 @@ export class AuthStorage {
         return { result: undefined };
       });
       this.data = this.parseStorageData(content);
+      syncAuthStorageDefaultProfiles(this, this.data);
       this.loadError = null;
     } catch (error) {
       this.loadError = error as Error;
@@ -571,6 +573,7 @@ export class AuthStorage {
       });
       this.loadError = null;
       this.data = persistedData;
+      syncAuthStorageDefaultProfiles(this, this.data);
     } catch (error) {
       const persistenceError =
         error instanceof AuthStoragePersistenceError
@@ -655,7 +658,6 @@ export class AuthStorage {
     if (envKeys?.[0]) {
       return { configured: false, source: "environment", label: envKeys[0] };
     }
-
     if (this.fallbackResolver?.(provider)) {
       return { configured: false, source: "fallback", label: "custom provider config" };
     }
@@ -704,6 +706,7 @@ export class AuthStorage {
       await this.storage.withLockAsync(async (current) => {
         const currentData = this.parseStorageData(current);
         this.data = currentData;
+        syncAuthStorageDefaultProfiles(this, this.data);
         this.loadError = null;
 
         const cred = currentData[providerId];
@@ -741,6 +744,7 @@ export class AuthStorage {
           [providerId]: refreshedCredential,
         };
         this.data = merged;
+        syncAuthStorageDefaultProfiles(this, this.data);
         this.loadError = null;
         return { result: refreshed, next: JSON.stringify(merged, null, 2) };
       });
