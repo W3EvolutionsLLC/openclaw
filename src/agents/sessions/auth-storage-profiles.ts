@@ -5,15 +5,18 @@ import type {
   TokenCredential,
 } from "../auth-profiles/types.js";
 import { resolveProviderIdForAuth } from "../provider-auth-aliases.js";
-import type { AuthCredential } from "./auth-storage.js";
 import { resolveConfigValue } from "./resolve-config-value.js";
 
 type MaterializedProfile =
   | (ApiKeyCredential & { key: string })
   | (TokenCredential & { token: string });
+type StorageCredential =
+  | { type: "api_key"; key: string }
+  | { type: "token"; token: string; expires?: number }
+  | { type: "oauth"; access: string; refresh: string; expires: number };
 type ProfileData = Record<string, MaterializedProfile>;
 type AuthStorageAccess = {
-  getCredential: (provider: string) => AuthCredential | undefined;
+  getCredential: (provider: string) => StorageCredential | undefined;
   getRuntimeOverride: (provider: string) => string | undefined;
 };
 
