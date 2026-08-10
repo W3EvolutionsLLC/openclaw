@@ -21,7 +21,11 @@ import {
   type WizardStep,
 } from "../../wizard/session.js";
 import { formatForLog } from "../ws-log.js";
-import { createAdmittedWizardSession, SETUP_ADMISSION_BUSY_MESSAGE } from "./setup-admission.js";
+import {
+  createAdmittedWizardSession,
+  SETUP_ADMISSION_BUSY_MESSAGE,
+  waitForWizardSessionAdmissionRelease,
+} from "./setup-admission.js";
 import type { GatewayRequestContext, GatewayRequestHandlers, RespondFn } from "./types.js";
 import { assertValidParams } from "./validation.js";
 
@@ -157,7 +161,7 @@ export const wizardHandlers: GatewayRequestHandlers = {
     if (result.done) {
       // Let the runner release setup admission before the terminal response,
       // so an immediate replacement wizard is not rejected as still busy.
-      await session.whenSettled();
+      await waitForWizardSessionAdmissionRelease(session);
       context.purgeWizardSession(sessionId);
     }
     respond(true, { sessionId, ...sanitizeWizardResultForClient(result) }, undefined);
@@ -198,7 +202,7 @@ export const wizardHandlers: GatewayRequestHandlers = {
     const result = await session.next();
     if (result.done) {
       // Keep terminal response ordering identical to wizard.start.
-      await session.whenSettled();
+      await waitForWizardSessionAdmissionRelease(session);
       context.purgeWizardSession(sessionId);
     }
     respond(true, sanitizeWizardResultForClient(result), undefined);

@@ -6,6 +6,7 @@ export const SETUP_ADMISSION_BUSY_MESSAGE =
   "OpenClaw setup is already in progress; try again when it finishes.";
 
 let wizardSessionInProgress = false;
+const wizardSessionAdmissionRelease = new WeakMap<object, Promise<void>>();
 
 export class SetupAdmissionBusyError extends Error {}
 
@@ -39,16 +40,22 @@ export async function createAdmittedWizardSession<T extends { whenSettled(): Pro
     wizardSessionInProgress = false;
   };
   try {
+    let setupOwnerTask: Promise<void> | undefined;
     const session = lockSetupTarget
       ? await new Promise<T>((resolve, reject) => {
-          void runExclusiveSystemAgentSetupActivation(async () => {
+          setupOwnerTask = runExclusiveSystemAgentSetupActivation(async () => {
             const createdSession = createSession();
             resolve(createdSession);
             await createdSession.whenSettled();
-          }).catch(reject);
+          });
+          void setupOwnerTask.catch(reject);
         })
       : createSession();
-    void session.whenSettled().then(releaseSession, releaseSession);
+    const releaseTask = (setupOwnerTask ?? session.whenSettled().then(() => undefined)).then(
+      releaseSession,
+      releaseSession,
+    );
+    wizardSessionAdmissionRelease.set(session, releaseTask);
     return session;
   } catch (error) {
     releaseSession();
@@ -57,4 +64,11 @@ export async function createAdmittedWizardSession<T extends { whenSettled(): Pro
     }
     throw error;
   }
+}
+
+/** Wait until a settled session has also released its in-memory and filesystem admission. */
+export async function waitForWizardSessionAdmissionRelease<
+  T extends { whenSettled(): Promise<unknown> },
+>(session: T): Promise<void> {
+  await (wizardSessionAdmissionRelease.get(session) ?? session.whenSettled());
 }
