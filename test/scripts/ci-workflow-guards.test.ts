@@ -3416,11 +3416,6 @@ NODE
     expect(configureStep.env.CACHE_GENERATION).toContain("src/state/*.sql");
     expect(configureStep.run).toContain("OPENCLAW_VITEST_FS_MODULE_CACHE_PATH=$cache_root");
     expect(configureStep.run).toContain(".openclaw-transform-generation");
-    expect(configureStep.run).toContain("git rev-parse 'HEAD^{tree}'");
-    expect(configureStep.run).toContain(
-      'effective_generation="${CACHE_GENERATION}:${source_tree}"',
-    );
-    expect(configureStep.run).toContain('cache_generation" != "$effective_generation');
     expect(configureStep.run).not.toContain("protected Vitest transform seed");
     expect(configureStep.env.CACHE_WRITER).toBe(
       "${{ inputs.save-vitest-fs-cache == 'true' && '1' || '0' }}",

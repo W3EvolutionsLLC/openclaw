@@ -177,21 +177,19 @@ runs:
         set -euo pipefail
         cache_root=/var/tmp/openclaw-vitest-fs-cache
         generation_file="$cache_root/.openclaw-transform-generation"
-        source_tree="$(git rev-parse 'HEAD^{tree}')"
-        effective_generation="${CACHE_GENERATION}:${source_tree}"
         mkdir -p "$cache_root"
         cache_generation=""
         if [[ -f "$generation_file" ]]; then
           cache_generation="$(<"$generation_file")"
         fi
         cache_entry="$(find "$cache_root" -mindepth 1 -maxdepth 1 -print -quit)"
-        # Every restore is runner-local. Never mix transformed source from a
-        # different tree, even when an older archive matched the broad prefix.
-        if [[ -n "$cache_entry" ]] && [[ "$cache_generation" != "$effective_generation" ]]; then
+        # Every restore is runner-local. Never mix incompatible transform
+        # inputs even when an older archive was selected through a prefix.
+        if [[ -n "$cache_entry" ]] && [[ "$cache_generation" != "$CACHE_GENERATION" ]]; then
           echo "Vitest transform inputs changed; clearing incompatible cache generation"
           find "$cache_root" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
         fi
-        printf '%s\n' "$effective_generation" > "$generation_file"
+        printf '%s\n' "$CACHE_GENERATION" > "$generation_file"
         # The shard runner treats this as a persistent root and assigns one
         # isolated subdirectory per concurrent Vitest worker.
         echo "OPENCLAW_VITEST_FS_MODULE_CACHE_PATH=$cache_root" >> "$GITHUB_ENV"
