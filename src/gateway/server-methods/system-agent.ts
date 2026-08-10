@@ -44,7 +44,6 @@ import {
   readTranscriptTail,
 } from "../../system-agent/transcript-store.js";
 import { resolveUserPath } from "../../utils.js";
-import { WizardSession } from "../../wizard/session.js";
 import {
   buildRequestedApprovalEvent,
   handlePendingApprovalRequest,
@@ -329,35 +328,31 @@ export const systemAgentHandlers: GatewayRequestHandlers = {
     }
     const sessionId = params.sessionId;
     const session = await createAdmittedWizardSession(
-      () =>
-        new WizardSession(
-          async (prompter, signal, runnerSession) => {
-            const result = await runSystemAgentGatewayTask(async () => {
-              const { activateSetupInference } =
-                await import("../../system-agent/setup-inference.js");
-              return await activateSetupInference({
-                kind: "provider-auth",
-                authChoice: params.authChoice,
-                ...(params.workspace !== undefined ? { workspace: params.workspace } : {}),
-                surface: "gateway",
-                runtime: {
-                  ...defaultRuntime,
-                  exit: (code: number | undefined): never => {
-                    throw new Error(`setup step exited with code ${String(code)}`);
-                  },
-                },
-                prompter,
-                signal,
-                isCancelled: () => signal.aborted,
-                onCommitStarted: () => runnerSession.lockCancellation(),
-              });
-            });
-            if (!result.ok) {
-              throw new Error(result.error);
-            }
-          },
-          { timeoutMs: PROVIDER_AUTH_SESSION_TIMEOUT_MS },
-        ),
+      async (prompter, signal, runnerSession) => {
+        const result = await runSystemAgentGatewayTask(async () => {
+          const { activateSetupInference } = await import("../../system-agent/setup-inference.js");
+          return await activateSetupInference({
+            kind: "provider-auth",
+            authChoice: params.authChoice,
+            ...(params.workspace !== undefined ? { workspace: params.workspace } : {}),
+            surface: "gateway",
+            runtime: {
+              ...defaultRuntime,
+              exit: (code: number | undefined): never => {
+                throw new Error(`setup step exited with code ${String(code)}`);
+              },
+            },
+            prompter,
+            signal,
+            isCancelled: () => signal.aborted,
+            onCommitStarted: () => runnerSession.lockCancellation(),
+          });
+        });
+        if (!result.ok) {
+          throw new Error(result.error);
+        }
+      },
+      { timeoutMs: PROVIDER_AUTH_SESSION_TIMEOUT_MS },
     );
     if (!session) {
       respondRetryableSetupUnavailable(respond, SETUP_ADMISSION_BUSY_MESSAGE);
@@ -381,63 +376,58 @@ export const systemAgentHandlers: GatewayRequestHandlers = {
     }
     const sessionId = params.sessionId;
     const session = await createAdmittedWizardSession(
-      () =>
-        new WizardSession(
-          async (prompter, signal, runnerSession) => {
-            await runSystemAgentGatewayTask(async () => {
-              const [{ applyAuthChoiceLoadedPluginProvider }, setupShared] = await Promise.all([
-                import("../../plugins/provider-auth-choice.js"),
-                import("../../wizard/setup.shared.js"),
-              ]);
-              const snapshot = await setupShared.readSetupConfigFileSnapshot();
-              if (!snapshot.valid) {
-                throw new Error(
-                  "Config is invalid. Run `openclaw doctor` before preparing a model.",
-                );
-              }
-              // Match the classic wizard: mutate the authored shape, not runtimeConfig,
-              // so setup never writes resolved runtime defaults into openclaw.json.
-              const baseConfig = snapshot.exists ? snapshot.sourceConfig : {};
-              const workspaceDir = params.workspace?.trim()
-                ? resolveUserPath(params.workspace.trim())
-                : undefined;
-              const applied = await applyAuthChoiceLoadedPluginProvider({
-                authChoice: params.authChoice,
-                config: baseConfig,
-                prompter,
-                runtime: {
-                  ...defaultRuntime,
-                  exit: (code: number | undefined): never => {
-                    throw new Error(`setup step exited with code ${String(code)}`);
-                  },
-                },
-                setDefaultModel: false,
-                preserveExistingDefaultModel: true,
-                ...(workspaceDir ? { workspaceDir } : {}),
-                signal,
-                isRemote: true,
-                beforePersistentEffect: () => {
-                  signal.throwIfAborted();
-                  runnerSession.lockCancellation();
-                },
-              });
-              if (!applied || applied.retrySelection) {
-                throw new Error(`Provider prepare method is unavailable: ${params.authChoice}`);
-              }
+      async (prompter, signal, runnerSession) => {
+        await runSystemAgentGatewayTask(async () => {
+          const [{ applyAuthChoiceLoadedPluginProvider }, setupShared] = await Promise.all([
+            import("../../plugins/provider-auth-choice.js"),
+            import("../../wizard/setup.shared.js"),
+          ]);
+          const snapshot = await setupShared.readSetupConfigFileSnapshot();
+          if (!snapshot.valid) {
+            throw new Error("Config is invalid. Run `openclaw doctor` before preparing a model.");
+          }
+          // Match the classic wizard: mutate the authored shape, not runtimeConfig,
+          // so setup never writes resolved runtime defaults into openclaw.json.
+          const baseConfig = snapshot.exists ? snapshot.sourceConfig : {};
+          const workspaceDir = params.workspace?.trim()
+            ? resolveUserPath(params.workspace.trim())
+            : undefined;
+          const applied = await applyAuthChoiceLoadedPluginProvider({
+            authChoice: params.authChoice,
+            config: baseConfig,
+            prompter,
+            runtime: {
+              ...defaultRuntime,
+              exit: (code: number | undefined): never => {
+                throw new Error(`setup step exited with code ${String(code)}`);
+              },
+            },
+            setDefaultModel: false,
+            preserveExistingDefaultModel: true,
+            ...(workspaceDir ? { workspaceDir } : {}),
+            signal,
+            isRemote: true,
+            beforePersistentEffect: () => {
               signal.throwIfAborted();
               runnerSession.lockCancellation();
-              await setupShared.writeWizardConfigFile(applied.config, {
-                allowConfigSizeDrop: false,
-                baseSnapshot: snapshot,
-                ...(snapshot.hash ? { baseHash: snapshot.hash } : {}),
-              });
-              if (applied.agentModelOverride) {
-                runnerSession.setPreparedModelRef(applied.agentModelOverride);
-              }
-            });
-          },
-          { timeoutMs: PROVIDER_PREPARE_SESSION_TIMEOUT_MS },
-        ),
+            },
+          });
+          if (!applied || applied.retrySelection) {
+            throw new Error(`Provider prepare method is unavailable: ${params.authChoice}`);
+          }
+          signal.throwIfAborted();
+          runnerSession.lockCancellation();
+          await setupShared.writeWizardConfigFile(applied.config, {
+            allowConfigSizeDrop: false,
+            baseSnapshot: snapshot,
+            ...(snapshot.hash ? { baseHash: snapshot.hash } : {}),
+          });
+          if (applied.agentModelOverride) {
+            runnerSession.setPreparedModelRef(applied.agentModelOverride);
+          }
+        });
+      },
+      { timeoutMs: PROVIDER_PREPARE_SESSION_TIMEOUT_MS },
     );
     if (!session) {
       respondRetryableSetupUnavailable(respond, SETUP_ADMISSION_BUSY_MESSAGE);

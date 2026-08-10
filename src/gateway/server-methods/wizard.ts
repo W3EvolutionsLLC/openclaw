@@ -17,7 +17,7 @@ import { createNonExitingRuntime, ExitError, type RuntimeEnv } from "../../runti
 import type { WizardPrompter } from "../../wizard/prompts.js";
 import {
   sanitizeWizardStepForClient,
-  WizardSession,
+  type WizardSession,
   type WizardStep,
 } from "../../wizard/session.js";
 import { formatForLog } from "../ws-log.js";
@@ -80,7 +80,7 @@ function retainGatewayWorkUntilSettled(session: WizardSession): void {
   // active between steps or a config reload can erase the process-local session.
   const release = retainGatewayRootWorkAdmissionContinuation();
   if (release) {
-    void session.whenSettled().then(release);
+    void session.whenSettled().then(release, release);
   }
 }
 
@@ -112,9 +112,9 @@ export const wizardHandlers: GatewayRequestHandlers = {
     }
     const sessionId = randomUUID();
     const flow = params.flow ?? "setup";
-    const createSession = () =>
+    const runner: Parameters<typeof createAdmittedWizardSession>[0] =
       flow === "channels"
-        ? new WizardSession((prompter, _signal, wizardSession) =>
+        ? (prompter, _signal, wizardSession) =>
             runHostedWizard((runtime) =>
               context.channelWizardRunner(
                 {
@@ -127,9 +127,8 @@ export const wizardHandlers: GatewayRequestHandlers = {
                 runtime,
                 prompter,
               ),
-            ),
-          )
-        : new WizardSession((prompter) =>
+            )
+        : (prompter) =>
             runHostedWizard((runtime) =>
               context.wizardRunner(
                 {
@@ -140,9 +139,10 @@ export const wizardHandlers: GatewayRequestHandlers = {
                 runtime,
                 prompter,
               ),
-            ),
-          );
-    const session = await createAdmittedWizardSession(createSession, flow === "setup");
+            );
+    const session = await createAdmittedWizardSession(runner, {
+      lockSetupTarget: flow === "setup",
+    });
     if (!session) {
       respond(
         false,
@@ -157,8 +157,7 @@ export const wizardHandlers: GatewayRequestHandlers = {
     if (result.done) {
       // Let the runner release setup admission before the terminal response,
       // so an immediate replacement wizard is not rejected as still busy.
-      await session.whenSettled();
-      context.purgeWizardSession(sessionId);
+      await session.whenSettled().finally(() => context.purgeWizardSession(sessionId));
     }
     respond(true, { sessionId, ...sanitizeWizardResultForClient(result) }, undefined);
   },
@@ -198,8 +197,7 @@ export const wizardHandlers: GatewayRequestHandlers = {
     const result = await session.next();
     if (result.done) {
       // Keep terminal response ordering identical to wizard.start.
-      await session.whenSettled();
-      context.purgeWizardSession(sessionId);
+      await session.whenSettled().finally(() => context.purgeWizardSession(sessionId));
     }
     respond(true, sanitizeWizardResultForClient(result), undefined);
   },
@@ -215,7 +213,8 @@ export const wizardHandlers: GatewayRequestHandlers = {
     const cancelled = session.cancel();
     const status = readWizardStatus(session);
     if (cancelled) {
-      void session.whenSettled().then(() => context.purgeWizardSession(sessionId));
+      const purge = () => context.purgeWizardSession(sessionId);
+      void session.whenSettled().then(purge, purge);
     } else {
       context.purgeWizardSession(sessionId);
     }

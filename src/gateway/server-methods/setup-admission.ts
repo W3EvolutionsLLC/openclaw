@@ -1,5 +1,7 @@
 import { resolveStateDir } from "../../config/paths.js";
 import { FILE_LOCK_TIMEOUT_ERROR_CODE } from "../../infra/file-lock.js";
+import { createDeferred } from "../../shared/deferred.js";
+import { WizardSession } from "../../wizard/session.js";
 import { withSetupMigrationTargetLock } from "../../wizard/setup.migration-snapshot.js";
 
 export const SETUP_ADMISSION_BUSY_MESSAGE =
@@ -27,34 +29,58 @@ export async function runExclusiveSystemAgentSetupActivation<T>(
   }
 }
 
-export async function createAdmittedWizardSession<T extends { whenSettled(): Promise<unknown> }>(
-  createSession: () => T,
-  lockSetupTarget = true,
-): Promise<T | undefined> {
+export async function createAdmittedWizardSession(
+  runner: ConstructorParameters<typeof WizardSession>[0],
+  options?: { lockSetupTarget?: boolean; timeoutMs?: number },
+): Promise<WizardSession | undefined> {
   if (wizardSessionInProgress) {
     return undefined;
   }
   wizardSessionInProgress = true;
-  const releaseSession = () => {
+  const runnerSettled = createDeferred();
+  let ownerRelease: Promise<void>;
+  const releaseProcessAdmission = () => {
     wizardSessionInProgress = false;
   };
-  try {
-    const session = lockSetupTarget
-      ? await new Promise<T>((resolve, reject) => {
-          void runExclusiveSystemAgentSetupActivation(async () => {
-            const createdSession = createSession();
-            resolve(createdSession);
-            await createdSession.whenSettled();
-          }).catch(reject);
-        })
-      : createSession();
-    void session.whenSettled().then(releaseSession, releaseSession);
-    return session;
-  } catch (error) {
-    releaseSession();
-    if (error instanceof SetupAdmissionBusyError) {
-      return undefined;
+  const createSession = () =>
+    new WizardSession(runner, {
+      ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+      // The lock owner observes raw runner completion; public settlement waits
+      // for this admission's process reservation and target lock to be released.
+      awaitOwnerRelease: async () => {
+        runnerSettled.resolve(undefined);
+        await ownerRelease;
+      },
+    });
+  if (options?.lockSetupTarget !== false) {
+    const sessionStarted = createDeferred<WizardSession>();
+    let sessionCreated = false;
+    const admission = runExclusiveSystemAgentSetupActivation(async () => {
+      const session = createSession();
+      sessionCreated = true;
+      sessionStarted.resolve(session);
+      await runnerSettled.promise;
+    });
+    ownerRelease = admission.finally(releaseProcessAdmission);
+    void ownerRelease.catch((error: unknown) => {
+      if (!sessionCreated) {
+        sessionStarted.reject(error);
+      }
+    });
+    try {
+      return await sessionStarted.promise;
+    } catch (error) {
+      if (error instanceof SetupAdmissionBusyError) {
+        return undefined;
+      }
+      throw error;
     }
+  }
+  ownerRelease = runnerSettled.promise.finally(releaseProcessAdmission);
+  try {
+    return createSession();
+  } catch (error) {
+    releaseProcessAdmission();
     throw error;
   }
 }

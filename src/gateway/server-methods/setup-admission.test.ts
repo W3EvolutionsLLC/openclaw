@@ -1,9 +1,14 @@
+import { __setFsSafeTestHooksForTest } from "@openclaw/fs-safe/test-hooks";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../../test/helpers/promise.js";
 import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
 import { withSetupMigrationTargetLock } from "../../wizard/setup.migration-snapshot.js";
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
+
+afterEach(() => {
+  __setFsSafeTestHooksForTest(undefined);
+});
 
 const mocks = vi.hoisted(() => ({ stateDir: "" }));
 
@@ -67,35 +72,70 @@ describe("setup admission", () => {
     ).rejects.toBe(taskError);
   });
 
-  it("holds an admitted session lease until its runner settles", async () => {
-    const settled = createDeferred();
-    await createAdmittedWizardSession(() => ({
-      whenSettled: () => settled.promise,
-    }));
-
-    await expect(
-      createAdmittedWizardSession(() => ({ whenSettled: () => Promise.resolve() })),
-    ).resolves.toBeUndefined();
-    settled.resolve();
-    await settled.promise;
-    await vi.waitFor(async () => {
-      const next = await createAdmittedWizardSession(() => ({
-        whenSettled: () => Promise.resolve(),
-      }));
-      expect(next).toBeDefined();
-      await next?.whenSettled();
+  it("settles an admitted session only after releasing setup ownership", async () => {
+    const releaseRunner = createDeferred();
+    const session = await createAdmittedWizardSession(async () => {
+      await releaseRunner.promise;
     });
+    expect(session).toBeDefined();
+
+    await expect(createAdmittedWizardSession(async () => {})).resolves.toBeUndefined();
+
+    releaseRunner.resolve();
+    await session?.whenSettled();
+    await expect(runExclusiveSystemAgentSetupActivation(async () => "ok")).resolves.toBe("ok");
+
+    const replacement = await createAdmittedWizardSession(async () => {});
+    expect(replacement).toBeDefined();
+    await replacement?.whenSettled();
   });
 
-  it("releases an admitted session lease when construction fails", async () => {
-    await expect(
-      createAdmittedWizardSession(() => {
-        throw new Error("construction failed");
-      }),
-    ).rejects.toThrow("construction failed");
-    await expect(
-      createAdmittedWizardSession(() => ({ whenSettled: () => Promise.resolve() })),
-    ).resolves.toBeDefined();
+  it("rejects settlement when the canonical target lock cannot be released", async () => {
+    const releaseRunner = createDeferred();
+    const session = await createAdmittedWizardSession(async () => {
+      await releaseRunner.promise;
+    });
+    if (!session) {
+      throw new Error("expected admitted session");
+    }
+    const releaseError = new Error("target lock release failed");
+    __setFsSafeTestHooksForTest({
+      beforeSidecarLockSnapshotOpen: () => {
+        throw releaseError;
+      },
+    });
+
+    const settlement = expect(session.whenSettled()).rejects.toBe(releaseError);
+    releaseRunner.resolve();
+    await settlement;
+    expect(session.isSettled()).toBe(true);
+    expect(session.getStatus()).toBe("error");
+    expect(session.getError()).toContain(releaseError.message);
+
+    __setFsSafeTestHooksForTest(undefined);
+    const channel = await createAdmittedWizardSession(async () => {}, {
+      lockSetupTarget: false,
+    });
+    expect(channel).toBeDefined();
+    await channel?.whenSettled();
+
+    const structuredTask = vi.fn(async () => "unexpected");
+    await expect(runExclusiveSystemAgentSetupActivation(structuredTask)).rejects.toThrow(
+      "setup is already in progress",
+    );
+    expect(structuredTask).not.toHaveBeenCalled();
+  });
+
+  it("releases an admitted session lease when its runner fails", async () => {
+    const failed = await createAdmittedWizardSession(async () => {
+      throw new Error("runner failed");
+    });
+    await failed?.whenSettled();
+    expect(failed?.getError()).toContain("runner failed");
+
+    const replacement = await createAdmittedWizardSession(async () => {});
+    expect(replacement).toBeDefined();
+    await replacement?.whenSettled();
   });
 
   it("reserves wizard admission while setup waits to acquire its target lock", async () => {
@@ -107,12 +147,12 @@ describe("setup admission", () => {
     });
     await lockAcquired.promise;
 
-    const setupAttempt = createAdmittedWizardSession(() => ({
-      whenSettled: () => Promise.resolve(),
-    }));
-    const channelFactory = vi.fn(() => ({ whenSettled: () => Promise.resolve() }));
-    await expect(createAdmittedWizardSession(channelFactory, false)).resolves.toBeUndefined();
-    expect(channelFactory).not.toHaveBeenCalled();
+    const setupAttempt = createAdmittedWizardSession(async () => {});
+    const channelRunner = vi.fn(async () => {});
+    await expect(
+      createAdmittedWizardSession(channelRunner, { lockSetupTarget: false }),
+    ).resolves.toBeUndefined();
+    expect(channelRunner).not.toHaveBeenCalled();
     await expect(setupAttempt).resolves.toBeUndefined();
 
     releaseLock.resolve();
