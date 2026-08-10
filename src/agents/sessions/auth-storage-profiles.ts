@@ -1,75 +1,104 @@
 /** Internal auth-profile sidecar for catalog request authentication. */
 import type { AuthProfileStore } from "../auth-profiles/types.js";
 import { resolveProviderIdForAuth } from "../provider-auth-aliases.js";
-import type { ApiKeyCredential, AuthStorageData, TokenCredential } from "./auth-storage.js";
+import type { ApiKeyCredential, AuthCredential, TokenCredential } from "./auth-storage.js";
 import { resolveConfigValue } from "./resolve-config-value.js";
 
-type AuthProfileStorageData = Record<
+type ProfileData = Record<
   string,
   { provider: string; credential: ApiKeyCredential | TokenCredential }
 >;
+type AuthStorageAccess = {
+  getRuntimeOverride: (provider: string) => string | undefined;
+};
 
-const profileDataByStorage = new WeakMap<object, AuthProfileStorageData>();
-const runtimeOverridesByStorage = new WeakMap<object, Map<string, string>>();
+const profileDataByStorage = new WeakMap<object, ProfileData>();
+const accessByStorage = new WeakMap<object, AuthStorageAccess>();
 const credentialFreeStorage = new WeakSet<object>();
+const defaultProjectionStorage = new WeakSet<object>();
 
-function projectAuthProfileStorageData(store: AuthProfileStore): AuthProfileStorageData {
-  return Object.fromEntries(
-    Object.entries(store.profiles).flatMap(([profileId, profile]) => {
-      const credential: ApiKeyCredential | TokenCredential | undefined =
-        profile.type === "api_key" && profile.key
-          ? { type: "api_key", key: profile.key }
-          : profile.type === "token" && profile.token
-            ? {
-                type: "token",
-                token: profile.token,
-                ...(profile.expires !== undefined ? { expires: profile.expires } : {}),
-              }
-            : undefined;
-      return credential ? [[profileId, { provider: profile.provider, credential }]] : [];
-    }),
-  );
+export function registerAuthStorageAccess(storage: object, access: AuthStorageAccess): void {
+  accessByStorage.set(storage, access);
 }
 
 export function attachAuthStorageProfiles(storage: object, store: AuthProfileStore): void {
-  profileDataByStorage.set(storage, projectAuthProfileStorageData(store));
+  const profiles: ProfileData = {};
+  for (const [profileId, profile] of Object.entries(store.profiles)) {
+    if (profile.type === "api_key" && profile.key) {
+      profiles[profileId] = {
+        provider: profile.provider,
+        credential: { type: "api_key", key: profile.key },
+      };
+    } else if (profile.type === "token" && profile.token) {
+      profiles[profileId] = {
+        provider: profile.provider,
+        credential: {
+          type: "token",
+          token: profile.token,
+          ...(profile.expires !== undefined ? { expires: profile.expires } : {}),
+        },
+      };
+    }
+  }
+  profileDataByStorage.set(storage, profiles);
 }
 
 export function copyAuthStorageProfiles(source: object, target: object): void {
   profileDataByStorage.set(target, structuredClone(profileDataByStorage.get(source) ?? {}));
 }
 
-export function syncAuthStorageDefaultProfiles(storage: object, data: AuthStorageData): void {
+export function markAuthStorageDefaultProjection(storage: object): void {
+  defaultProjectionStorage.add(storage);
+}
+
+export function updateAuthStorageDefaultProfile(
+  storage: object,
+  provider: string,
+  credential: AuthCredential | undefined,
+): void {
+  const profiles = profileDataByStorage.get(storage) ?? {};
+  const profileId = `${provider}:default`;
+  if (credential?.type === "api_key" || credential?.type === "token") {
+    profiles[profileId] = { provider, credential };
+  } else {
+    delete profiles[profileId];
+  }
+  profileDataByStorage.set(storage, profiles);
+}
+
+export function syncAuthStorageReloadedProfiles(
+  storage: object,
+  data: Record<string, AuthCredential>,
+): void {
+  if (!defaultProjectionStorage.has(storage)) {
+    return;
+  }
   const profiles = profileDataByStorage.get(storage) ?? {};
   for (const [profileId, profile] of Object.entries(profiles)) {
     if (profileId === `${profile.provider}:default`) {
       delete profiles[profileId];
     }
   }
-  for (const [provider, credential] of Object.entries(data)) {
-    if (credential.type === "api_key" || credential.type === "token") {
-      profiles[`${provider}:default`] = { provider, credential };
-    }
-  }
   profileDataByStorage.set(storage, profiles);
+  for (const [provider, credential] of Object.entries(data)) {
+    updateAuthStorageDefaultProfile(storage, provider, credential);
+  }
 }
 
-export function setAuthStorageRuntimeOverride(
+function resolveProfile(
   storage: object,
   provider: string,
-  apiKey?: string,
-): void {
-  const overrides = runtimeOverridesByStorage.get(storage) ?? new Map<string, string>();
-  if (apiKey === undefined) {
-    overrides.delete(provider);
-  } else {
-    overrides.set(provider, apiKey);
+  profileId: string,
+): ProfileData[string] | undefined {
+  if (credentialFreeStorage.has(storage)) {
+    return undefined;
   }
-  runtimeOverridesByStorage.set(storage, overrides);
-}
-
-function getAuthStorageRuntimeOverride(storage: object, provider: string): string | undefined {
-  return runtimeOverridesByStorage.get(storage)?.get(provider);
+  const profile = profileDataByStorage.get(storage)?.[profileId];
+  return profile &&
+    resolveProviderIdForAuth(profile.provider) === resolveProviderIdForAuth(provider) &&
+    (profile.credential.type === "api_key" || profile.credential.type === "token")
+    ? profile
+    : undefined;
 }
 
 export function hasAuthStorageProfile(
@@ -77,12 +106,10 @@ export function hasAuthStorageProfile(
   provider: string,
   profileId: string,
 ): boolean {
-  if (getAuthStorageRuntimeOverride(storage, provider)) {
-    return true;
-  }
-  const profile = profileDataByStorage.get(storage)?.[profileId];
   return Boolean(
-    profile && resolveProviderIdForAuth(profile.provider) === resolveProviderIdForAuth(provider),
+    !credentialFreeStorage.has(storage) &&
+    (accessByStorage.get(storage)?.getRuntimeOverride(provider) ||
+      resolveProfile(storage, provider, profileId)),
   );
 }
 
@@ -91,21 +118,18 @@ export function resolveAuthStorageProfileApiKey(
   provider: string,
   profileId: string,
 ): string | undefined {
-  const runtimeOverride = getAuthStorageRuntimeOverride(storage, provider);
+  if (credentialFreeStorage.has(storage)) {
+    return undefined;
+  }
+  const runtimeOverride = accessByStorage.get(storage)?.getRuntimeOverride(provider);
   if (runtimeOverride) {
     return runtimeOverride;
   }
-  const profile = profileDataByStorage.get(storage)?.[profileId];
-  if (
-    !profile ||
-    resolveProviderIdForAuth(profile.provider) !== resolveProviderIdForAuth(provider)
-  ) {
-    return undefined;
-  }
-  const credential = profile.credential;
-  return credential.type === "api_key"
+  const credential = resolveProfile(storage, provider, profileId)?.credential;
+  return credential?.type === "api_key"
     ? resolveConfigValue(credential.key)
-    : credential.expires === undefined || Date.now() < credential.expires
+    : credential?.type === "token" &&
+        (credential.expires === undefined || Date.now() < credential.expires)
       ? resolveConfigValue(credential.token)
       : undefined;
 }
@@ -113,7 +137,6 @@ export function resolveAuthStorageProfileApiKey(
 export function markAuthStorageCredentialFree<T extends object>(storage: T): T {
   credentialFreeStorage.add(storage);
   profileDataByStorage.set(storage, {});
-  runtimeOverridesByStorage.delete(storage);
   return storage;
 }
 

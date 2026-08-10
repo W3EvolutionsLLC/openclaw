@@ -48,8 +48,10 @@ import {
 import {
   attachAuthStorageProfiles,
   collectStateOnlyAuthProfileIds,
-  setAuthStorageRuntimeOverride,
-  syncAuthStorageDefaultProfiles,
+  markAuthStorageDefaultProjection,
+  registerAuthStorageAccess,
+  syncAuthStorageReloadedProfiles,
+  updateAuthStorageDefaultProfile,
 } from "./auth-storage-profiles.js";
 import { resolveConfigValue } from "./resolve-config-value.js";
 
@@ -437,6 +439,9 @@ export class AuthStorage {
   private constructor(storage: AuthStorageBackend, migrationOwnerAgentDir?: string) {
     this.storage = storage;
     this.migrationOwnerAgentDir = migrationOwnerAgentDir ?? storage.migrationOwnerAgentDir;
+    registerAuthStorageAccess(this, {
+      getRuntimeOverride: (provider) => this.runtimeOverrides.get(provider),
+    });
     this.reload();
   }
 
@@ -451,6 +456,7 @@ export class AuthStorage {
       agentDir,
     );
     attachAuthStorageProfiles(storage, preparedStore);
+    markAuthStorageDefaultProjection(storage);
     return storage;
   }
 
@@ -488,7 +494,6 @@ export class AuthStorage {
    */
   setRuntimeApiKey(provider: string, apiKey: string): void {
     this.runtimeOverrides.set(provider, apiKey);
-    setAuthStorageRuntimeOverride(this, provider, apiKey);
   }
 
   /**
@@ -496,7 +501,6 @@ export class AuthStorage {
    */
   removeRuntimeApiKey(provider: string): void {
     this.runtimeOverrides.delete(provider);
-    setAuthStorageRuntimeOverride(this, provider);
   }
 
   /**
@@ -538,7 +542,7 @@ export class AuthStorage {
         return { result: undefined };
       });
       this.data = this.parseStorageData(content);
-      syncAuthStorageDefaultProfiles(this, this.data);
+      syncAuthStorageReloadedProfiles(this, this.data);
       this.loadError = null;
     } catch (error) {
       this.loadError = error as Error;
@@ -573,7 +577,7 @@ export class AuthStorage {
       });
       this.loadError = null;
       this.data = persistedData;
-      syncAuthStorageDefaultProfiles(this, this.data);
+      updateAuthStorageDefaultProfile(this, provider, credential);
     } catch (error) {
       const persistenceError =
         error instanceof AuthStoragePersistenceError
@@ -706,7 +710,7 @@ export class AuthStorage {
       await this.storage.withLockAsync(async (current) => {
         const currentData = this.parseStorageData(current);
         this.data = currentData;
-        syncAuthStorageDefaultProfiles(this, this.data);
+        syncAuthStorageReloadedProfiles(this, this.data);
         this.loadError = null;
 
         const cred = currentData[providerId];
@@ -744,7 +748,7 @@ export class AuthStorage {
           [providerId]: refreshedCredential,
         };
         this.data = merged;
-        syncAuthStorageDefaultProfiles(this, this.data);
+        syncAuthStorageReloadedProfiles(this, this.data);
         this.loadError = null;
         return { result: refreshed, next: JSON.stringify(merged, null, 2) };
       });
