@@ -1,13 +1,15 @@
 /** Internal auth-profile sidecar for catalog request authentication. */
 import type { AuthProfileStore } from "../auth-profiles/types.js";
 import { resolveProviderIdForAuth } from "../provider-auth-aliases.js";
-import type { ApiKeyCredential, AuthCredential, TokenCredential } from "./auth-storage.js";
 import { resolveConfigValue } from "./resolve-config-value.js";
 
-type ProfileData = Record<
-  string,
-  { provider: string; credential: ApiKeyCredential | TokenCredential }
->;
+type ProfileCredential =
+  | { type: "api_key"; key: string }
+  | { type: "token"; token: string; expires?: number };
+type CredentialLike =
+  | ProfileCredential
+  | { type: "oauth"; access: string; refresh: string; expires: number };
+type ProfileData = Record<string, { provider: string; credential: ProfileCredential }>;
 type AuthStorageAccess = {
   getRuntimeOverride: (provider: string) => string | undefined;
 };
@@ -54,7 +56,7 @@ export function markAuthStorageDefaultProjection(storage: object): void {
 export function updateAuthStorageDefaultProfile(
   storage: object,
   provider: string,
-  credential: AuthCredential | undefined,
+  credential: CredentialLike | undefined,
 ): void {
   const profiles = profileDataByStorage.get(storage) ?? {};
   const profileId = `${provider}:default`;
@@ -68,7 +70,7 @@ export function updateAuthStorageDefaultProfile(
 
 export function syncAuthStorageReloadedProfiles(
   storage: object,
-  data: Record<string, AuthCredential>,
+  data: Record<string, CredentialLike>,
 ): void {
   if (!defaultProjectionStorage.has(storage)) {
     return;
