@@ -846,6 +846,32 @@ describe("SystemAgentChatEngine", () => {
     expect(wizardRuns).toEqual(["telegram", "token:123:abc", "mode:open"]);
   });
 
+  it("leaves channel-owned selections user-driven when an option matches the target", async () => {
+    useTempStateDir();
+    let selected: unknown;
+    const engine = new SystemAgentChatEngine({
+      runAgentTurn: async () => null,
+      planWithAssistant: async () => null,
+      deps: { loadOverview: fakeOverviewLoader() },
+      runChannelSetupWizard: async (_channel, prompter) => {
+        selected = await prompter.select({
+          message: "Choose Feishu or Lark",
+          options: [
+            { value: "feishu", label: "Feishu" },
+            { value: "lark", label: "Lark" },
+          ],
+        });
+      },
+    });
+
+    const prompt = await engine.handle("connect feishu");
+
+    expect(prompt.text).toContain("Choose Feishu or Lark");
+    expect(selected).toBeUndefined();
+    await engine.handle("Lark");
+    expect(selected).toBe("lark");
+  });
+
   it("keeps an unknown channel request pending on the shared picker", async () => {
     useTempStateDir();
     const baseConfig = {} as OpenClawConfig;
@@ -892,6 +918,52 @@ describe("SystemAgentChatEngine", () => {
     expect(dismissed.text).toContain("Nothing was changed");
     expect(dismissed.text).not.toContain("is configured");
     expect(mocks.writeWizardConfigFile).not.toHaveBeenCalled();
+  });
+
+  it("reports and audits the canonical channel selected by the fallback picker", async () => {
+    useTempStateDir();
+    const baseConfig = {} as OpenClawConfig;
+    const nextConfig = { channels: { telegram: { botToken: "configured" } } } as OpenClawConfig;
+    const appendAuditEntry = vi.fn(async () => "state/openclaw.sqlite");
+    mocks.readSetupConfigFileSnapshot.mockResolvedValue(configSnapshot(baseConfig) as never);
+    mocks.writeWizardConfigFile.mockResolvedValue(nextConfig as never);
+    mocks.setupChannels.mockImplementation(
+      async (
+        _config: OpenClawConfig,
+        _runtime: unknown,
+        prompter: WizardPrompter,
+        options: { onSelection?: (selection: string[]) => void },
+      ) => {
+        const selected = await prompter.select({
+          message: "Select a channel",
+          options: [
+            { value: "telegram", label: "Telegram" },
+            { value: "__done__", label: "Done" },
+          ],
+        });
+        options.onSelection?.([selected]);
+        return nextConfig;
+      },
+    );
+    const engine = new SystemAgentChatEngine({
+      runAgentTurn: async () => null,
+      planWithAssistant: async () => null,
+      deps: { loadOverview: fakeOverviewLoader() },
+      appendAuditEntry,
+    });
+
+    const picker = await engine.handle("connect unknown-chat");
+    expect(picker.text).toContain("Select a channel");
+
+    const done = await engine.handle("Telegram");
+
+    expect(done.text).toContain("Done — telegram is configured.");
+    expect(done.text).not.toContain("unknown-chat is configured");
+    expect(appendAuditEntry).toHaveBeenCalledWith({
+      operation: "channels.setup",
+      summary: "Configured channel telegram via chat setup",
+      details: { channel: "telegram" },
+    });
   });
 
   it("hosts the real skills setup flow and guards installs plus the final config write", async () => {

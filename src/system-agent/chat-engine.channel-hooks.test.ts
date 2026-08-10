@@ -52,6 +52,7 @@ const mocks = vi.hoisted(() => {
     })),
     runCollectedChannelOnboardingPostWriteHooks: vi.fn(async () => {}),
     setupChannels: vi.fn(async (_cfg, _runtime, _prompter, options) => {
+      options?.onSelection?.(["matrix"]);
       options?.onPostWriteHook?.(hook);
       return { channels: { matrix: { enabled: true } } };
     }),

@@ -1,5 +1,4 @@
 // Resolves or installs channel plugins needed by setup/onboarding flows.
-import { normalizeOptionalLowercaseString } from "@openclaw/normalization-core/string-coerce";
 import { resolveAgentWorkspaceDir, resolveDefaultAgentId } from "../../agents/agent-scope.js";
 import {
   listRawChannelPluginCatalogEntries,
@@ -12,6 +11,7 @@ import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { RuntimeEnv } from "../../runtime.js";
 import { createClackPrompter } from "../../wizard/clack-prompter.js";
 import type { WizardPrompter } from "../../wizard/prompts.js";
+import { resolveChannelEntry } from "./channel-entry-resolution.js";
 import {
   ensureChannelSetupPluginInstalled,
   loadChannelSetupPluginRegistrySnapshotForChannel,
@@ -55,24 +55,13 @@ function resolveResolvedChannelId(params: {
 }
 
 function resolveCatalogChannelEntry(raw: string, cfg: OpenClawConfig | null) {
-  const trimmed = normalizeOptionalLowercaseString(raw);
-  if (!trimmed) {
-    return undefined;
-  }
   const entries = cfg
     ? listTrustedChannelPluginCatalogEntries({
         cfg,
         workspaceDir: resolveWorkspaceDir(cfg),
       })
     : listRawChannelPluginCatalogEntries({ excludeWorkspace: true });
-  return entries.find((entry) => {
-    if (normalizeOptionalLowercaseString(entry.id) === trimmed) {
-      return true;
-    }
-    return (entry.meta.aliases ?? []).some(
-      (alias) => normalizeOptionalLowercaseString(alias) === trimmed,
-    );
-  });
+  return resolveChannelEntry(raw, entries);
 }
 
 function findScopedChannelPlugin(

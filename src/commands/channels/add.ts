@@ -1,5 +1,4 @@
 // Implements guided and non-interactive `openclaw channels add` account setup.
-import { normalizeOptionalLowercaseString } from "@openclaw/normalization-core/string-coerce";
 import { resolveAgentWorkspaceDir, resolveDefaultAgentId } from "../../agents/agent-scope.js";
 import {
   applyPreparedChannelAccountConfiguration,
@@ -24,6 +23,7 @@ import { defaultRuntime, type RuntimeEnv } from "../../runtime.js";
 import { createLazyImportLoader } from "../../shared/lazy-promise.js";
 import { createClackPrompter } from "../../wizard/clack-prompter.js";
 import { WizardCancelledError } from "../../wizard/prompts.js";
+import { resolveChannelEntry } from "../channel-setup/channel-entry-resolution.js";
 import { channelLabel } from "./runtime-label.js";
 import { requireValidConfigFileSnapshot, shouldUseWizard } from "./shared.js";
 
@@ -53,10 +53,6 @@ export type ChannelsAddOptions = {
 const CHANNEL_ADD_CONTROL_OPTION_KEYS = new Set(["channel", "account"]);
 
 async function resolveCatalogChannelEntry(raw: string, cfg: OpenClawConfig | null) {
-  const trimmed = normalizeOptionalLowercaseString(raw);
-  if (!trimmed) {
-    return undefined;
-  }
   const entries = cfg
     ? await import("../channel-setup/trusted-catalog.js").then(
         ({ listTrustedChannelPluginCatalogEntries }) =>
@@ -69,14 +65,7 @@ async function resolveCatalogChannelEntry(raw: string, cfg: OpenClawConfig | nul
         ({ listRawChannelPluginCatalogEntries }) =>
           listRawChannelPluginCatalogEntries({ excludeWorkspace: true }),
       );
-  return entries.find((entry) => {
-    if (normalizeOptionalLowercaseString(entry.id) === trimmed) {
-      return true;
-    }
-    return (entry.meta.aliases ?? []).some(
-      (alias) => normalizeOptionalLowercaseString(alias) === trimmed,
-    );
-  });
+  return resolveChannelEntry(raw, entries);
 }
 
 function buildChannelSetupInput(opts: ChannelsAddOptions): ChannelSetupInput {

@@ -1,7 +1,6 @@
 // Guided channel-setup wizard flow shared by `openclaw channels add` (clack
 // prompter) and the gateway `wizard.start {flow:"channels"}` RPC (session
 // prompter driving the Control UI / native clients).
-import { normalizeOptionalLowercaseString } from "@openclaw/normalization-core/string-coerce";
 import { resolveAgentWorkspaceDir, resolveDefaultAgentId } from "../../agents/agent-scope.js";
 import { getLoadedChannelPlugin } from "../../channels/plugins/index.js";
 import type { ChannelSetupPlugin } from "../../channels/plugins/setup-wizard-types.js";
@@ -12,6 +11,7 @@ import { DEFAULT_ACCOUNT_ID } from "../../routing/session-key.js";
 import type { RuntimeEnv } from "../../runtime.js";
 import type { WizardPrompter } from "../../wizard/prompts.js";
 import { applyAgentBindings, describeBinding } from "../agents.bindings.js";
+import { resolveChannelEntry } from "../channel-setup/channel-entry-resolution.js";
 import type { ChannelChoice } from "../onboard-types.js";
 import { applyAccountName } from "./add-mutators.js";
 
@@ -26,10 +26,6 @@ export async function resolveInitialWizardChannel(
   raw: string,
   cfg: OpenClawConfig,
 ): Promise<ChannelChoice | undefined> {
-  const normalized = normalizeOptionalLowercaseString(raw);
-  if (!normalized) {
-    return undefined;
-  }
   const [{ listActiveChannelSetupPlugins }, { resolveChannelSetupEntries }] = await Promise.all([
     import("../../channels/plugins/setup-registry.js"),
     import("../channel-setup/discovery.js"),
@@ -39,14 +35,7 @@ export async function resolveInitialWizardChannel(
     installedPlugins: listActiveChannelSetupPlugins(),
     workspaceDir: resolveAgentWorkspaceDir(cfg, resolveDefaultAgentId(cfg)),
   });
-  return (
-    resolved.entries.find((entry) => normalizeOptionalLowercaseString(entry.id) === normalized) ??
-    resolved.entries.find((entry) =>
-      (entry.meta.aliases ?? []).some(
-        (alias) => normalizeOptionalLowercaseString(alias) === normalized,
-      ),
-    )
-  )?.id;
+  return resolveChannelEntry(raw, resolved.entries)?.id;
 }
 
 type ChannelsAddWizardFlowParams = {

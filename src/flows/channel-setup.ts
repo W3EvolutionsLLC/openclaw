@@ -13,6 +13,7 @@ import type {
   SetupChannelsOptions,
 } from "../channels/plugins/setup-wizard-types.js";
 import { formatCliCommand } from "../cli/command-format.js";
+import { resolveChannelEntry } from "../commands/channel-setup/channel-entry-resolution.js";
 import {
   resolveChannelSetupEntries,
   shouldShowChannelInSetup,
@@ -118,7 +119,6 @@ export async function setupChannels(
 ): Promise<OpenClawConfig> {
   let next = cfg;
   const deferStatusUntilSelection = options?.deferStatusUntilSelection === true;
-  const forceAllowFromChannels = new Set(options?.forceAllowFromChannels ?? []);
   const accountOverrides: Partial<Record<ChannelChoice, string>> = {
     ...options?.accountIds,
   };
@@ -245,11 +245,14 @@ export async function setupChannels(
     visibleChannelEntries ??= resolveVisibleChannelEntries().entries;
     return visibleChannelEntries;
   };
-  const targetedChannel =
-    requestedTargetedChannel &&
-    getVisibleChannelEntries().some((entry) => entry.id === requestedTargetedChannel)
-      ? requestedTargetedChannel
-      : undefined;
+  const targetedChannel = requestedTargetedChannel
+    ? resolveChannelEntry(requestedTargetedChannel, getVisibleChannelEntries())?.id
+    : undefined;
+  const forceAllowFromChannels = new Set(
+    (options?.forceAllowFromChannels ?? []).map(
+      (channel) => resolveChannelEntry(channel, getVisibleChannelEntries())?.id ?? channel,
+    ),
+  );
   const pickerInitialSelection =
     requestedTargetedChannel && !targetedChannel ? undefined : options?.initialSelection?.[0];
   const shouldConfigure =
