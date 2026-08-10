@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { closeOpenClawAgentDatabasesForTest } from "../../state/openclaw-agent-db.js";
-import { discoverAuthStorage } from "../agent-model-discovery.js";
 import { saveAuthProfileStore } from "../auth-profiles/store.js";
 import { markAuthStorageCredentialFree } from "./auth-storage-profiles.js";
 import { AuthStorage } from "./auth-storage.js";
@@ -90,7 +89,7 @@ describe("ModelRegistry catalog auth", () => {
       },
       agentDir,
     );
-    const authStorage = discoverAuthStorage(agentDir);
+    const authStorage = AuthStorage.forAgent(agentDir);
     const registry = ModelRegistry.create(authStorage, modelsPath);
 
     await expect(registry.getApiKeyForProvider("custom")).resolves.toBe("catalog-key");

@@ -47,11 +47,8 @@ import {
 } from "./auth-storage-oauth-registry.js";
 import {
   attachAuthStorageProfiles,
-  collectStateOnlyAuthProfileIds,
-  markAuthStorageDefaultProjection,
+  isAuthStorageCredentialFree,
   registerAuthStorageAccess,
-  syncAuthStorageReloadedProfiles,
-  updateAuthStorageDefaultProfile,
 } from "./auth-storage-profiles.js";
 import { resolveConfigValue } from "./resolve-config-value.js";
 
@@ -266,6 +263,15 @@ function applyAuthStorageData(
   return { ...store, profiles };
 }
 
+function collectStateOnlyAuthProfileIds(store: AuthProfileStore): string[] {
+  const referenced = new Set([
+    ...Object.values(store.order ?? {}).flat(),
+    ...Object.values(store.lastGood ?? {}),
+    ...Object.keys(store.usageStats ?? {}),
+  ]);
+  return [...referenced].filter((profileId) => !store.profiles[profileId]);
+}
+
 function loadSqliteAuthStorageStore(
   agentDir: string,
   database?: OpenClawAgentDatabase,
@@ -440,6 +446,7 @@ export class AuthStorage {
     this.storage = storage;
     this.migrationOwnerAgentDir = migrationOwnerAgentDir ?? storage.migrationOwnerAgentDir;
     registerAuthStorageAccess(this, {
+      getCredential: (provider) => this.data[provider],
       getRuntimeOverride: (provider) => this.runtimeOverrides.get(provider),
     });
     this.reload();
@@ -455,8 +462,7 @@ export class AuthStorage {
       new SqliteAuthStorageBackend(agentDir, preparedStore),
       agentDir,
     );
-    attachAuthStorageProfiles(storage, preparedStore);
-    markAuthStorageDefaultProjection(storage);
+    attachAuthStorageProfiles(storage, preparedStore, { liveDefault: true });
     return storage;
   }
 
@@ -528,7 +534,10 @@ export class AuthStorage {
   }
 
   private parseStorageData(content: string | undefined): AuthStorageData {
-    return content ? (JSON.parse(content) as AuthStorageData) : {};
+    if (!content) {
+      return {};
+    }
+    return JSON.parse(content) as AuthStorageData;
   }
 
   /**
@@ -542,7 +551,6 @@ export class AuthStorage {
         return { result: undefined };
       });
       this.data = this.parseStorageData(content);
-      syncAuthStorageReloadedProfiles(this, this.data);
       this.loadError = null;
     } catch (error) {
       this.loadError = error as Error;
@@ -577,7 +585,6 @@ export class AuthStorage {
       });
       this.loadError = null;
       this.data = persistedData;
-      updateAuthStorageDefaultProfile(this, provider, credential);
     } catch (error) {
       const persistenceError =
         error instanceof AuthStoragePersistenceError
@@ -634,6 +641,9 @@ export class AuthStorage {
     if (this.runtimeOverrides.has(provider)) {
       return true;
     }
+    if (isAuthStorageCredentialFree(this)) {
+      return false;
+    }
     if (this.data[provider]) {
       return true;
     }
@@ -650,18 +660,21 @@ export class AuthStorage {
    * Return auth status without exposing credential values or refreshing tokens.
    */
   getAuthStatus(provider: string): AuthStatus {
-    if (this.data[provider]) {
-      return { configured: true, source: "stored" };
-    }
-
     if (this.runtimeOverrides.has(provider)) {
       return { configured: false, source: "runtime", label: "--api-key" };
+    }
+    if (isAuthStorageCredentialFree(this)) {
+      return { configured: false };
+    }
+    if (this.data[provider]) {
+      return { configured: true, source: "stored" };
     }
 
     const envKeys = findEnvKeys(provider);
     if (envKeys?.[0]) {
       return { configured: false, source: "environment", label: envKeys[0] };
     }
+
     if (this.fallbackResolver?.(provider)) {
       return { configured: false, source: "fallback", label: "custom provider config" };
     }
@@ -710,7 +723,6 @@ export class AuthStorage {
       await this.storage.withLockAsync(async (current) => {
         const currentData = this.parseStorageData(current);
         this.data = currentData;
-        syncAuthStorageReloadedProfiles(this, this.data);
         this.loadError = null;
 
         const cred = currentData[providerId];
@@ -748,7 +760,6 @@ export class AuthStorage {
           [providerId]: refreshedCredential,
         };
         this.data = merged;
-        syncAuthStorageReloadedProfiles(this, this.data);
         this.loadError = null;
         return { result: refreshed, next: JSON.stringify(merged, null, 2) };
       });
@@ -781,6 +792,9 @@ export class AuthStorage {
     const runtimeKey = this.runtimeOverrides.get(providerId);
     if (runtimeKey) {
       return runtimeKey;
+    }
+    if (isAuthStorageCredentialFree(this)) {
+      return undefined;
     }
 
     if (this.migrationOwnerAgentDir) {

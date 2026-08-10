@@ -11,13 +11,9 @@ import {
 } from "../plugins/provider-runtime.js";
 import { isRecord } from "../utils.js";
 import {
-  resolveAgentCredentialsForDiscovery,
+  resolveAgentAuthForDiscovery,
   type DiscoverAuthStorageOptions,
 } from "./agent-auth-discovery.js";
-import {
-  ensureAuthProfileStore,
-  ensureAuthProfileStoreWithoutExternalProfiles,
-} from "./auth-profiles/store.js";
 import { resolveModelPluginMetadataSnapshot } from "./model-discovery-context.js";
 import type { PluginModelCatalogMetadataSnapshot } from "./plugin-model-catalog.js";
 import type { PersistedPluginModelCatalog } from "./plugin-model-catalog.js";
@@ -207,21 +203,7 @@ export function discoverAuthStorage(
   if (options?.skipCredentials === true) {
     return markAuthStorageCredentialFree(AuthStorage.inMemory());
   }
-  const credentials = resolveAgentCredentialsForDiscovery(agentDir, options);
-  const store =
-    options?.skipExternalAuthProfiles === true
-      ? ensureAuthProfileStoreWithoutExternalProfiles(agentDir, {
-          allowKeychainPrompt: false,
-          ...(options.inheritedAuthDir ? { inheritedAuthDir: options.inheritedAuthDir } : {}),
-          ...(options.readOnly === true ? { readOnly: true } : {}),
-        })
-      : ensureAuthProfileStore(agentDir, {
-          allowKeychainPrompt: false,
-          ...(options?.config ? { config: options.config } : {}),
-          ...(options?.externalCli ? { externalCli: options.externalCli } : {}),
-          ...(options?.inheritedAuthDir ? { inheritedAuthDir: options.inheritedAuthDir } : {}),
-          ...(options?.readOnly === true ? { readOnly: true } : {}),
-        });
+  const { credentials, store } = resolveAgentAuthForDiscovery(agentDir, options);
   const storage = AuthStorage.inMemory(credentials);
   attachAuthStorageProfiles(storage, store);
   return storage;

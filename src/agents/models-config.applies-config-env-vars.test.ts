@@ -16,6 +16,9 @@ import {
 } from "./models-config.plan.test-support.js";
 import type { ProviderConfig } from "./models-config.providers.secrets.js";
 import { encodePluginModelCatalogRelativePath } from "./plugin-model-catalog.js";
+import { markAuthStorageCredentialFree } from "./sessions/auth-storage-profiles.js";
+import { AuthStorage } from "./sessions/auth-storage.js";
+import { ModelRegistry } from "./sessions/model-registry.js";
 
 const providerRuntimeMocks = vi.hoisted(() => ({
   normalizeProviderConfigWithPlugin: vi.fn<
@@ -511,8 +514,8 @@ describe("models-config", () => {
         cfg: { models: { providers: {} } },
         agentDir: "/tmp/openclaw-models-config-env-vars-test",
         env: {
-          ZAI_API_KEY: "sk-test",
-          CUSTOM_API_KEY: "custom-test-secret",
+          _PLUGIN_CUSTOM_KEY: "plugin-test-secret",
+          _CUSTOM_API_KEY: "custom-test-secret",
         } as NodeJS.ProcessEnv,
         existingRaw: "",
         existingParsed: null,
@@ -522,11 +525,11 @@ describe("models-config", () => {
         resolveImplicitProviders: async () => ({
           zai: createImplicitOpenAiProvider({
             baseUrl: "https://api.z.ai/api/paas/v4",
-            apiKey: "ZAI_API_KEY",
+            apiKey: "_PLUGIN_CUSTOM_KEY",
           }),
           custom: createImplicitOpenAiProvider({
             baseUrl: "https://custom.example/v1",
-            apiKey: "CUSTOM_API_KEY",
+            apiKey: "_CUSTOM_API_KEY",
           }),
         }),
       },
@@ -537,15 +540,54 @@ describe("models-config", () => {
       throw new Error("Expected models.json write plan");
     }
     const root = JSON.parse(plan.contents) as {
-      providers?: Record<string, unknown>;
+      providers?: Record<string, { apiKey?: string }>;
     };
     expect(Object.keys(root.providers ?? {})).toEqual(["custom"]);
+    expect(root.providers?.custom?.apiKey).toBe("_CUSTOM_API_KEY");
     expect(root).not.toHaveProperty("pluginCatalogs");
     const zaiCatalogPath = encodePluginModelCatalogRelativePath("zai");
     const zaiCatalog = JSON.parse(plan.pluginCatalogWrites?.[zaiCatalogPath] ?? "{}") as {
-      providers?: Record<string, unknown>;
+      providers?: Record<string, { apiKey?: string }>;
     };
     expect(Object.keys(zaiCatalog.providers ?? {})).toEqual(["zai"]);
+    expect(zaiCatalog.providers?.zai?.apiKey).toBe("_PLUGIN_CUSTOM_KEY");
+
+    await withEnvAsync({ _CUSTOM_API_KEY: undefined, _PLUGIN_CUSTOM_KEY: undefined }, async () => {
+      const registry = ModelRegistry.create(AuthStorage.inMemory(), "/virtual/models.json", {
+        includePluginCatalogs: true,
+        modelsJsonContents: plan.contents,
+        pluginCatalogs: [
+          {
+            pluginId: "zai",
+            contents: plan.pluginCatalogWrites?.[zaiCatalogPath] ?? "",
+          },
+        ],
+        pluginMetadataSnapshot,
+      });
+      process.env._CUSTOM_API_KEY = "custom-test-secret";
+      process.env._PLUGIN_CUSTOM_KEY = "plugin-test-secret";
+      await expect(registry.getApiKeyForProvider("custom")).resolves.toBe("custom-test-secret");
+      await expect(registry.getApiKeyForProvider("zai")).resolves.toBe("plugin-test-secret");
+      await expect(
+        registry.getApiKeyAndHeaders(registry.find("custom", "gpt-5.5")!),
+      ).resolves.toEqual({ ok: true, apiKey: "custom-test-secret", headers: undefined });
+      await expect(registry.getApiKeyAndHeaders(registry.find("zai", "gpt-5.5")!)).resolves.toEqual(
+        { ok: true, apiKey: "plugin-test-secret", headers: undefined },
+      );
+      const credentialFree = registry.fork(markAuthStorageCredentialFree(AuthStorage.inMemory()));
+      await expect(credentialFree.getApiKeyForProvider("custom")).resolves.toBeUndefined();
+      await expect(credentialFree.getApiKeyForProvider("zai")).resolves.toBeUndefined();
+      await expect(
+        credentialFree.getApiKeyAndHeaders(credentialFree.find("custom", "gpt-5.5")!),
+      ).resolves.toEqual({ ok: true, apiKey: undefined, headers: undefined });
+      await expect(
+        credentialFree.getApiKeyAndHeaders(credentialFree.find("zai", "gpt-5.5")!),
+      ).resolves.toEqual({ ok: true, apiKey: undefined, headers: undefined });
+      delete process.env._CUSTOM_API_KEY;
+      delete process.env._PLUGIN_CUSTOM_KEY;
+      await expect(registry.getApiKeyForProvider("custom")).resolves.toBeUndefined();
+      await expect(registry.getApiKeyForProvider("zai")).resolves.toBeUndefined();
+    });
   });
 
   it("serializes verified profile references instead of root or plugin secrets", async () => {
@@ -559,7 +601,7 @@ describe("models-config", () => {
             "custom:models-json": {
               type: "api_key",
               provider: "custom",
-              key: "custom-profile-secret",
+              key: "ABCDEF123456",
             },
             "zai:default": {
               type: "api_key",
@@ -595,7 +637,7 @@ describe("models-config", () => {
           resolveImplicitProviders: async () => ({
             custom: createImplicitOpenAiProvider({
               baseUrl: "https://custom.example/v1",
-              apiKey: "custom-profile-secret",
+              apiKey: "ABCDEF123456",
             }),
             zai: createImplicitOpenAiProvider({
               baseUrl: "https://api.z.ai/api/paas/v4",
@@ -617,6 +659,31 @@ describe("models-config", () => {
       ) as { providers?: Record<string, { apiKey?: string }> };
       expect(root.providers?.custom?.apiKey).toBe("custom:models-json");
       expect(plugin.providers?.zai?.apiKey).toBe("zai:default");
+    } finally {
+      clearRuntimeAuthProfileStoreSnapshots();
+    }
+  });
+
+  it("rejects uppercase-shaped plaintext without environment or profile provenance", async () => {
+    const agentDir = "/tmp/openclaw-models-config-uppercase-plaintext-test";
+    replaceRuntimeAuthProfileStoreSnapshots([{ agentDir, store: { version: 1, profiles: {} } }]);
+    try {
+      await expect(
+        planOpenClawModelsJsonWithDeps(
+          {
+            cfg: { models: { providers: {} } },
+            agentDir,
+            env: {},
+            existingRaw: "",
+            existingParsed: null,
+          },
+          {
+            resolveImplicitProviders: async () => ({
+              custom: createImplicitOpenAiProvider({ apiKey: "ABCDEF123456" }),
+            }),
+          },
+        ),
+      ).rejects.toThrow("Run openclaw doctor --fix before starting OpenClaw");
     } finally {
       clearRuntimeAuthProfileStoreSnapshots();
     }

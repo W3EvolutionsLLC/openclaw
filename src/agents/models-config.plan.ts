@@ -7,7 +7,6 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.js";
 import type { PreparedProviderStaticCatalog } from "../plugins/provider-discovery.js";
 import { isRecord } from "../utils.js";
-import { mergeAuthProfileStores } from "./auth-profiles/persisted.js";
 import { getRuntimeAuthProfileStoreSnapshot } from "./auth-profiles/runtime-snapshots.js";
 import { loadAuthProfileStoreForSecretsRuntime } from "./auth-profiles/store.js";
 import type { AuthProfileStore } from "./auth-profiles/types.js";
@@ -25,12 +24,13 @@ import {
   resolveImplicitProviders,
   type ProviderConfig,
 } from "./models-config.providers.js";
-import { listAuthProfilesForProvider } from "./models-config.providers.secret-helpers.js";
+import { isProviderApiKeyEnvVarName } from "./models-config.providers.secret-helpers.js";
 import {
   encodePluginModelCatalogRelativePath,
   PLUGIN_MODEL_CATALOG_GENERATED_BY,
   resolvePluginModelCatalogOwnerPluginId,
 } from "./plugin-model-catalog.js";
+import { resolveProviderIdForAuth } from "./provider-auth-aliases.js";
 
 type ModelsConfig = NonNullable<OpenClawConfig["models"]>;
 
@@ -222,27 +222,15 @@ function resolveCatalogProfileId(params: {
   provider: string;
   store: AuthProfileStore;
 }): string | undefined {
-  const profileIds = listAuthProfilesForProvider(params.store, params.provider);
-  const referenced = params.store.profiles[params.apiKey];
-  if (
-    profileIds.includes(params.apiKey) &&
-    (referenced?.type === "api_key" || referenced?.type === "token")
-  ) {
-    return params.apiKey;
-  }
-  return profileIds.find((profileId) => {
-    const credential = params.store.profiles[profileId];
-    return (
-      (credential?.type === "api_key" && credential.key === params.apiKey) ||
-      (credential?.type === "token" && credential.token === params.apiKey)
-    );
-  });
-}
-
-function resolveCatalogAuthStore(agentDir: string, config: OpenClawConfig): AuthProfileStore {
-  const persisted = loadAuthProfileStoreForSecretsRuntime(agentDir, { config });
-  const runtime = getRuntimeAuthProfileStoreSnapshot(agentDir);
-  return runtime ? mergeAuthProfileStores(persisted, runtime) : persisted;
+  const provider = resolveProviderIdForAuth(params.provider);
+  return Object.entries(params.store.profiles).find(
+    ([profileId, credential]) =>
+      resolveProviderIdForAuth(credential.provider) === provider &&
+      ((credential.type === "api_key" &&
+        (profileId === params.apiKey || credential.key === params.apiKey)) ||
+        (credential.type === "token" &&
+          (profileId === params.apiKey || credential.token === params.apiKey))),
+  )?.[0];
 }
 
 function replacePlaintextProviderApiKeysWithProfileIds(params: {
@@ -260,13 +248,17 @@ function replacePlaintextProviderApiKeysWithProfileIds(params: {
       if (
         !apiKey ||
         isNonSecretApiKeyMarker(apiKey) ||
-        Object.hasOwn(params.env, apiKey) ||
         params.secretRefManagedProviders.has(providerId)
       ) {
         return [providerId, provider];
       }
-      store ??= resolveCatalogAuthStore(params.agentDir, params.config);
+      store ??=
+        getRuntimeAuthProfileStoreSnapshot(params.agentDir) ??
+        loadAuthProfileStoreForSecretsRuntime(params.agentDir, { config: params.config });
       const profileId = resolveCatalogProfileId({ apiKey, provider: providerId, store });
+      if (!profileId && isProviderApiKeyEnvVarName(apiKey) && Object.hasOwn(params.env, apiKey)) {
+        return [providerId, provider];
+      }
       if (!profileId) {
         throw new Error(
           `Provider "${providerId}" has a plaintext catalog credential that is not in the credential store. Run openclaw doctor --fix before starting OpenClaw.`,
