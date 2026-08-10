@@ -6249,7 +6249,6 @@ wait_for_run plugin-clawhub-new.yml 123 "${expectedSha}" || status=$?
     const crossOs = readWorkflow(CROSS_OS_RELEASE_CHECKS_REUSABLE_WORKFLOW);
     const packageAcceptance = readWorkflow(PACKAGE_ACCEPTANCE_WORKFLOW);
     const qaLive = readWorkflow(QA_LIVE_TRANSPORTS_WORKFLOW);
-    const performance = readWorkflow(PERFORMANCE_WORKFLOW);
     const profiles = ["beta", "stable", "full"] as const;
 
     const ciPreflight = workflowJob(CI_WORKFLOW, "preflight");
@@ -6362,7 +6361,7 @@ wait_for_run plugin-clawhub-new.yml 123 "${expectedSha}" || status=$?
         profile,
         releasePackagePaths[profile].reduce((total, timeout) => total + timeout, 0),
       ]),
-    );
+    ) as Record<(typeof profiles)[number], number>;
     expect(releasePackageTimeouts).toEqual({ beta: 280, stable: 280, full: 310 });
     for (const profile of profiles) {
       const childTimeout = releasePackageTimeouts[profile];
