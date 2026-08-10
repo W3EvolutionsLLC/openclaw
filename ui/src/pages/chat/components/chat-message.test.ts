@@ -4574,11 +4574,10 @@ describe("grouped chat rendering", () => {
     });
     vi.stubGlobal("ClipboardItem", ClipboardItemMock);
     vi.stubGlobal("navigator", { clipboard: { write } });
-    let clickedAnchor: HTMLAnchorElement | undefined;
     const click = vi
       .spyOn(HTMLAnchorElement.prototype, "click")
       .mockImplementation(function (this: HTMLAnchorElement) {
-        clickedAnchor = this;
+        expect(this.download).toBe("Ticketed image.png");
       });
     const toastHost = document.body.appendChild(document.createElement("openclaw-toast-host"));
     const container = document.body.appendChild(document.createElement("div"));
@@ -4592,7 +4591,6 @@ describe("grouped chat rendering", () => {
 
     expectElement(container, 'button[aria-label="Download image"]', HTMLButtonElement).click();
     await vi.waitFor(() => expect(click).toHaveBeenCalledOnce());
-    expect(clickedAnchor?.download).toBe("Ticketed image.png");
 
     expectElement(container, 'button[aria-label="Copy image"]', HTMLButtonElement).click();
     await vi.waitFor(() => expect(copiedBlob?.type).toBe("image/png"));
