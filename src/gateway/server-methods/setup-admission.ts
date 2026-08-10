@@ -67,8 +67,8 @@ export async function createAdmittedWizardSession<T extends { whenSettled(): Pro
 }
 
 /** Wait until a settled session has also released its in-memory and filesystem admission. */
-export async function waitForWizardSessionAdmissionRelease<
-  T extends { whenSettled(): Promise<unknown> },
->(session: T): Promise<void> {
+export async function waitForWizardSessionAdmissionRelease(session: {
+  whenSettled(): Promise<unknown>;
+}): Promise<void> {
   await (wizardSessionAdmissionRelease.get(session) ?? session.whenSettled());
 }
