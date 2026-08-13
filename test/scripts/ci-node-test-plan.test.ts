@@ -374,6 +374,11 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
         ).toEqual({ OPENCLAW_VITEST_MAX_WORKERS: "2" });
       }
     }
+    expect(
+      compact
+        .flatMap((shard) => shard.groups)
+        .find((group) => group.shard_name === "core-runtime-media-ui-support")?.env,
+    ).toEqual({ OPENCLAW_VITEST_MAX_WORKERS: "2" });
     const startupCoreJob = compact.find((shard) =>
       shard.groups.some((group) => group.shard_name === "agentic-control-plane-startup-core"),
     );
@@ -552,20 +557,19 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
         shardName: "core-unit-fast-isolated",
       },
       {
-        configs: [
-          "test/vitest/vitest.unit-src.config.ts",
-          "test/vitest/vitest.unit-security.config.ts",
-        ],
+        configs: ["test/vitest/vitest.unit-src.config.ts"],
         requiresDist: false,
         shardName: "core-unit-src-security-1",
       },
       {
-        configs: [
-          "test/vitest/vitest.unit-src.config.ts",
-          "test/vitest/vitest.unit-security.config.ts",
-        ],
+        configs: ["test/vitest/vitest.unit-src.config.ts"],
         requiresDist: false,
         shardName: "core-unit-src-security-2",
+      },
+      {
+        configs: ["test/vitest/vitest.unit-security.config.ts"],
+        requiresDist: false,
+        shardName: "core-unit-src-security-support",
       },
       {
         configs: ["test/vitest/vitest.unit-support.config.ts"],
@@ -579,27 +583,30 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
     const env = { ...process.env, OPENCLAW_VITEST_INCLUDE_FILE: undefined };
     const cases = [
       {
-        configs: [
+        stripeConfigs: [createUiVitestConfig(env)],
+        supportConfigs: [
           createMediaVitestConfig(env),
           createMediaUnderstandingVitestConfig(env),
           createTuiVitestConfig(env),
-          createUiVitestConfig(env),
           createUiIsolatedVitestConfig(env),
           createWizardVitestConfig(env),
         ],
         prefix: "core-runtime-media-ui",
       },
       {
-        configs: [createGatewayCoreVitestConfig(env), createGatewayClientVitestConfig(env)],
+        stripeConfigs: [createGatewayCoreVitestConfig(env), createGatewayClientVitestConfig(env)],
+        supportConfigs: [],
         prefix: "agentic-gateway-core",
       },
       {
-        configs: [
+        stripeConfigs: [
           createUnitVitestConfigWithOptions(env, {
             name: "unit-src",
             includePatterns: ["src/**/*.test.ts"],
             extraExcludePatterns: ["src/acp/**", "src/security/**"],
           }),
+        ],
+        supportConfigs: [
           createUnitVitestConfigWithOptions(env, {
             name: "unit-security",
             includePatterns: ["src/security/**/*.test.ts"],
@@ -611,12 +618,14 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
     ];
 
     const shards = createNodeTestShards();
-    for (const { configs, prefix } of cases) {
-      const stripes = shards.filter((shard) => shard.shardName.startsWith(`${prefix}-`));
+    for (const { prefix, stripeConfigs, supportConfigs } of cases) {
+      const stripes = shards.filter(
+        (shard) => /^.+-\d+$/u.test(shard.shardName) && shard.shardName.startsWith(`${prefix}-`),
+      );
       const actual = stripes
         .flatMap((stripe) => stripe.includePatterns ?? [])
         .toSorted((a, b) => a.localeCompare(b));
-      const expected = configs
+      const expected = stripeConfigs
         .flatMap((config) => listMatchedTestFiles(config))
         .toSorted((a, b) => a.localeCompare(b));
 
@@ -624,6 +633,14 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
       expect(stripes.every((stripe) => (stripe.includePatterns?.length ?? 0) > 0)).toBe(true);
       expect(new Set(actual).size).toBe(actual.length);
       expect(actual).toEqual(expected);
+
+      const support = shards.find((shard) => shard.shardName === `${prefix}-support`);
+      if (supportConfigs.length === 0) {
+        expect(support).toBeUndefined();
+      } else {
+        expect(support?.includePatterns).toBeUndefined();
+        expect(support?.configs).toHaveLength(supportConfigs.length);
+      }
     }
   });
 
@@ -899,30 +916,28 @@ describe("scripts/lib/ci-node-test-plan.mts", () => {
         shardName: "core-runtime-tui-pty",
       },
       {
-        configs: [
-          "test/vitest/vitest.media.config.ts",
-          "test/vitest/vitest.media-understanding.config.ts",
-          "test/vitest/vitest.tui.config.ts",
-          "test/vitest/vitest.ui.config.ts",
-          "test/vitest/vitest.ui-isolated.config.ts",
-          "test/vitest/vitest.wizard.config.ts",
-        ],
+        configs: ["test/vitest/vitest.ui.config.ts"],
         requiresDist: false,
         runner: DEFAULT_NODE_TEST_RUNNER,
         shardName: "core-runtime-media-ui-1",
+      },
+      {
+        configs: ["test/vitest/vitest.ui.config.ts"],
+        requiresDist: false,
+        runner: DEFAULT_NODE_TEST_RUNNER,
+        shardName: "core-runtime-media-ui-2",
       },
       {
         configs: [
           "test/vitest/vitest.media.config.ts",
           "test/vitest/vitest.media-understanding.config.ts",
           "test/vitest/vitest.tui.config.ts",
-          "test/vitest/vitest.ui.config.ts",
           "test/vitest/vitest.ui-isolated.config.ts",
           "test/vitest/vitest.wizard.config.ts",
         ],
         requiresDist: false,
         runner: DEFAULT_NODE_TEST_RUNNER,
-        shardName: "core-runtime-media-ui-2",
+        shardName: "core-runtime-media-ui-support",
       },
       {
         configs: [

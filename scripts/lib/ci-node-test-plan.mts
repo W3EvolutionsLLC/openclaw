@@ -12,6 +12,7 @@ import {
 } from "../../test/vitest/vitest.gateway-server-paths.mjs";
 import { fullSuiteVitestShards } from "../../test/vitest/vitest.test-shards.mjs";
 import { toolingIsolatedTestFiles } from "../../test/vitest/vitest.tooling-isolated-paths.mjs";
+import { uiIsolatedTestFiles } from "../../test/vitest/vitest.ui-isolated-paths.mjs";
 import {
   getUnitFastIsolatedTestFiles,
   getUnitFastTestFiles,
@@ -160,9 +161,9 @@ const MAX_BUNDLED_NODE_TEST_PATTERNS = 64;
 // PR-only bundles trade a little serial work for fewer ephemeral runner registrations.
 // Keep runner classes and subprocess isolation intact while bounding each combined job.
 // The group hints below are loaded-fleet CI walls. After striping the three
-// former floor groups, the 280s admission cap bounds the compact matrix at the
+// former floor groups, the 276s admission cap bounds the compact matrix at the
 // workflow's 28-worker ceiling; composite groups then balance across those jobs.
-const COMPACT_NODE_TEST_JOB_SECONDS = 280;
+const COMPACT_NODE_TEST_JOB_SECONDS = 276;
 const COMPACT_NODE_TEST_JOB_GROUPS = 10;
 const COMPACT_TOOLING_NODE_TEST_GROUPS = 4;
 const COMPACT_WHOLE_NODE_TEST_TIMEOUT_MINUTES = 120;
@@ -287,8 +288,9 @@ const COMPACT_GROUP_SECONDS_HINTS = new Map<string, number>([
   ["core-runtime-infra-repo-tooling", 4],
   ["core-runtime-infra-storage-state", 104],
   ["core-runtime-infra-system-runtime", 36],
-  ["core-runtime-media-ui-1", 171],
-  ["core-runtime-media-ui-2", 172],
+  ["core-runtime-media-ui-1", 160],
+  ["core-runtime-media-ui-2", 121],
+  ["core-runtime-media-ui-support", 100],
   ["core-runtime-secrets", 61],
   ["core-runtime-shared", 67],
   // This dist-only group is outside the sampled nondist logs and retains its
@@ -302,8 +304,9 @@ const COMPACT_GROUP_SECONDS_HINTS = new Map<string, number>([
   ["core-unit-fast-1", 66],
   ["core-unit-fast-2", 64],
   ["core-unit-fast-isolated", 116],
-  ["core-unit-src-security-1", 164],
-  ["core-unit-src-security-2", 163],
+  ["core-unit-src-security-1", 152],
+  ["core-unit-src-security-2", 152],
+  ["core-unit-src-security-support", 12],
   ["core-unit-support", 20],
 ]);
 
@@ -330,9 +333,11 @@ const COMPACT_LARGE_GROUP_STRIPE_SECONDS_HINTS = new Map<string, number>([
   ["agentic-agents-embedded-run", 47],
   ["agentic-agents-support", 165],
   ["agentic-control-plane-startup-core", 33],
-  // Run 31691151297 measured 296.68s for gateway-core, 343.24s for
-  // media-ui, and 326.37s for source/security. The stripe hints split those
-  // walls by LPT weights 684:683, 1149:1150, and 642:639 respectively.
+  // Run 31691151297 measured 296.68s for gateway-core, 241.66s for UI,
+  // 101.58s for its companion configs, 303.93s for unit-src, and 12.07s for
+  // security. Run 31694057974 measured the two UI envelopes at 159.50s and
+  // 120.55s while exposing cross-config bleed; keep those rounded upper
+  // bounds after isolating the companion whole-config groups.
   ["agentic-gateway-core-1", 149],
   ["agentic-gateway-core-2", 148],
   ["agentic-gateway-methods", 153],
@@ -340,13 +345,15 @@ const COMPACT_LARGE_GROUP_STRIPE_SECONDS_HINTS = new Map<string, number>([
   ["auto-reply-reply-commands-2", 11],
   ["auto-reply-reply-commands-3", 28],
   ["auto-reply-reply-dispatch", 86],
-  ["core-runtime-media-ui-1", 171],
-  ["core-runtime-media-ui-2", 172],
+  ["core-runtime-media-ui-1", 160],
+  ["core-runtime-media-ui-2", 121],
+  ["core-runtime-media-ui-support", 100],
   ["core-unit-fast-1", 68],
   ["core-unit-fast-2", 67],
   ["core-unit-fast-isolated", 117],
-  ["core-unit-src-security-1", 164],
-  ["core-unit-src-security-2", 163],
+  ["core-unit-src-security-1", 152],
+  ["core-unit-src-security-2", 152],
+  ["core-unit-src-security-support", 12],
 ]);
 
 // Advisory per-file wall-clock hints (seconds) for stripe balancing, measured
@@ -413,7 +420,7 @@ function isExclusiveCompactGroup(group: NodeTestShardGroup): boolean {
 // scales with the runner class. infra-process spawns child processes per test
 // and hit worker-startup timeouts under contention before serialization.
 const PINNED_WORKER_COMPACT_GROUP_RE =
-  /^core-tooling(?:-\d+|-isolated)$|^core-runtime-tui-pty$|^core-runtime-infra-process$|^core-runtime-media-ui-\d+$|^agentic-cli$|^agentic-gateway-(?:core-\d+|methods)$/u;
+  /^core-tooling(?:-\d+|-isolated)$|^core-runtime-tui-pty$|^core-runtime-infra-process$|^core-runtime-media-ui-(?:\d+|support)$|^agentic-cli$|^agentic-gateway-(?:core-\d+|methods)$/u;
 const PINNED_COMPACT_GROUP_ENV = { OPENCLAW_VITEST_MAX_WORKERS: "2" };
 
 function applyCompactGroupWorkerPins(group: NodeTestShardGroup): NodeTestShardGroup {
@@ -508,11 +515,13 @@ const KEEP_LARGE_NODE_TEST_RUNNER = new Set([
   "auto-reply-reply-commands-3",
   "core-runtime-media-ui-1",
   "core-runtime-media-ui-2",
+  "core-runtime-media-ui-support",
   "core-unit-fast-1",
   "core-unit-fast-2",
   "core-unit-fast-isolated",
   "core-unit-src-security-1",
   "core-unit-src-security-2",
+  "core-unit-src-security-support",
 ]);
 const RELEASE_ONLY_PLUGIN_SHARDS = new Set(["agentic-plugins"]);
 function listTestFiles(rootDir: string): string[] {
@@ -1308,38 +1317,50 @@ function createCoreUnitSrcSecuritySplitShards(): NodeTestSplitShard[] {
     (file) =>
       isStripeEligibleTestFile(file, unitFastFiles) &&
       !file.startsWith("src/acp/") &&
+      !file.startsWith("src/security/") &&
       isUnitConfigTestFile(file),
   );
-  return createStripedSplitShards({
-    configs: [
-      "test/vitest/vitest.unit-src.config.ts",
-      "test/vitest/vitest.unit-security.config.ts",
-    ],
-    files,
-    includeExternalConfigs: true,
-    shardName: "core-unit-src-security",
-    stripeCount: CORE_UNIT_SRC_SECURITY_STRIPES,
-  });
+  return [
+    ...createStripedSplitShards({
+      configs: ["test/vitest/vitest.unit-src.config.ts"],
+      files,
+      shardName: "core-unit-src-security",
+      stripeCount: CORE_UNIT_SRC_SECURITY_STRIPES,
+    }),
+    {
+      configs: ["test/vitest/vitest.unit-security.config.ts"],
+      includeExternalConfigs: true,
+      requiresDist: false,
+      shardName: "core-unit-src-security-support",
+    },
+  ];
 }
 
 function createCoreRuntimeMediaUiSplitShards(): NodeTestSplitShard[] {
   const unitFastFiles = new Set(getUnitFastTestFiles());
-  const files = ["src/media", "src/media-understanding", "src/tui", "ui/src", "src/wizard"]
-    .flatMap((rootDir) => listTestFiles(rootDir))
-    .filter((file) => isStripeEligibleTestFile(file, unitFastFiles));
-  return createStripedSplitShards({
-    configs: [
-      "test/vitest/vitest.media.config.ts",
-      "test/vitest/vitest.media-understanding.config.ts",
-      "test/vitest/vitest.tui.config.ts",
-      "test/vitest/vitest.ui.config.ts",
-      "test/vitest/vitest.ui-isolated.config.ts",
-      "test/vitest/vitest.wizard.config.ts",
-    ],
-    files,
-    shardName: "core-runtime-media-ui",
-    stripeCount: CORE_RUNTIME_MEDIA_UI_STRIPES,
-  });
+  const isolatedUiFiles = new Set(uiIsolatedTestFiles);
+  const files = listTestFiles("ui/src").filter(
+    (file) => isStripeEligibleTestFile(file, unitFastFiles) && !isolatedUiFiles.has(file),
+  );
+  return [
+    ...createStripedSplitShards({
+      configs: ["test/vitest/vitest.ui.config.ts"],
+      files,
+      shardName: "core-runtime-media-ui",
+      stripeCount: CORE_RUNTIME_MEDIA_UI_STRIPES,
+    }),
+    {
+      configs: [
+        "test/vitest/vitest.media.config.ts",
+        "test/vitest/vitest.media-understanding.config.ts",
+        "test/vitest/vitest.tui.config.ts",
+        "test/vitest/vitest.ui-isolated.config.ts",
+        "test/vitest/vitest.wizard.config.ts",
+      ],
+      requiresDist: false,
+      shardName: "core-runtime-media-ui-support",
+    },
+  ];
 }
 
 function createAgenticGatewayCoreSplitShards(): NodeTestSplitShard[] {
