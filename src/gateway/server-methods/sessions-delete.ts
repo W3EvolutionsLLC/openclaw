@@ -3,16 +3,14 @@ import { normalizeOptionalString } from "@openclaw/normalization-core/string-coe
 import {
   ErrorCodes,
   errorShape,
+  sessionChangedErrorDetails,
   validateSessionsDeleteParams,
 } from "../../../packages/gateway-protocol/src/index.js";
 import { managedWorktrees } from "../../agents/worktrees/service.js";
 import { tryResolveLegacyCompatibilityAgentId } from "../../config/legacy.default-agent-owner.js";
-import {
-  deleteSessionEntryLifecycle,
-  SESSION_LIFECYCLE_CHANGED_ERROR_REASON,
-  type SessionEntry,
-} from "../../config/sessions.js";
+import { deleteSessionEntryLifecycle, type SessionEntry } from "../../config/sessions.js";
 import { rollbackPluginOwnedSessionEntryLifecycle } from "../../config/sessions/session-accessor.js";
+import { sessionEntryContinuesIdentity } from "../../config/sessions/session-entry-lineage.js";
 import { resolvePersistedSessionStoreOwnerForKey } from "../../config/sessions/session-store-owner.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import {
@@ -163,12 +161,19 @@ export const sessionDeleteHandlers: GatewayRequestHandlers = {
       }
       return false;
     };
-    const respondSessionChanged = () => {
+    // The occupant is named as a successor only when its recorded lineage proves it
+    // continues the session the caller asked to delete; a delete-then-recreate under
+    // the same key is a different session and must not look retryable.
+    const respondSessionChanged = (currentEntry: SessionEntry | undefined) => {
       respond(
         false,
         undefined,
         errorShape(ErrorCodes.INVALID_REQUEST, `Session ${key} changed before deletion. Retry.`, {
-          details: { reason: SESSION_LIFECYCLE_CHANGED_ERROR_REASON },
+          details: sessionChangedErrorDetails(
+            sessionEntryContinuesIdentity(currentEntry, expectedSessionId)
+              ? currentEntry?.sessionId
+              : undefined,
+          ),
         }),
       );
     };
@@ -182,7 +187,7 @@ export const sessionDeleteHandlers: GatewayRequestHandlers = {
       ) {
         return false;
       }
-      respondSessionChanged();
+      respondSessionChanged(entry);
       return true;
     };
     if (rejectExpectedSessionMismatch(initialDeleteEntry)) {
@@ -311,7 +316,7 @@ export const sessionDeleteHandlers: GatewayRequestHandlers = {
           agentId: requestedAgentId,
         });
         if (normalizeOptionalString(entry?.sessionId) !== preparedDeleteSessionId) {
-          respondSessionChanged();
+          respondSessionChanged(entry);
           return undefined;
         }
         if (rejectModelSelectionLockedDelete(entry, canonicalKey ?? target.canonicalKey)) {
@@ -406,7 +411,7 @@ export const sessionDeleteHandlers: GatewayRequestHandlers = {
           !expectedLifecycleRevisionMatches(postCleanupEntry) ||
           !expectedSessionIdMatches(postCleanupEntry)
         ) {
-          respondSessionChanged();
+          respondSessionChanged(postCleanupEntry);
           return undefined;
         }
         const pluginOwnerId = normalizeOptionalString(postCleanupEntry?.pluginOwnerId);
@@ -441,7 +446,7 @@ export const sessionDeleteHandlers: GatewayRequestHandlers = {
               })
             : await deleteSessionEntryLifecycle(deletionParams);
         if (result.expectedEntryMismatch) {
-          respondSessionChanged();
+          respondSessionChanged(postCleanupEntry);
           return undefined;
         }
         if (result.deleted) {

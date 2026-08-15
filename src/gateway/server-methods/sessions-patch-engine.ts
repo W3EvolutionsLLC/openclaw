@@ -1,6 +1,7 @@
 import {
   ErrorCodes,
   errorShape,
+  sessionChangedErrorDetails,
   type ErrorShape,
   type SessionsPatchManyResult,
   type SessionsPatchManyTarget,
@@ -8,11 +9,11 @@ import {
 } from "../../../packages/gateway-protocol/src/index.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import { isInternalSessionEffectsKey } from "../../config/sessions/internal-session-key.js";
-import { SESSION_LIFECYCLE_CHANGED_ERROR_REASON } from "../../config/sessions/lifecycle.js";
 import {
   applySessionEntryCanonicalReplacements,
   type SessionEntryCanonicalReplacement,
 } from "../../config/sessions/session-accessor.sqlite-replacement-projection.js";
+import { sessionEntryContinuesIdentity } from "../../config/sessions/session-entry-lineage.js";
 import { SessionLabelOwnerIndex } from "../../config/sessions/session-entry-selection.js";
 import { disableCronJobsBoundToSessions } from "../../cron/job-session-bindings.js";
 import { formatErrorMessage } from "../../infra/errors.js";
@@ -99,9 +100,23 @@ function unexpectedPatchError(key: string, error: unknown): ErrorShape {
   );
 }
 
-function sessionChangedError(key: string): ErrorShape {
+/**
+ * A mismatch means the named identity no longer holds the key. The current
+ * occupant is offered as a successor only when its recorded lineage proves it
+ * continues that identity; a delete-then-recreate under the same key leaves the
+ * successor absent so no caller can retry onto an unrelated session.
+ */
+function sessionChangedError(
+  key: string,
+  currentEntry: SessionEntry | undefined,
+  expectedSessionId: string | undefined,
+): ErrorShape {
   return errorShape(ErrorCodes.INVALID_REQUEST, `Session ${key} changed before patch. Retry.`, {
-    details: { reason: SESSION_LIFECYCLE_CHANGED_ERROR_REASON },
+    details: sessionChangedErrorDetails(
+      sessionEntryContinuesIdentity(currentEntry, expectedSessionId)
+        ? currentEntry?.sessionId
+        : undefined,
+    ),
   });
 }
 
@@ -405,7 +420,11 @@ async function executeSessionPatchMutations(params: {
                         ) {
                           projectedOutcomes.push({
                             ok: false,
-                            error: sessionChangedError(target.key),
+                            error: sessionChangedError(
+                              target.key,
+                              existingEntry,
+                              target.fullPatch.expectedSessionId,
+                            ),
                           });
                           continue;
                         }
