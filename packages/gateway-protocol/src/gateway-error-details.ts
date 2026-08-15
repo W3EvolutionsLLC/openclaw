@@ -64,10 +64,8 @@ export type WizardNotFoundErrorDetails = {
 
 /**
  * A session mutation named an identity the store no longer holds, so nothing was
- * applied. `successorSessionId` appears only when the current occupant's recorded
- * lineage proves it continues the named session; a delete-then-recreate under the
- * same key leaves it absent, because that occupant is an unrelated session and
- * retargeting the mutation at it would mutate a row the operator never picked.
+ * applied. `successorSessionId` is present only for a proven continuation; see
+ * `sessionEntryContinuesIdentity` for what counts as proof.
  */
 export type SessionChangedErrorDetails = {
   code: typeof GatewayErrorDetailCodes.SESSION_CHANGED;
@@ -132,10 +130,7 @@ export function readMissingScopeErrorDetails(details: unknown): MissingScopeErro
   };
 }
 
-/**
- * Builds session-changed details. Pass a successor only when recorded lineage
- * proves the current occupant continues the named identity.
- */
+/** Builds session-changed details. Pass a successor only for a proven continuation. */
 export function sessionChangedErrorDetails(
   successorSessionId?: string,
 ): SessionChangedErrorDetails {
@@ -146,11 +141,13 @@ export function sessionChangedErrorDetails(
   };
 }
 
-/** Reads validated session-changed details from an untrusted protocol payload. */
-export function readSessionChangedErrorDetails(
-  details: unknown,
-): SessionChangedErrorDetails | null {
-  const record = asProtocolRecord(details);
+/**
+ * Reads a session-changed rejection off a gateway error envelope or a batch outcome
+ * error. The detail code is the discriminant on its own, so callers no longer pair an
+ * error-code check with a message or `reason` string match.
+ */
+export function readSessionChangedError(error: unknown): SessionChangedErrorDetails | null {
+  const record = asProtocolRecord(asProtocolRecord(error)?.details);
   if (record?.code !== GatewayErrorDetailCodes.SESSION_CHANGED) {
     return null;
   }
@@ -160,15 +157,6 @@ export function readSessionChangedErrorDetails(
     code: GatewayErrorDetailCodes.SESSION_CHANGED,
     ...(successorSessionId ? { successorSessionId } : {}),
   };
-}
-
-/**
- * Reads a session-changed rejection off a gateway error envelope or a batch
- * outcome error. The detail code is the discriminant on its own, so callers no
- * longer pair an error-code check with a message or `reason` string match.
- */
-export function readSessionChangedError(error: unknown): SessionChangedErrorDetails | null {
-  return readSessionChangedErrorDetails(asProtocolRecord(error)?.details);
 }
 
 export function isMcpAppViewExpiredError(error: unknown): boolean {

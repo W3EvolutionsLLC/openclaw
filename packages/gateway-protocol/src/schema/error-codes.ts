@@ -28,7 +28,6 @@ export {
   readMissingScopeError,
   readMissingScopeErrorDetails,
   readSessionChangedError,
-  readSessionChangedErrorDetails,
   sessionChangedErrorDetails,
 } from "../gateway-error-details.js";
 

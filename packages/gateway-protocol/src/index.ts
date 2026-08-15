@@ -6,7 +6,6 @@ export {
   readMissingScopeError,
   readMissingScopeErrorDetails,
   readSessionChangedError,
-  readSessionChangedErrorDetails,
   sessionChangedErrorDetails,
   type SessionChangedErrorDetails,
 } from "./gateway-error-details.js";

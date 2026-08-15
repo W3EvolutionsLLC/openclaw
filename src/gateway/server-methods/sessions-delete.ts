@@ -161,9 +161,6 @@ export const sessionDeleteHandlers: GatewayRequestHandlers = {
       }
       return false;
     };
-    // The occupant is named as a successor only when its recorded lineage proves it
-    // continues the session the caller asked to delete; a delete-then-recreate under
-    // the same key is a different session and must not look retryable.
     const respondSessionChanged = (currentEntry: SessionEntry | undefined) => {
       respond(
         false,

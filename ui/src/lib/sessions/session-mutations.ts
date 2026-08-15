@@ -68,7 +68,7 @@ export function createSessionMutations(host: SessionMutationsHost) {
   const settleSessionChangedRejection = async (
     key: string,
     error: unknown,
-    scope: ReturnType<SessionConnectionOwner["capture"]>,
+    scope: Parameters<SessionConnectionOwner["isCurrent"]>[0],
     agentId?: string | null,
   ): Promise<boolean> => {
     const changed = readSessionChangedError(error);

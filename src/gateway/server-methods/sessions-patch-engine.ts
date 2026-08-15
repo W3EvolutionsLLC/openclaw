@@ -100,12 +100,7 @@ function unexpectedPatchError(key: string, error: unknown): ErrorShape {
   );
 }
 
-/**
- * A mismatch means the named identity no longer holds the key. The current
- * occupant is offered as a successor only when its recorded lineage proves it
- * continues that identity; a delete-then-recreate under the same key leaves the
- * successor absent so no caller can retry onto an unrelated session.
- */
+/** A mismatch means the named identity no longer holds the key. */
 function sessionChangedError(
   key: string,
   currentEntry: SessionEntry | undefined,
