@@ -5,6 +5,10 @@ export {
   isMcpAppViewExpiredError,
   readMissingScopeError,
   readMissingScopeErrorDetails,
+  readSessionChangedError,
+  readSessionChangedErrorDetails,
+  sessionChangedErrorDetails,
+  type SessionChangedErrorDetails,
 } from "./gateway-error-details.js";
 export * from "./session-agent-status.js";
 export * from "./terminal-validators.js";

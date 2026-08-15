@@ -30,6 +30,7 @@ export const GatewayErrorDetailCodes = {
   PROJECT_CLONE_FAILED: "PROJECT_CLONE_FAILED",
   UNKNOWN_AGENT_ID: "UNKNOWN_AGENT_ID",
   WIZARD_NOT_FOUND: "WIZARD_NOT_FOUND",
+  SESSION_CHANGED: "SESSION_CHANGED",
 } as const;
 
 /** Missing operator-scope details shared by WebSocket and HTTP responses. */
@@ -61,6 +62,23 @@ export type WizardNotFoundErrorDetails = {
   code: typeof GatewayErrorDetailCodes.WIZARD_NOT_FOUND;
 };
 
+/**
+ * A session mutation named an identity the store no longer holds, so nothing was
+ * applied. `successorSessionId` appears only when the current occupant's recorded
+ * lineage proves it continues the named session; a delete-then-recreate under the
+ * same key leaves it absent, because that occupant is an unrelated session and
+ * retargeting the mutation at it would mutate a row the operator never picked.
+ */
+export type SessionChangedErrorDetails = {
+  code: typeof GatewayErrorDetailCodes.SESSION_CHANGED;
+  successorSessionId?: string;
+};
+
+/** The session's companion agent is already answering another question. */
+export type SessionCompanionBusyErrorDetails = {
+  code: typeof GatewayErrorDetailCodes.SESSION_COMPANION_BUSY;
+};
+
 export type ProjectCloneFailureCause =
   | "invalid_url"
   | "auth_required"
@@ -81,7 +99,9 @@ export type GatewayErrorDetails =
   | UserPrefsLimitExceededErrorDetails
   | ProjectCloneErrorDetails
   | UnknownAgentIdErrorDetails
-  | WizardNotFoundErrorDetails;
+  | WizardNotFoundErrorDetails
+  | SessionChangedErrorDetails
+  | SessionCompanionBusyErrorDetails;
 
 type GatewayErrorLike = {
   code?: unknown;
@@ -110,6 +130,45 @@ export function readMissingScopeErrorDetails(details: unknown): MissingScopeErro
     missingScope,
     requiredScopes,
   };
+}
+
+/**
+ * Builds session-changed details. Pass a successor only when recorded lineage
+ * proves the current occupant continues the named identity.
+ */
+export function sessionChangedErrorDetails(
+  successorSessionId?: string,
+): SessionChangedErrorDetails {
+  const successor = successorSessionId?.trim();
+  return {
+    code: GatewayErrorDetailCodes.SESSION_CHANGED,
+    ...(successor ? { successorSessionId: successor } : {}),
+  };
+}
+
+/** Reads validated session-changed details from an untrusted protocol payload. */
+export function readSessionChangedErrorDetails(
+  details: unknown,
+): SessionChangedErrorDetails | null {
+  const record = asProtocolRecord(details);
+  if (record?.code !== GatewayErrorDetailCodes.SESSION_CHANGED) {
+    return null;
+  }
+  const successorSessionId =
+    typeof record.successorSessionId === "string" ? record.successorSessionId.trim() : "";
+  return {
+    code: GatewayErrorDetailCodes.SESSION_CHANGED,
+    ...(successorSessionId ? { successorSessionId } : {}),
+  };
+}
+
+/**
+ * Reads a session-changed rejection off a gateway error envelope or a batch
+ * outcome error. The detail code is the discriminant on its own, so callers no
+ * longer pair an error-code check with a message or `reason` string match.
+ */
+export function readSessionChangedError(error: unknown): SessionChangedErrorDetails | null {
+  return readSessionChangedErrorDetails(asProtocolRecord(error)?.details);
 }
 
 export function isMcpAppViewExpiredError(error: unknown): boolean {
