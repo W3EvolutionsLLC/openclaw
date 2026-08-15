@@ -2104,7 +2104,7 @@ describe("dispatchCronDelivery — double-announce guard", () => {
     };
     changedError.name = "GatewayClientRequestError";
     changedError.gatewayCode = "INVALID_REQUEST";
-    changedError.details = { reason: "session-changed" };
+    changedError.details = { code: "SESSION_CHANGED" };
     vi.mocked(callGateway).mockRejectedValueOnce(changedError);
 
     const params = makeBaseParams({ synthesizedText: SILENT_REPLY_TOKEN });
@@ -2170,7 +2170,7 @@ describe("dispatchCronDelivery — double-announce guard", () => {
     };
     changedError.name = "GatewayClientRequestError";
     changedError.gatewayCode = "INVALID_REQUEST";
-    changedError.details = { reason: "session-changed" };
+    changedError.details = { code: "SESSION_CHANGED" };
     vi.mocked(callGateway).mockRejectedValueOnce(changedError);
     loadCronSessionEntryLatestMock.mockReturnValue({
       sessionId: "test-session-id",

@@ -1046,7 +1046,7 @@ test("sessions.patch rejects a generation replaced after the exact preparation r
     expect(archived.ok).toBe(false);
     expect(archived.error).toMatchObject({
       code: "INVALID_REQUEST",
-      details: { reason: "session-changed" },
+      details: { code: "SESSION_CHANGED" },
     });
     expect(loadSessionEntry({ storePath, sessionKey })).toMatchObject({
       sessionId: "session-archive-generation-replacement",

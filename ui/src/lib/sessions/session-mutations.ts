@@ -68,11 +68,18 @@ export function createSessionMutations(host: SessionMutationsHost) {
   const settleSessionChangedRejection = async (
     key: string,
     error: unknown,
+    scope: ReturnType<SessionConnectionOwner["capture"]>,
     agentId?: string | null,
   ): Promise<boolean> => {
     const changed = readSessionChangedError(error);
     if (!changed) {
       return false;
+    }
+    // The refresh republishes state, so the outcome is published after it or the fresh
+    // list would immediately clear the error the operator still needs to read.
+    await host.refreshReplacement(agentId);
+    if (!host.connection.isCurrent(scope)) {
+      return true;
     }
     host.publish(
       {
@@ -85,7 +92,6 @@ export function createSessionMutations(host: SessionMutationsHost) {
       },
       "operation",
     );
-    await host.refreshReplacement(agentId);
     return true;
   };
 
@@ -420,7 +426,7 @@ export function createSessionMutations(host: SessionMutationsHost) {
       if (!host.connection.isCurrent(scope)) {
         return null;
       }
-      if (await settleSessionChangedRejection(key, error, options.agentId)) {
+      if (await settleSessionChangedRejection(key, error, scope, options.agentId)) {
         throw error;
       }
       if (ownsModelOverride()) {
@@ -457,7 +463,7 @@ export function createSessionMutations(host: SessionMutationsHost) {
       if (!host.connection.isCurrent(scope)) {
         return { deleted: false };
       }
-      if (!(await settleSessionChangedRejection(key, error, options.agentId))) {
+      if (!(await settleSessionChangedRejection(key, error, scope, options.agentId))) {
         host.publish({ ...host.readState(), error: String(error) }, "operation");
       }
       throw error;

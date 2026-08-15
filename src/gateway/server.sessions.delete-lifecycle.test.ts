@@ -403,13 +403,52 @@ test("sessions.delete rejects a stale expected session id without interrupting i
     expect(deleted.ok).toBe(false);
     expect(deleted.error?.message).toBe(`Session ${sessionKey} changed before deletion. Retry.`);
     expect((deleted.error as { details?: unknown } | undefined)?.details).toEqual({
-      reason: "session-changed",
+      code: "SESSION_CHANGED",
     });
     expect(interrupted).toBe(false);
   } finally {
     admission.release();
   }
 });
+
+test.each([
+  {
+    name: "rollover recorded as the previous session",
+    entry: () => sessionStoreEntry("sess-successor", { previousSessionId: "sess-stale" }),
+    expectedDetails: { code: "SESSION_CHANGED", successorSessionId: "sess-successor" },
+  },
+  {
+    name: "second rollover still resolving through the usage family",
+    entry: () =>
+      sessionStoreEntry("sess-successor", {
+        previousSessionId: "sess-middle",
+        usageFamilySessionIds: ["sess-stale", "sess-middle"],
+      }),
+    expectedDetails: { code: "SESSION_CHANGED", successorSessionId: "sess-successor" },
+  },
+  {
+    name: "unrelated session recreated under the same key",
+    entry: () => sessionStoreEntry("sess-unrelated"),
+    expectedDetails: { code: "SESSION_CHANGED" },
+  },
+])(
+  "sessions.delete names a successor only when lineage proves it: $name",
+  async ({ entry, expectedDetails }) => {
+    await createSessionStoreDir();
+    const sessionKey = "agent:main:subagent:worker";
+    await writeSessionStore({ entries: { [sessionKey]: entry() } });
+
+    const deleted = await directSessionReq("sessions.delete", {
+      key: sessionKey,
+      expectedSessionId: "sess-stale",
+    });
+
+    expect(deleted.ok).toBe(false);
+    // A recreated session records no lineage, so it is reported as a replacement: naming
+    // it as a successor would invite a retry onto a session the caller never picked.
+    expect((deleted.error as { details?: unknown } | undefined)?.details).toEqual(expectedDetails);
+  },
+);
 
 test("sessions.delete rechecks its expected id before interrupting replacement work", async () => {
   const { storePath } = await createSessionStoreDir();
