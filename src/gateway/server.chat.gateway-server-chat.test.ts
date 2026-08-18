@@ -1106,6 +1106,7 @@ describe("gateway server chat", () => {
       expectRecordFields(sessionChanged.payload, {
         sessionId: "sess-main",
         status: "failed",
+        lastRunId: "idem-dispatch-error-1",
         hasActiveRun: false,
       });
 
@@ -1119,6 +1120,7 @@ describe("gateway server chat", () => {
       );
       const actualSession = expectRecordFields(session, {
         status: "failed",
+        lastRunId: "idem-dispatch-error-1",
         hasActiveRun: false,
       });
       expect(typeof actualSession.startedAt).toBe("number");
