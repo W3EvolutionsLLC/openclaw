@@ -4,7 +4,7 @@ import {
   testing as sessionBindingTesting,
   registerSessionBindingAdapter,
 } from "openclaw/plugin-sdk/conversation-runtime";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resolveIMessageConversationRoute } from "./conversation-route.js";
 
 const baseCfg = {
@@ -17,6 +17,10 @@ const baseCfg = {
 
 describe("resolveIMessageConversationRoute", () => {
   beforeEach(() => {
+    sessionBindingTesting.resetSessionBindingAdaptersForTests();
+  });
+
+  afterEach(() => {
     sessionBindingTesting.resetSessionBindingAdaptersForTests();
   });
 
@@ -46,7 +50,7 @@ describe("resolveIMessageConversationRoute", () => {
     });
 
     const route = resolveIMessageConversationRoute({
-      cfg: baseCfg,
+      cfg: { ...baseCfg, bindings: [] },
       accountId: "default",
       isGroup: false,
       peerId: "+15555550123",
@@ -54,6 +58,7 @@ describe("resolveIMessageConversationRoute", () => {
     });
 
     expect(route.agentId).toBe("codex");
+    expect(route.dmScope).toBe("main");
     expect(route.sessionKey).toBe("agent:codex:acp:bound-1");
     expect(route.matchedBy).toBe("binding.channel");
     expect(touch).toHaveBeenCalledWith("default:+15555550123", undefined);
