@@ -1,5 +1,5 @@
 // Run Tsgo tests cover run tsgo script behavior.
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -8,6 +8,7 @@ import {
   getSparseTsgoGuardError,
   shouldSkipSparseTsgoGuardError,
 } from "../../scripts/lib/tsgo-sparse-guard.mts";
+import { waitForChildClose, waitForDead, waitForPidFile } from "../helpers/process-wait.js";
 import { createScriptTestHarness } from "./test-helpers.js";
 
 const { createTempDir } = createScriptTestHarness();
@@ -322,20 +323,60 @@ describe.skipIf(process.platform === "win32")("run-tsgo watchdog", () => {
       '#!/bin/sh\necho $$ > "$(dirname "$0")/../../fake-tsgo.pid"\ntrap \'\' TERM\ni=0\nwhile [ $i -lt 60 ]; do sleep 1; i=$((i+1)); done\n',
     );
 
-    const pidBeforeReap = { value: undefined as number | undefined };
-    const result = runFakeTsgo(cwd, "2000", (running) => {
-      pidBeforeReap.value = running;
+    const observedBeforeReap = {
+      error: undefined as unknown,
+      pid: undefined as number | undefined,
+    };
+    const result = runFakeTsgo(cwd, "2000", (pid) => {
+      observedBeforeReap.pid = pid;
+      if (pid === undefined) {
+        return;
+      }
+      try {
+        process.kill(pid, 0);
+      } catch (error) {
+        observedBeforeReap.error = error;
+      }
     });
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("killed the tsgo process tree");
     // Printing the message is not the contract; the tree actually being gone is.
-    expect(pidBeforeReap.value).toBeDefined();
-    expect(() => process.kill(pidBeforeReap.value as number, 0)).toThrow(
-      expect.objectContaining({ code: "ESRCH" }),
-    );
+    expect(observedBeforeReap.pid).toBeDefined();
+    expect(observedBeforeReap.error).toMatchObject({ code: "ESRCH" });
     expect(result.stderr.trim().split("\n").at(-1)).toBe("[tsgo] FAILED (exit 1)");
   }, 30_000);
+
+  it("lets the inner supervisor reap a wedged compiler before the wrapper exits on SIGTERM", async () => {
+    const cwd = createTempDir("openclaw-run-tsgo-signal-");
+    const pidFile = path.join(cwd, "fake-tsgo.pid");
+    fs.writeFileSync(path.join(cwd, "tsconfig.extensions.json"), "{}\n");
+    writeFakeTsgo(
+      cwd,
+      '#!/bin/sh\necho $$ > "$(dirname "$0")/../../fake-tsgo.pid"\ntrap \'\' TERM HUP INT\nwhile true; do sleep 1; done\n',
+    );
+    const wrapper = spawn(
+      process.execPath,
+      [path.resolve("scripts/run-tsgo.mjs"), "-p", "tsconfig.extensions.json"],
+      { cwd, stdio: "ignore" },
+    );
+
+    try {
+      const compilerPid = await waitForPidFile(pidFile, 10_000);
+      wrapper.kill("SIGTERM");
+
+      await expect(waitForChildClose(wrapper, 15_000)).resolves.toEqual({
+        code: 143,
+        signal: null,
+      });
+      await expect(waitForDead(compilerPid, 2_000)).resolves.toBeUndefined();
+    } finally {
+      if (wrapper.exitCode === null && wrapper.signalCode === null) {
+        wrapper.kill("SIGKILL");
+      }
+      reapFakeTsgo(cwd);
+    }
+  }, 20_000);
 
   // Every bound that must leave a completing compiler alone. The ceiling case is the
   // regression that matters: without saturation Node collapses the delay to 1ms and
