@@ -45,6 +45,8 @@ export function sessionRow(
     pinned?: boolean;
     pinnedAt?: number;
     hasActiveRun?: boolean;
+    hasAutomation?: boolean;
+    incognito?: boolean;
     unread?: boolean;
     status?: string;
     spawnedBy?: string;

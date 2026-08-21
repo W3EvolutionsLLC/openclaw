@@ -542,14 +542,15 @@ suite.define(() => {
       const endcapGaps = await row.evaluate((element) => {
         const endcap = element.querySelector(".sidebar-recent-session__details-endcap");
         const glyphs = [
-          ...endcap.querySelectorAll("svg, .session-unread-dot, .session-run-spinner"),
+          ...(endcap?.querySelectorAll("svg, .session-unread-dot, .session-run-spinner") ?? []),
         ]
           .map((glyph) => glyph.getBoundingClientRect())
           .filter((rect) => rect.width > 0)
           .sort((left, right) => left.left - right.left);
-        return glyphs
-          .slice(1)
-          .map((rect, index) => Math.round((rect.left - glyphs[index].right) * 10) / 10);
+        return glyphs.slice(1).map((rect, index) => {
+          const previous = glyphs[index] as DOMRect;
+          return Math.round((rect.left - previous.right) * 10) / 10;
+        });
       });
       expect(endcapGaps.length).toBeGreaterThan(1);
       for (const gap of endcapGaps) {
