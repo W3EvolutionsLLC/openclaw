@@ -287,6 +287,8 @@ export type ControlUiMockGatewayScenario = {
   maxPayload?: number;
   /** Static payloads, parameter-matched cases, or call-ordered sequences. */
   methodResponses?: Record<string, unknown>;
+  /** Persist model-auth mutations into the configured auth-status fixture. */
+  modelAuthMutations?: boolean;
   /** URL prefixes that retain the browser's real WebSocket transport. */
   webSocketPassthroughPrefixes?: string[];
   /** Replayed in-flight run snapshot served by chat.history and chat.startup. */
@@ -885,6 +887,7 @@ function normalizeScenario(
     historyMessages: scenario.historyMessages ?? [],
     maxPayload: scenario.maxPayload ?? DEFAULT_MOCK_MAX_PAYLOAD_BYTES,
     methodResponses: scenario.methodResponses ?? {},
+    modelAuthMutations: scenario.modelAuthMutations ?? false,
     webSocketPassthroughPrefixes: scenario.webSocketPassthroughPrefixes ?? [],
     inFlightRun: scenario.inFlightRun ?? null,
     presenceUsers: scenario.presenceUsers ?? [],
@@ -1253,6 +1256,81 @@ function installControlUiMockGateway(
     return Array.isArray(maybeSequence) ? maybeSequence : null;
   }
 
+  let modelAuthStatusState: Record<string, unknown> | null = null;
+
+  function currentModelAuthStatus(): Record<string, unknown> | null {
+    if (modelAuthStatusState) {
+      return modelAuthStatusState;
+    }
+    const configured = scenario.methodResponses["models.authStatus"];
+    const initial = responseSequence(configured)?.[0] ?? configured;
+    if (!isRecord(initial) || !Array.isArray(initial.providers)) {
+      return null;
+    }
+    modelAuthStatusState = structuredClone(initial);
+    return modelAuthStatusState;
+  }
+
+  function mutateModelAuthStatus(method: string, params: unknown): void {
+    const status = currentModelAuthStatus();
+    if (!status || !isRecord(params) || typeof params.provider !== "string") {
+      return;
+    }
+    const requestedProfileIds = Array.isArray(params.profileIds)
+      ? params.profileIds.filter((value): value is string => typeof value === "string")
+      : null;
+    const selectedProfileIds = requestedProfileIds ? new Set(requestedProfileIds) : null;
+    const providers = Array.isArray(status.providers) ? status.providers : [];
+    status.providers = providers.map((entry) => {
+      if (
+        !isRecord(entry) ||
+        (entry.provider !== params.provider && entry.authProvider !== params.provider)
+      ) {
+        return entry;
+      }
+      if (method === "models.authOrderSet" && requestedProfileIds) {
+        return Object.assign({}, entry, { profileOrder: [...requestedProfileIds] });
+      }
+      const profiles = Array.isArray(entry.profiles) ? entry.profiles : [];
+      if (method === "models.authCooldownClear" && typeof params.profileId === "string") {
+        return Object.assign({}, entry, {
+          profiles: profiles.map((profile) =>
+            isRecord(profile) && profile.profileId === params.profileId
+              ? Object.assign({}, profile, {
+                  cooldownReason: undefined,
+                  cooldownUntil: undefined,
+                })
+              : profile,
+          ),
+        });
+      }
+      if (method !== "models.authLogout") {
+        return entry;
+      }
+      const nextProfiles = selectedProfileIds
+        ? profiles.filter(
+            (profile) =>
+              !isRecord(profile) ||
+              typeof profile.profileId !== "string" ||
+              !selectedProfileIds.has(profile.profileId),
+          )
+        : [];
+      const remainingIds = new Set(
+        nextProfiles.flatMap((profile) =>
+          isRecord(profile) && typeof profile.profileId === "string" ? [profile.profileId] : [],
+        ),
+      );
+      return Object.assign({}, entry, {
+        profiles: nextProfiles,
+        profileOrder: Array.isArray(entry.profileOrder)
+          ? entry.profileOrder.filter(
+              (profileId) => typeof profileId === "string" && remainingIds.has(profileId),
+            )
+          : entry.profileOrder,
+      });
+    });
+  }
+
   function configuredResponse(
     method: string,
     params: unknown,
@@ -1565,6 +1643,9 @@ function installControlUiMockGateway(
     if (method === "sessions.patch") {
       recordSessionPatch(params);
     }
+    if (scenario.modelAuthMutations && method === "models.authStatus") {
+      return currentModelAuthStatus();
+    }
     if (configState && baseConfigResponse) {
       if (method === "config.get") {
         const configured = configuredResponse(method, params);
@@ -1648,6 +1729,13 @@ function installControlUiMockGateway(
     }
     const configured = configuredResponse(method, params);
     if (configured.found) {
+      if (
+        scenario.modelAuthMutations &&
+        !(isRecord(configured.value) && hasOwn(configured.value, "__mockError")) &&
+        ["models.authOrderSet", "models.authCooldownClear", "models.authLogout"].includes(method)
+      ) {
+        mutateModelAuthStatus(method, params);
+      }
       const configuredValue = applyScenarioAgentModel(method, configured.value);
       if (method === "sessions.create" || method === "sessions.catalog.continue") {
         recordMaterializedSession(params, configuredValue);
@@ -2305,6 +2393,9 @@ function installControlUiMockGateway(
     setMethodResponse(method, payload) {
       scenario.methodResponses[method] = payload;
       methodResponseSequenceIndexes.delete(method);
+      if (method === "models.authStatus") {
+        modelAuthStatusState = null;
+      }
       methodResponseOverrides[method] = payload;
       try {
         window.sessionStorage.setItem(
