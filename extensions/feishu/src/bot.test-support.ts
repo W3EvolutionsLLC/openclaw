@@ -18,7 +18,7 @@ type FeishuSecretRefPolicyCase = {
 export const FEISHU_SELECTED_SECRET_ENV = "FEISHU_SECRET_REF_SELECTED_TEST";
 export const FEISHU_SIBLING_SECRET_ENV = "FEISHU_SECRET_REF_SIBLING_TEST";
 
-export const feishuSecretRefPolicyCases = [
+export const feishuSecretRefPolicyCases: FeishuSecretRefPolicyCase[] = [
   {
     name: "unconfigured provider alias",
     provider: "unconfigured",
@@ -43,7 +43,7 @@ export const feishuSecretRefPolicyCases = [
     providers: { "corp-env": { source: "env", allowlist: [FEISHU_SELECTED_SECRET_ENV] } },
     configured: true,
   },
-] satisfies FeishuSecretRefPolicyCase[];
+];
 
 export function createFeishuTestConfig(
   feishu: FeishuConfig,
