@@ -117,45 +117,56 @@ function resolveSkillReferenceInvocations(params: {
   return resolved;
 }
 
-function cleanInlineSkillInvocation(body: string, start: number, end: number): string {
-  return `${body.slice(0, start)} ${body.slice(end)}`.replace(/[^\S\r\n]+/gu, " ").trim();
+function cleanInlineSkillInvocations(
+  body: string,
+  ranges: Array<{ start: number; end: number }>,
+): string {
+  let cursor = 0;
+  const parts: string[] = [];
+  for (const range of ranges) {
+    parts.push(body.slice(cursor, range.start), " ");
+    cursor = range.end;
+  }
+  parts.push(body.slice(cursor));
+  return parts
+    .join("")
+    .replace(/[^\S\r\n]+/gu, " ")
+    .trim();
 }
 
-export function resolveInlineSkillCommandInvocation(params: {
+export function resolveInlineSkillReferences(params: {
   commandBodyNormalized: string;
   skillCommands: SkillCommandSpec[];
-}): { command: SkillCommandSpec; args?: string; inline: true } | null {
+}): { body: string; skills: SkillCommandSpec[] } {
   const body = params.commandBodyNormalized;
-  const directPattern = /(?:^|\s)\/([^\s:]+)\s*:\s*/giu;
-  for (const match of body.matchAll(directPattern)) {
-    const rawName = match[1] ?? "";
-    if (normalizeOptionalLowercaseString(rawName) === "skill") {
-      continue;
-    }
-    const command = findSkillCommand(params.skillCommands, rawName);
-    if (!command || command.modelVisible === false || match.index === undefined) {
-      continue;
-    }
-    const leadingWhitespace = match[0].length - match[0].trimStart().length;
-    const start = match.index + leadingWhitespace;
-    const end = match.index + match[0].length;
-    const args = cleanInlineSkillInvocation(body, start, end);
-    return { command, args: args || undefined, inline: true };
-  }
-
-  const skillPattern = /(?:^|\s)\/skill\s*:\s*([^\s:]+)/giu;
-  for (const match of body.matchAll(skillPattern)) {
-    const command = findSkillCommand(params.skillCommands, match[1] ?? "");
-    if (!command || command.modelVisible === false || match.index === undefined) {
+  const skills: SkillCommandSpec[] = [];
+  const seen = new Set<string>();
+  const ranges: Array<{ start: number; end: number }> = [];
+  const pattern = /(?:^|\s)\/(?:(?:skill\s*:\s*([^\s:]+))|([^\s:]+)\s*:\s*)/giu;
+  for (const match of body.matchAll(pattern)) {
+    const command = findSkillCommand(params.skillCommands, match[1] ?? match[2] ?? "");
+    if (
+      !command ||
+      command.modelVisible === false ||
+      command.promptTemplate ||
+      match.index === undefined
+    ) {
       continue;
     }
     const leadingWhitespace = match[0].length - match[0].trimStart().length;
-    const start = match.index + leadingWhitespace;
-    const end = match.index + match[0].length;
-    const args = cleanInlineSkillInvocation(body, start, end);
-    return { command, args: args || undefined, inline: true };
+    ranges.push({
+      start: match.index + leadingWhitespace,
+      end: match.index + match[0].length,
+    });
+    if (!seen.has(command.name)) {
+      seen.add(command.name);
+      skills.push(command);
+    }
   }
-  return null;
+  return {
+    body: ranges.length > 0 ? cleanInlineSkillInvocations(body, ranges) : body,
+    skills,
+  };
 }
 
 export function resolveSkillCommandInvocation(params: {
@@ -280,13 +291,26 @@ export function expandExplicitSkillReferences(params: {
     : available.length > MAX_EXPLICIT_SKILL_REFERENCES
       ? `Too many skill references. Use at most ${MAX_EXPLICIT_SKILL_REFERENCES} skills in one message.`
       : undefined;
+  return expandResolvedSkillReferences({ text: params.text, skills: available, error });
+}
+
+function expandResolvedSkillReferences(params: {
+  text: string;
+  skills: SkillCommandSpec[];
+  error?: string;
+}): { body: string; error?: string; skills: SkillCommandSpec[] } {
+  const error =
+    params.error ??
+    (params.skills.length > MAX_EXPLICIT_SKILL_REFERENCES
+      ? `Too many skill references. Use at most ${MAX_EXPLICIT_SKILL_REFERENCES} skills in one message.`
+      : undefined);
   if (error) {
     return { body: params.text, error, skills: [] };
   }
-  if (available.length === 0) {
+  if (params.skills.length === 0) {
     return { body: params.text, skills: [] };
   }
-  const referenceLines = available.map((skill) =>
+  const referenceLines = params.skills.map((skill) =>
     skill.modelVisible === false && skill.skillFile
       ? `- ${skill.skillName} (SKILL.md: ${skill.skillFile})`
       : `- ${skill.skillName}`,
@@ -317,6 +341,18 @@ export function expandExplicitSkillReferences(params: {
   }
   return {
     body: `${instructionPrefix}${params.text}`,
-    skills: available,
+    skills: params.skills,
   };
+}
+
+/** Expands every eligible colon-marked inline skill through the explicit-reference path. */
+export function expandInlineSkillReferences(params: {
+  text: string;
+  skillCommands: SkillCommandSpec[];
+}): { body: string; error?: string; skills: SkillCommandSpec[] } {
+  const resolved = resolveInlineSkillReferences({
+    commandBodyNormalized: params.text,
+    skillCommands: params.skillCommands,
+  });
+  return expandResolvedSkillReferences({ text: resolved.body, skills: resolved.skills });
 }

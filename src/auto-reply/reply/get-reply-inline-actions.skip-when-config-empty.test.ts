@@ -230,6 +230,28 @@ function officeHoursSkillCommands(): SkillCommandSpec[] {
   ];
 }
 
+function officeHoursInlineSkillCommands(): SkillCommandSpec[] {
+  return [
+    {
+      name: "office_hours",
+      skillName: "office-hours",
+      description: "Office hours",
+      modelVisible: true,
+      skillFile: "/tmp/skills/office-hours/SKILL.md",
+    },
+  ];
+}
+
+function expandedOfficeHoursRequest(body: string): string {
+  return [
+    "Use the following explicitly referenced skills for this request. Read each skill's SKILL.md before acting:",
+    "- office-hours",
+    "",
+    "User request:",
+    body,
+  ].join("\n");
+}
+
 describe("handleInlineActions", () => {
   beforeEach(() => {
     handleCommandsMock.mockReset();
@@ -785,19 +807,74 @@ describe("handleInlineActions", () => {
         overrides: {
           allowTextCommands: true,
           cfg: { commands: { text: true } },
-          skillCommands: officeHoursSkillCommands(),
+          skillCommands: officeHoursInlineSkillCommands(),
+        },
+      }),
+    );
+
+    const expected = expandedOfficeHoursRequest("Please use to build me a deployment plan");
+    expect(result).toMatchObject({ kind: "continue", cleanedBody: expected });
+    expect(ctx.Body).toBe(expected);
+    expect(handleCommandsMock).not.toHaveBeenCalled();
+  });
+
+  it("resolves every eligible inline skill marker in one message", async () => {
+    const typing = createTypingController();
+    const body = "Compare /office_hours: with /release_notes: for this rollout";
+    const ctx = buildTestCtx({
+      Body: body,
+      CommandBody: body,
+      Provider: "webchat",
+      Surface: "webchat",
+    });
+    const skillCommands: SkillCommandSpec[] = [
+      {
+        name: "office_hours",
+        skillName: "office-hours",
+        description: "Engineering office hours",
+        modelVisible: true,
+        skillFile: "/tmp/skills/office-hours/SKILL.md",
+      },
+      {
+        name: "release_notes",
+        skillName: "release-notes",
+        description: "Draft release notes",
+        modelVisible: true,
+        skillFile: "/tmp/skills/release-notes/SKILL.md",
+      },
+    ];
+
+    const result = await handleInlineActions(
+      createHandleInlineActionsInput({
+        ctx,
+        typing,
+        cleanedBody: body,
+        command: {
+          isAuthorizedSender: true,
+          rawBodyNormalized: body,
+          commandBodyNormalized: body,
+        },
+        overrides: {
+          allowTextCommands: true,
+          cfg: { commands: { text: true } },
+          skillCommands,
         },
       }),
     );
 
     expect(result).toMatchObject({
       kind: "continue",
-      cleanedBody:
-        "Act as an engineering advisor.\n\nFocus on:\nPlease use to build me a deployment plan",
+      explicitSkillSelections: [
+        { name: "office_hours", path: "/tmp/skills/office-hours/SKILL.md" },
+        { name: "release_notes", path: "/tmp/skills/release-notes/SKILL.md" },
+      ],
     });
-    expect(ctx.Body).toBe(
-      "Act as an engineering advisor.\n\nFocus on:\nPlease use to build me a deployment plan",
-    );
+    if (result.kind !== "continue") {
+      throw new Error("expected inline skill references to continue to the model");
+    }
+    expect(result.cleanedBody).toContain("- office-hours");
+    expect(result.cleanedBody).toContain("- release-notes");
+    expect(result.cleanedBody).toContain("Compare with for this rollout");
     expect(handleCommandsMock).not.toHaveBeenCalled();
   });
 
@@ -825,7 +902,7 @@ describe("handleInlineActions", () => {
         overrides: {
           allowTextCommands: true,
           cfg: { commands: { text: true } },
-          skillCommands: officeHoursSkillCommands(),
+          skillCommands: officeHoursInlineSkillCommands(),
         },
       }),
     );
@@ -860,13 +937,12 @@ describe("handleInlineActions", () => {
           allowTextCommands: true,
           inlineStatusRequested: true,
           cfg: { commands: { text: true } },
-          skillCommands: officeHoursSkillCommands(),
+          skillCommands: officeHoursInlineSkillCommands(),
         },
       }),
     );
 
-    const expected =
-      "Act as an engineering advisor.\n\nFocus on:\ncompare /help and /commands with /status";
+    const expected = expandedOfficeHoursRequest("compare /help and /commands with /status");
     expect(result).toMatchObject({ kind: "continue", cleanedBody: expected });
     expect(ctx.Body).toBe(expected);
     expect(buildStatusReplyMock).not.toHaveBeenCalled();
@@ -896,7 +972,7 @@ describe("handleInlineActions", () => {
         overrides: {
           allowTextCommands: true,
           cfg: { commands: { text: true } },
-          skillCommands: officeHoursSkillCommands(),
+          skillCommands: officeHoursInlineSkillCommands(),
         },
       }),
     );
@@ -953,7 +1029,7 @@ describe("handleInlineActions", () => {
           overrides: {
             allowTextCommands: true,
             cfg: { commands: { text: true } },
-            skillCommands: officeHoursSkillCommands(),
+            skillCommands: officeHoursInlineSkillCommands(),
           },
         }),
       );

@@ -22,6 +22,7 @@ import { buildWorkspaceSkillCommandSpecs } from "./command-specs.js";
 export {
   expandBundleCommandPromptTemplate,
   expandExplicitSkillReferences,
+  expandInlineSkillReferences,
   hasSkillReferenceCandidate,
   listReservedChatSlashCommandNames,
   resolveSkillCommandInvocation,

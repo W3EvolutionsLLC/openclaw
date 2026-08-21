@@ -17,7 +17,7 @@ import { isFastTestRuntimeEnv } from "../../infra/env.js";
 import { normalizeAgentId } from "../../routing/session-key.js";
 import { ModelSelectionLockedError } from "../../sessions/model-overrides.js";
 import { createLazyImportLoader } from "../../shared/lazy-promise.js";
-import { resolveInlineSkillCommandInvocation } from "../../skills/discovery/chat-command-invocation.js";
+import { resolveInlineSkillReferences } from "../../skills/discovery/chat-command-invocation.js";
 import type { SkillCommandSpec } from "../../skills/types.js";
 import { INTERNAL_MESSAGE_CHANNEL } from "../../utils/message-channel.js";
 import { isNativeCommandTurn, resolveCommandTurnContext } from "../command-turn-context.js";
@@ -283,10 +283,10 @@ export async function resolveReplyDirectives(params: {
   const hasInlineSkillInvocation =
     canUseInlineSkills &&
     skillCommands.length > 0 &&
-    resolveInlineSkillCommandInvocation({
+    resolveInlineSkillReferences({
       commandBodyNormalized: command.commandBodyNormalized,
       skillCommands,
-    }) !== null;
+    }).skills.length > 0;
 
   const configuredAliases = rawAliases.filter(
     (alias) => !reservedCommands.has(normalizeLowercaseStringOrEmpty(alias)),

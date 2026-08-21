@@ -10,10 +10,10 @@ import { logVerbose } from "../../globals.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import { generateSecureToken } from "../../infra/secure-random.js";
 import { createLazyImportLoader } from "../../shared/lazy-promise.js";
-import { resolveInlineSkillCommandInvocation } from "../../skills/discovery/chat-command-invocation.js";
 import {
   expandBundleCommandPromptTemplate,
   expandExplicitSkillReferences,
+  expandInlineSkillReferences,
   hasSkillReferenceCandidate,
   listReservedChatSlashCommandNames,
   resolveSkillCommandInvocation,
@@ -374,19 +374,13 @@ export async function handleInlineActions(params: {
         })
       : skillCommands;
 
-  let skillInvocation =
+  const skillInvocation =
     allowTextCommands && skillCommands.length > 0
       ? resolveSkillCommandInvocation({
           commandBodyNormalized: command.commandBodyNormalized,
           skillCommands,
         })
       : null;
-  if (!skillInvocation && allowTextCommands && hasInlineSkillCandidate && skillCommands.length) {
-    skillInvocation = resolveInlineSkillCommandInvocation({
-      commandBodyNormalized: command.commandBodyNormalized,
-      skillCommands,
-    });
-  }
   if (skillInvocation) {
     if (!command.isAuthorizedSender) {
       logVerbose(
@@ -506,11 +500,14 @@ export async function handleInlineActions(params: {
     cleanedBody = rewrittenBody;
   }
 
+  const inlineReferences =
+    !skillInvocation && allowTextCommands && hasInlineSkillCandidate && skillCommands.length > 0
+      ? expandInlineSkillReferences({ text: command.commandBodyNormalized, skillCommands })
+      : null;
+  const hasInlineSkillReferences = Boolean(inlineReferences?.skills.length);
+
   const sendInlineReply = async (reply?: ReplyPayload) => {
-    if (!reply) {
-      return;
-    }
-    if (!opts?.onBlockReply) {
+    if (!reply || !opts?.onBlockReply) {
       return;
     }
     await opts.onBlockReply(
@@ -524,7 +521,7 @@ export async function handleInlineActions(params: {
   };
 
   const inlineCommand =
-    allowTextCommands && command.isAuthorizedSender && skillInvocation?.inline !== true
+    allowTextCommands && command.isAuthorizedSender && !hasInlineSkillReferences
       ? extractInlineSimpleCommand(cleanedBody)
       : null;
   if (inlineCommand) {
@@ -535,17 +532,19 @@ export async function handleInlineActions(params: {
     sessionCtx.BodyStripped = cleanedBody;
   }
 
-  if (
-    allowTextCommands &&
-    (hasSkillReferences || hasSkillSlashCandidate) &&
-    !skillInvocation &&
-    (hasSkillSlashCandidate || resolveSlashCommandName(cleanedBody) === null)
-  ) {
-    const referenced = expandExplicitSkillReferences({
-      text: cleanedBody,
-      skillCommands,
-      allSkillCommands,
-    });
+  const referenced = hasInlineSkillReferences
+    ? inlineReferences
+    : allowTextCommands &&
+        (hasSkillReferences || hasSkillSlashCandidate) &&
+        !skillInvocation &&
+        (hasSkillSlashCandidate || resolveSlashCommandName(cleanedBody) === null)
+      ? expandExplicitSkillReferences({
+          text: cleanedBody,
+          skillCommands,
+          allSkillCommands,
+        })
+      : null;
+  if (referenced) {
     if (referenced.error) {
       typing.cleanup();
       return {
@@ -570,7 +569,7 @@ export async function handleInlineActions(params: {
   }
 
   const handleInlineStatus =
-    skillInvocation?.inline !== true &&
+    !hasInlineSkillReferences &&
     !isDirectiveOnly({
       directives,
       cleanedBody: directives.cleaned,
@@ -672,7 +671,7 @@ export async function handleInlineActions(params: {
     }
   }
 
-  if (directiveAck && skillInvocation?.inline !== true) {
+  if (directiveAck && !hasInlineSkillReferences) {
     await sendInlineReply(directiveAck);
   }
 
@@ -682,7 +681,7 @@ export async function handleInlineActions(params: {
   }
 
   const shouldRunCommandHandlers =
-    skillInvocation?.inline !== true &&
+    !hasInlineSkillReferences &&
     (inlineCommand !== null ||
       directiveAck !== undefined ||
       inlineStatusRequested ||
