@@ -9,6 +9,7 @@ import type { CronJob } from "../types.js";
 import { cronStoreKey } from "./key.js";
 import {
   assertCronRunReceiptCurrent,
+  bindCronRunReceiptTaskIdentity,
   claimCronRunReceiptInDatabase,
   CronRunReceiptConflictError,
   CronRunReceiptRevisionError,
@@ -55,7 +56,8 @@ function receipts(storePath: string, jobId: string) {
   return openOpenClawStateDatabase()
     .db.prepare(
       `SELECT receipt_id AS receiptId, status, agent_id AS agentId,
-              started_at_ms AS startedAtMs, error_text AS error
+              request_run_id AS requestRunId, started_at_ms AS startedAtMs,
+              error_text AS error
          FROM cron_run_receipts
         WHERE store_key = ? AND job_id = ?
         ORDER BY started_at_ms DESC, receipt_id DESC`,
@@ -64,6 +66,7 @@ function receipts(storePath: string, jobId: string) {
     receiptId: string;
     status: string;
     agentId: string;
+    requestRunId: string | null;
     startedAtMs: number;
     error: string | null;
   }>;
@@ -96,10 +99,23 @@ describe("cron run receipt store", () => {
     await saveCronStore(storePath, { version: 1, jobs: [job] });
 
     const first = claim(storePath, job, 100);
+    expect(
+      bindCronRunReceiptTaskIdentity({
+        storePath,
+        jobId: job.id,
+        startedAtMs: 100,
+        requestRunId: "manual-overlap-1",
+      }),
+    ).toBe(first.receiptId);
 
     expect(() => claim(storePath, job, 101)).toThrow(CronRunReceiptConflictError);
     expect(receipts(storePath, job.id)).toMatchObject([
-      { receiptId: first.receiptId, status: "running", startedAtMs: 100 },
+      {
+        receiptId: first.receiptId,
+        requestRunId: "manual-overlap-1",
+        status: "running",
+        startedAtMs: 100,
+      },
     ]);
 
     finishCronRunReceipt({ handle: first, status: "ok", finishedAtMs: 110 });
