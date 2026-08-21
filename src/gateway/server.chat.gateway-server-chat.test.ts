@@ -30,6 +30,7 @@ import {
   installGatewayTestHooks,
   mockGetReplyFromConfigOnce,
   onceMessage,
+  prepareGatewayReplyRuntimeForTest,
   rpcReq,
   testState,
   trackConnectChallengeNonce,
@@ -508,6 +509,7 @@ describe("gateway server chat", () => {
     };
     try {
       await writeSessionStore({ entries: {} });
+      await prepareGatewayReplyRuntimeForTest({ force: true });
 
       const res = await rpcReq(ws, "sessions.send", {
         key: "agent:orion:main",
