@@ -29,11 +29,7 @@ import {
   shouldRenderQueuedSendInThread,
 } from "./chat-progress.ts";
 import { chatMessagesContainQueuedSend } from "./chat-send-support.ts";
-import {
-  coalesceToolActivityMessages,
-  groupMessages,
-  isKeyedAssistantStreamFallbackMessage,
-} from "./chat-thread-grouping.ts";
+import { coalesceToolActivityMessages, groupMessages } from "./chat-thread-grouping.ts";
 import {
   appendCanvasBlockToAssistantMessage,
   buildMessageKeys,
@@ -59,6 +55,7 @@ import {
 import {
   findCurrentTurnBounds,
   findRunTurnBounds,
+  isKeyedAssistantStreamFallbackMessage,
   optionalBoundaryIdentity,
   optionalRunIdentity,
   resolveRunInsertionBounds,
