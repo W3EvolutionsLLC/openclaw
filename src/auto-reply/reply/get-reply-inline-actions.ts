@@ -338,13 +338,13 @@ export async function handleInlineActions(params: {
   const canUseInlineSkills = command.isAuthorizedSender && ctx.Surface === INTERNAL_MESSAGE_CHANNEL;
   const hasInlineSkillCandidate =
     canUseInlineSkills &&
+    !ctx.CommandInterpretationSuppressed &&
     listColonMarkedInlineSkillNames(command.commandBodyNormalized).some(isPotentialInlineSkillName);
   const shouldLoadSkillCommands =
     allowTextCommands && (hasSkillReferences || hasSkillSlashCandidate || hasInlineSkillCandidate);
-  const canReusePreloadedSkillCommands = execOverrides === undefined;
   const skillCommands =
     shouldLoadSkillCommands &&
-    canReusePreloadedSkillCommands &&
+    execOverrides === undefined &&
     params.skillCommands &&
     params.skillCommands.length > 0
       ? params.skillCommands
@@ -381,7 +381,7 @@ export async function handleInlineActions(params: {
           skillCommands,
         })
       : null;
-  if (!skillInvocation && allowTextCommands && canUseInlineSkills && skillCommands.length > 0) {
+  if (!skillInvocation && allowTextCommands && hasInlineSkillCandidate && skillCommands.length) {
     skillInvocation = resolveInlineSkillCommandInvocation({
       commandBodyNormalized: command.commandBodyNormalized,
       skillCommands,

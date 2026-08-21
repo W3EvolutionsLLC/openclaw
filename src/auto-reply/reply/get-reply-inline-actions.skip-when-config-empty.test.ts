@@ -801,6 +801,40 @@ describe("handleInlineActions", () => {
     expect(handleCommandsMock).not.toHaveBeenCalled();
   });
 
+  it("keeps inline skill markers literal when command interpretation is suppressed", async () => {
+    const typing = createTypingController();
+    const body = "Please use /office_hours: to build me a deployment plan";
+    const ctx = buildTestCtx({
+      Body: body,
+      CommandBody: body,
+      Provider: "webchat",
+      Surface: "webchat",
+      CommandInterpretationSuppressed: true,
+    });
+
+    const result = await handleInlineActions(
+      createHandleInlineActionsInput({
+        ctx,
+        typing,
+        cleanedBody: body,
+        command: {
+          isAuthorizedSender: true,
+          rawBodyNormalized: body,
+          commandBodyNormalized: body,
+        },
+        overrides: {
+          allowTextCommands: true,
+          cfg: { commands: { text: true } },
+          skillCommands: officeHoursSkillCommands(),
+        },
+      }),
+    );
+
+    expect(result).toMatchObject({ kind: "continue", cleanedBody: body });
+    expect(ctx.Body).toBe(body);
+    expect(handleCommandsMock).not.toHaveBeenCalled();
+  });
+
   it("preserves slash commands inside an inline skill payload", async () => {
     const typing = createTypingController();
     const body = "/office_hours: compare /help and /commands with /status";
