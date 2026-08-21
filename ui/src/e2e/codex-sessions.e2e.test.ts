@@ -518,6 +518,22 @@ suite.define(() => {
           paddingTop: "4px",
         });
       }
+      const catalogRow = projectRows.first();
+      await catalogRow.hover();
+      const catalogActionReservation = await catalogRow.evaluate((row) => {
+        const text = row.querySelector<HTMLElement>(".sidebar-recent-session__text");
+        const menu = row.querySelector<HTMLElement>("[data-catalog-session-menu]");
+        return {
+          actionCount: row.getAttribute("data-session-row-action-count"),
+          menuWidth: menu?.getBoundingClientRect().width ?? 0,
+          paddingRight: text ? Number.parseFloat(getComputedStyle(text).paddingRight) : 0,
+        };
+      });
+      expect(catalogActionReservation.actionCount).toBe("1");
+      expect(catalogActionReservation.paddingRight).toBeCloseTo(
+        catalogActionReservation.menuWidth + 3,
+        0,
+      );
       const projectLabelTone = await openclawProject
         .locator(".sidebar-session-catalog-project__label")
         .evaluate((label) => {

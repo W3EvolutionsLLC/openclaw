@@ -16,7 +16,6 @@ const suite = createSessionManagementE2eSuite();
 suite.define(() => {
   it("vertically centers session actions in a two-line row", async () => {
     const context = await suite.browser.newContext({
-      hasTouch: true,
       locale: "en-US",
       serviceWorkers: "block",
       viewport: { height: 900, width: 1280 },
@@ -41,19 +40,30 @@ suite.define(() => {
       await page.goto(`${suite.server.baseUrl}chat`);
       const row = page.locator('[data-session-key="agent:main:two-line"]');
       await row.waitFor({ state: "visible", timeout: 10_000 });
+      await row.hover();
       const pin = row.getByRole("button", { name: "Unpin session" });
       const menu = row.getByRole("button", { name: "Open session menu" });
       await expect.poll(() => actionOpacity(pin)).toBe("1");
+      await pin.hover();
       await captureUiProof(page, "sidebar-session-actions-centered.png");
 
-      const [rowBounds, titleBounds, subtitleBounds, pinBounds, menuBounds] = await Promise.all([
-        row.boundingBox(),
-        row.locator(".sidebar-recent-session__name").boundingBox(),
-        row.locator(".sidebar-recent-session__subtitle").boundingBox(),
-        pin.boundingBox(),
-        menu.boundingBox(),
-      ]);
-      if (!rowBounds || !titleBounds || !subtitleBounds || !pinBounds || !menuBounds) {
+      const [rowBounds, titleBounds, subtitleBounds, pinBounds, pinGlyphBounds, menuBounds] =
+        await Promise.all([
+          row.boundingBox(),
+          row.locator(".sidebar-recent-session__name").boundingBox(),
+          row.locator(".sidebar-recent-session__subtitle").boundingBox(),
+          pin.boundingBox(),
+          pin.locator("svg").boundingBox(),
+          menu.boundingBox(),
+        ]);
+      if (
+        !rowBounds ||
+        !titleBounds ||
+        !subtitleBounds ||
+        !pinBounds ||
+        !pinGlyphBounds ||
+        !menuBounds
+      ) {
         throw new Error("Expected visible two-line session action geometry");
       }
       const rowCenter = rowBounds.y + rowBounds.height / 2;
@@ -63,7 +73,61 @@ suite.define(() => {
       expect(subtitleBounds.y + subtitleBounds.height / 2).toBeGreaterThan(rowCenter);
       expect(Math.abs(pinBounds.y + pinBounds.height / 2 - titleCenter)).toBeLessThanOrEqual(1);
       expect(Math.abs(menuBounds.y + menuBounds.height / 2 - titleCenter)).toBeLessThanOrEqual(1);
-      expect(pinBounds.y + pinBounds.height / 2).toBeLessThan(subtitleBounds.y);
+      expect(pinBounds.width).toBeGreaterThanOrEqual(24);
+      expect(pinBounds.height).toBeGreaterThanOrEqual(24);
+      expect(menuBounds.width).toBeGreaterThanOrEqual(24);
+      expect(menuBounds.height).toBeGreaterThanOrEqual(24);
+      expect(pinGlyphBounds.y + pinGlyphBounds.height).toBeLessThanOrEqual(subtitleBounds.y);
+      const subtitleHitTarget = await page.evaluate(
+        ({ x, y }) => {
+          const target = document.elementFromPoint(x, y);
+          return {
+            action: target?.closest(".session-action")?.getAttribute("aria-label") ?? null,
+            link: target?.closest(".sidebar-recent-session__link") !== null,
+          };
+        },
+        {
+          x: pinBounds.x + pinBounds.width / 2,
+          y: subtitleBounds.y + 1,
+        },
+      );
+      expect(subtitleHitTarget).toEqual({ action: null, link: true });
+
+      await page.evaluate(() => {
+        document.documentElement.style.setProperty("--control-ui-text-scale", "1.4");
+      });
+      const [
+        scaledTitleBounds,
+        scaledSubtitleBounds,
+        scaledPinBounds,
+        scaledPinGlyphBounds,
+        scaledMenuBounds,
+      ] = await Promise.all([
+        row.locator(".sidebar-recent-session__name").boundingBox(),
+        row.locator(".sidebar-recent-session__subtitle").boundingBox(),
+        pin.boundingBox(),
+        pin.locator("svg").boundingBox(),
+        menu.boundingBox(),
+      ]);
+      if (
+        !scaledTitleBounds ||
+        !scaledSubtitleBounds ||
+        !scaledPinBounds ||
+        !scaledPinGlyphBounds ||
+        !scaledMenuBounds
+      ) {
+        throw new Error("Expected scaled two-line session action geometry");
+      }
+      const scaledTitleCenter = scaledTitleBounds.y + scaledTitleBounds.height / 2;
+      expect(
+        Math.abs(scaledPinBounds.y + scaledPinBounds.height / 2 - scaledTitleCenter),
+      ).toBeLessThanOrEqual(1);
+      expect(
+        Math.abs(scaledMenuBounds.y + scaledMenuBounds.height / 2 - scaledTitleCenter),
+      ).toBeLessThanOrEqual(1);
+      expect(scaledPinGlyphBounds.y + scaledPinGlyphBounds.height).toBeLessThanOrEqual(
+        scaledSubtitleBounds.y,
+      );
     } finally {
       await context.close();
     }
@@ -109,33 +173,43 @@ suite.define(() => {
         .toBe("2px");
       const restingTextBounds = await actionOnlyText.boundingBox();
 
-      // The reservation is whatever the action buttons actually occupy, so it
-      // tracks their box rather than a number copied from the stylesheet.
-      const reservesRoomForActions = async () => {
-        const [padding, aside] = await Promise.all([
-          actionOnlyText.evaluate((element) =>
-            Number.parseFloat(getComputedStyle(element).paddingRight),
-          ),
-          actionOnlyRow.locator(".sidebar-recent-session__aside").boundingBox(),
-        ]);
-        return aside != null && padding >= aside.width;
-      };
-
       await actionOnlyRow.hover();
       await expect.poll(() => actionOpacity(actionOnlyPin)).toBe("1");
-      await expect.poll(reservesRoomForActions).toBe(true);
-      const hoveredTextBounds = await actionOnlyText.boundingBox();
+      const [actionOnlyHoveredTextBounds, actionOnlyHoveredNameBounds, actionOnlyHoveredPinBounds] =
+        await Promise.all([
+          actionOnlyText.boundingBox(),
+          actionOnlyRow.locator(".sidebar-recent-session__name").boundingBox(),
+          actionOnlyPin.boundingBox(),
+        ]);
 
       await page.mouse.move(0, 0);
       await actionOnlyPin.focus();
       await expect.poll(() => actionOpacity(actionOnlyPin)).toBe("1");
-      await expect.poll(reservesRoomForActions).toBe(true);
-      const focusedTextBounds = await actionOnlyText.boundingBox();
-      if (!restingTextBounds || !hoveredTextBounds || !focusedTextBounds) {
+      const [actionOnlyFocusedTextBounds, actionOnlyFocusedNameBounds, actionOnlyFocusedPinBounds] =
+        await Promise.all([
+          actionOnlyText.boundingBox(),
+          actionOnlyRow.locator(".sidebar-recent-session__name").boundingBox(),
+          actionOnlyPin.boundingBox(),
+        ]);
+      if (
+        !restingTextBounds ||
+        !actionOnlyHoveredTextBounds ||
+        !actionOnlyHoveredNameBounds ||
+        !actionOnlyHoveredPinBounds ||
+        !actionOnlyFocusedTextBounds ||
+        !actionOnlyFocusedNameBounds ||
+        !actionOnlyFocusedPinBounds
+      ) {
         throw new Error("Expected visible action-only text geometry");
       }
-      expect(hoveredTextBounds.width).toBeCloseTo(restingTextBounds.width, 1);
-      expect(focusedTextBounds.width).toBeCloseTo(restingTextBounds.width, 1);
+      expect(actionOnlyHoveredTextBounds.width).toBeCloseTo(restingTextBounds.width, 1);
+      expect(actionOnlyFocusedTextBounds.width).toBeCloseTo(restingTextBounds.width, 1);
+      expect(actionOnlyHoveredNameBounds.x + actionOnlyHoveredNameBounds.width).toBeLessThanOrEqual(
+        actionOnlyHoveredPinBounds.x + 1,
+      );
+      expect(actionOnlyFocusedNameBounds.x + actionOnlyFocusedNameBounds.width).toBeLessThanOrEqual(
+        actionOnlyFocusedPinBounds.x + 1,
+      );
 
       const row = page.locator('[data-session-key="agent:main:hover-active"]');
       await row.waitFor({ state: "visible", timeout: 10_000 });
@@ -150,7 +224,6 @@ suite.define(() => {
       // reach the actions must not take it away on a two-line row.
       await expect.poll(() => actionOpacity(state)).toBe("1");
       await expect.poll(() => state.locator(".session-run-spinner").isVisible()).toBe(true);
-      await expect.poll(() => actionOpacity(state)).toBe("1");
       await expect.poll(() => actionOpacity(pin)).toBe("1");
       await expect.poll(() => actionOpacity(menu)).toBe("1");
 
@@ -351,15 +424,26 @@ suite.define(() => {
             status: "running",
             unread: true,
           }),
+          sessionRow("agent:main:archived", "Archived glyph", Date.now() - 2, {
+            archived: true,
+          }),
+          sessionRow("agent:main:queued", "Queued glyph", Date.now() - 3, {
+            hasActiveRun: true,
+            status: "queued",
+          }),
         ]),
       },
-      sessionKey: "agent:main:main",
+      sessionKey: "agent:main:archived",
     });
 
     try {
       await page.goto(`${suite.server.baseUrl}chat`);
       const row = page.locator('[data-session-key="agent:main:mixed"]');
+      const archivedRow = page.locator('[data-session-key="agent:main:archived"]');
+      const queuedRow = page.locator('[data-session-key="agent:main:queued"]');
       await row.waitFor({ state: "visible", timeout: 10_000 });
+      await archivedRow.waitFor({ state: "visible", timeout: 10_000 });
+      await queuedRow.waitFor({ state: "visible", timeout: 10_000 });
       await row.hover();
       await expect
         .poll(() =>
@@ -370,21 +454,29 @@ suite.define(() => {
       // Badges, fork provenance and the action icons drew themselves at
       // different sizes on the same line, which reads as broken alignment. The
       // unread dot is a dot rather than a glyph and keeps its own size.
-      const measured = await row.evaluate((element) => {
-        const glyphSizes = new Set<string>();
-        for (const glyph of element.querySelectorAll("svg")) {
-          if (glyph.getBoundingClientRect().width === 0) {
-            continue;
+      const measured = await page
+        .locator(
+          '[data-session-key="agent:main:mixed"], [data-session-key="agent:main:archived"], [data-session-key="agent:main:queued"]',
+        )
+        .evaluateAll((elements) => {
+          const glyphSizes = new Set<string>();
+          for (const element of elements) {
+            for (const glyph of element.querySelectorAll("svg")) {
+              if (glyph.getBoundingClientRect().width === 0) {
+                continue;
+              }
+              const style = getComputedStyle(glyph);
+              glyphSizes.add(
+                `${Number.parseFloat(style.width)}x${Number.parseFloat(style.height)}`,
+              );
+            }
           }
-          const style = getComputedStyle(glyph);
-          glyphSizes.add(`${Number.parseFloat(style.width)}x${Number.parseFloat(style.height)}`);
-        }
-        const spinner = element.querySelector(".session-run-spinner");
-        return {
-          glyphSizes: [...glyphSizes],
-          spinnerWidth: spinner ? Number.parseFloat(getComputedStyle(spinner).width) : null,
-        };
-      });
+          const spinner = elements[0]?.querySelector(".session-run-spinner");
+          return {
+            glyphSizes: [...glyphSizes],
+            spinnerWidth: spinner ? Number.parseFloat(getComputedStyle(spinner).width) : null,
+          };
+        });
 
       expect(measured.glyphSizes.length, JSON.stringify(measured.glyphSizes)).toBe(1);
       // The ring inks its whole box while the icons only ink 9-10px of theirs,
@@ -408,10 +500,14 @@ suite.define(() => {
       methodResponses: {
         "sessions.list": sessionsListResponse([
           sessionRow("agent:main:main", "Main", Date.now()),
-          sessionRow("agent:main:touch-active", "Touch active", Date.now() - 1, {
-            hasActiveRun: true,
-            status: "running",
-          }),
+          Object.assign(
+            sessionRow("agent:main:touch-active", "Touch active", Date.now() - 1, {
+              hasActiveRun: true,
+              status: "running",
+            }),
+            { lastMessagePreview: "Persistent touch subtitle" },
+          ),
+          sessionRow("agent:main:touch-idle", "Touch idle", Date.now() - 2),
         ]),
       },
       sessionKey: "agent:main:main",
@@ -420,7 +516,9 @@ suite.define(() => {
     try {
       await page.goto(`${suite.server.baseUrl}chat`);
       const row = page.locator('[data-session-key="agent:main:touch-active"]');
+      const singleLineRow = page.locator('[data-session-key="agent:main:touch-idle"]');
       await row.waitFor({ state: "visible", timeout: 10_000 });
+      await singleLineRow.waitFor({ state: "visible", timeout: 10_000 });
       const state = row.locator(".session-row-state");
       const pin = row.getByRole("button", { name: "Pin session" });
       const menu = row.getByRole("button", { name: "Open session menu" });
@@ -429,11 +527,106 @@ suite.define(() => {
       await expect.poll(() => pin.isVisible()).toBe(true);
       await expect.poll(() => menu.isVisible()).toBe(true);
 
-      const [stateBounds, pinBounds] = await Promise.all([state.boundingBox(), pin.boundingBox()]);
-      if (!stateBounds || !pinBounds) {
+      const [rowBounds, stateBounds, pinBounds, menuBounds] = await Promise.all([
+        row.boundingBox(),
+        state.boundingBox(),
+        pin.boundingBox(),
+        menu.boundingBox(),
+      ]);
+      if (!rowBounds || !stateBounds || !pinBounds || !menuBounds) {
         throw new Error("Expected visible touch state and action geometry");
       }
+      expect(rowBounds.height).toBeGreaterThanOrEqual(44);
+      expect(pinBounds.width).toBeGreaterThanOrEqual(44);
+      expect(pinBounds.height).toBeGreaterThanOrEqual(44);
+      expect(menuBounds.width).toBeGreaterThanOrEqual(44);
+      expect(menuBounds.height).toBeGreaterThanOrEqual(44);
       expect(stateBounds.x + stateBounds.width).toBeLessThanOrEqual(pinBounds.x);
+      const [singleLineRowBounds, singleLineLinkBounds] = await Promise.all([
+        singleLineRow.boundingBox(),
+        singleLineRow.locator(".sidebar-recent-session__link").boundingBox(),
+      ]);
+      if (!singleLineRowBounds || !singleLineLinkBounds) {
+        throw new Error("Expected visible single-line touch row geometry");
+      }
+      expect(singleLineLinkBounds.height).toBeGreaterThanOrEqual(singleLineRowBounds.height);
+      const topBandIsLink = await page.evaluate(
+        ({ x, y }) =>
+          document.elementFromPoint(x, y)?.closest(".sidebar-recent-session__link") !== null,
+        {
+          x: singleLineRowBounds.x + 20,
+          y: singleLineRowBounds.y + 1,
+        },
+      );
+      expect(topBandIsLink).toBe(true);
+    } finally {
+      await context.close();
+    }
+  });
+
+  it("contains touch actions within consecutive pinned rows", async () => {
+    const context = await suite.browser.newContext({
+      hasTouch: true,
+      locale: "en-US",
+      serviceWorkers: "block",
+      viewport: { height: 900, width: 1280 },
+    });
+    const page = await context.newPage();
+    const now = Date.now();
+    await installMockGateway(page, {
+      methodResponses: {
+        "sessions.list": sessionsListResponse([
+          sessionRow("agent:main:main", "Main", now),
+          sessionRow("agent:main:pinned-first", "Pinned first", now - 1, {
+            pinned: true,
+            pinnedAt: now - 1,
+          }),
+          sessionRow("agent:main:pinned-second", "Pinned second", now - 2, {
+            pinned: true,
+            pinnedAt: now - 2,
+          }),
+        ]),
+      },
+      sessionKey: "agent:main:main",
+    });
+
+    try {
+      await page.goto(`${suite.server.baseUrl}chat`);
+      const firstRow = page.locator(
+        '[data-sidebar-entry="session:agent:main:pinned-first"] .sidebar-recent-session',
+      );
+      const secondRow = page.locator(
+        '[data-sidebar-entry="session:agent:main:pinned-second"] .sidebar-recent-session',
+      );
+      await firstRow.waitFor({ state: "visible", timeout: 10_000 });
+      await secondRow.waitFor({ state: "visible", timeout: 10_000 });
+      const firstMenu = firstRow.getByRole("button", { name: "Open session menu: Pinned first" });
+      const [firstRowBounds, secondRowBounds, firstMenuBounds] = await Promise.all([
+        firstRow.boundingBox(),
+        secondRow.boundingBox(),
+        firstMenu.boundingBox(),
+      ]);
+      if (!firstRowBounds || !secondRowBounds || !firstMenuBounds) {
+        throw new Error("Expected visible pinned touch row geometry");
+      }
+      expect(firstRowBounds.height).toBeGreaterThanOrEqual(44);
+      expect(secondRowBounds.height).toBeGreaterThanOrEqual(44);
+      expect(firstMenuBounds.y).toBeGreaterThanOrEqual(firstRowBounds.y);
+      expect(firstMenuBounds.y + firstMenuBounds.height).toBeLessThanOrEqual(
+        firstRowBounds.y + firstRowBounds.height,
+      );
+      const boundaryTarget = await page.evaluate(
+        ({ x, y }) =>
+          document
+            .elementFromPoint(x, y)
+            ?.closest<HTMLElement>(".sidebar-recent-session")
+            ?.getAttribute("data-session-key") ?? null,
+        {
+          x: firstMenuBounds.x + firstMenuBounds.width / 2,
+          y: secondRowBounds.y + 1,
+        },
+      );
+      expect(boundaryTarget).toBe("agent:main:pinned-second");
     } finally {
       await context.close();
     }
@@ -537,6 +730,20 @@ suite.define(() => {
       if (!endcapBounds || !openPullRequestBounds || !spinnerBounds || !unreadBounds) {
         throw new Error("Expected visible combined session state geometry");
       }
+      const [pullRequestGlyphStyle, actionGlyphStyle] = await Promise.all([
+        state.locator("[data-session-pr-state='open'] svg").evaluate((glyph) => {
+          const style = getComputedStyle(glyph);
+          return { height: style.height, strokeWidth: style.strokeWidth, width: style.width };
+        }),
+        row
+          .locator(".session-action svg")
+          .first()
+          .evaluate((glyph) => {
+            const style = getComputedStyle(glyph);
+            return { height: style.height, strokeWidth: style.strokeWidth, width: style.width };
+          }),
+      ]);
+      expect(pullRequestGlyphStyle).toEqual(actionGlyphStyle);
       // Even rhythm across the endcap: a box padded to some other control's size
       // leaves one glyph adrift from its neighbours.
       const endcapGaps = await row.evaluate((element) => {
@@ -546,7 +753,7 @@ suite.define(() => {
         ]
           .map((glyph) => glyph.getBoundingClientRect())
           .filter((rect) => rect.width > 0)
-          .sort((left, right) => left.left - right.left);
+          .toSorted((left, right) => left.left - right.left);
         return glyphs.slice(1).map((rect, index) => {
           const previous = glyphs[index] as DOMRect;
           return Math.round((rect.left - previous.right) * 10) / 10;
@@ -563,9 +770,6 @@ suite.define(() => {
         );
       }
       const link = row.locator(".sidebar-recent-session__link");
-      const rowText = row.locator(".sidebar-recent-session__text");
-      // Two-line row: only the title yields width, so the second line keeps its own.
-      const rowTitle = row.locator(".sidebar-recent-session__title-row");
       const pin = row.getByRole("button", { name: "Pin session" });
       const menu = row.getByRole("button", { name: "Open session menu" });
       await expect
@@ -597,25 +801,15 @@ suite.define(() => {
       await expect.poll(() => actionOpacity(state)).toBe("1");
       await expect.poll(() => actionOpacity(pin)).toBe("1");
       await expect.poll(() => actionOpacity(menu)).toBe("1");
-      await expect
-        .poll(async () => {
-          const [padding, aside] = await Promise.all([
-            rowTitle.evaluate((element) =>
-              Number.parseFloat(getComputedStyle(element).paddingRight),
-            ),
-            row.locator(".sidebar-recent-session__aside").boundingBox(),
-          ]);
-          return aside != null && padding >= aside.width;
-        })
-        .toBe(true);
 
-      const [textBounds, nameBounds, pinBounds, menuBounds] = await Promise.all([
+      const [textBounds, nameBounds, pinBounds, pinGlyphBounds, menuBounds] = await Promise.all([
         row.locator(".sidebar-recent-session__text").boundingBox(),
         row.locator(".sidebar-recent-session__name").boundingBox(),
         pin.boundingBox(),
+        pin.locator("svg").boundingBox(),
         menu.boundingBox(),
       ]);
-      if (!textBounds || !nameBounds || !pinBounds || !menuBounds) {
+      if (!textBounds || !nameBounds || !pinBounds || !pinGlyphBounds || !menuBounds) {
         throw new Error("Expected visible combined session action geometry");
       }
       expect(textBounds.width).toBeCloseTo(restingTextBounds.width, 1);
@@ -625,7 +819,7 @@ suite.define(() => {
       if (!detailsBounds) {
         throw new Error("Expected a visible second line");
       }
-      expect(pinBounds.y + pinBounds.height).toBeLessThanOrEqual(detailsBounds.y);
+      expect(pinGlyphBounds.y + pinGlyphBounds.height).toBeLessThanOrEqual(detailsBounds.y);
       // The actions ride the title's midline now, and the title ends before them.
       expect(
         Math.abs(nameBounds.y + nameBounds.height / 2 - (pinBounds.y + pinBounds.height / 2)),
@@ -637,17 +831,6 @@ suite.define(() => {
       await expect.poll(() => actionOpacity(state)).toBe("1");
       await expect.poll(() => actionOpacity(pin)).toBe("1");
       await expect.poll(() => actionOpacity(menu)).toBe("1");
-      await expect
-        .poll(async () => {
-          const [padding, aside] = await Promise.all([
-            rowTitle.evaluate((element) =>
-              Number.parseFloat(getComputedStyle(element).paddingRight),
-            ),
-            row.locator(".sidebar-recent-session__aside").boundingBox(),
-          ]);
-          return aside != null && padding >= aside.width;
-        })
-        .toBe(true);
 
       const [focusedTextBounds, focusedNameBounds, focusedPinBounds, focusedMenuBounds] =
         await Promise.all([

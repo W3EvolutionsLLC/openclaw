@@ -460,6 +460,7 @@ function renderCatalogSessionRow(
         ? "session-row-host--running"
         : ""}"
       data-session-key=${key}
+      data-session-row-action-count="1"
       role="listitem"
       @contextmenu=${openMenuFromEvent}
       @keydown=${openMenuFromEvent}

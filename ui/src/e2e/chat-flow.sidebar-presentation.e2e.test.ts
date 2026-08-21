@@ -237,7 +237,7 @@ suite.define(() => {
     const sessions = chatSessionListResponse();
     const firstSession = expectDefined(sessions.sessions[0], "first chat session fixture");
     const secondSession = expectDefined(sessions.sessions[1], "second chat session fixture");
-    firstSession.label = "Short";
+    firstSession.label = "Title fits until actions appear";
     secondSession.label =
       "Review and repair the intentionally overlong sidebar session title before navigation ".repeat(
         4,
@@ -263,10 +263,51 @@ suite.define(() => {
       }));
       expect(layout.scrollWidth, JSON.stringify(layout)).toBeGreaterThan(layout.clientWidth);
 
+      const hoverOnlyRow = page.locator(
+        '.sidebar-recent-session[data-session-key="agent:main:session-a"]',
+      );
+      const hoverOnlyLabel = hoverOnlyRow.locator(".sidebar-recent-session__name");
+      const restingHoverOnlyLayout = await hoverOnlyLabel.evaluate((label) => {
+        const viewport = label.parentElement as HTMLElement;
+        const style = getComputedStyle(viewport);
+        return {
+          scrollWidth: label.scrollWidth,
+          viewportWidth:
+            viewport.clientWidth -
+            (Number.parseFloat(style.paddingLeft) || 0) -
+            (Number.parseFloat(style.paddingRight) || 0),
+        };
+      });
+      expect(
+        restingHoverOnlyLayout.scrollWidth,
+        JSON.stringify(restingHoverOnlyLayout),
+      ).toBeLessThanOrEqual(restingHoverOnlyLayout.viewportWidth);
+      await hoverOnlyRow.hover();
+      const hoveredHoverOnlyLayout = await hoverOnlyLabel.evaluate((label) => {
+        const viewport = label.parentElement as HTMLElement;
+        const style = getComputedStyle(viewport);
+        return {
+          scrollWidth: label.scrollWidth,
+          viewportWidth:
+            viewport.clientWidth -
+            (Number.parseFloat(style.paddingLeft) || 0) -
+            (Number.parseFloat(style.paddingRight) || 0),
+        };
+      });
+      expect(
+        hoveredHoverOnlyLayout.scrollWidth,
+        JSON.stringify(hoveredHoverOnlyLayout),
+      ).toBeGreaterThan(hoveredHoverOnlyLayout.viewportWidth);
+      await expect
+        .poll(() => hoverOnlyLabel.evaluate((label) => label.classList.value), { timeout: 1_500 })
+        .toContain("hover-marquee--scrolling");
+      await page.mouse.move(0, 0);
+
       // Freeze the clock so the 500ms hover-intent delay elapses only via
       // runFor; a ticking clock let slow runners start the marquee before the
       // "not yet scrolling" asserts below.
       await pauseVirtualClock(page);
+
       await recentRow.dispatchEvent("mouseenter");
       await page.clock.runFor(250);
       expect(await recentLabel.evaluate((label) => label.classList.value)).not.toContain(
@@ -279,7 +320,7 @@ suite.define(() => {
         "hover-marquee--scrolling",
       );
       await recentRow.dispatchEvent("mouseenter");
-      await page.clock.runFor(500);
+      await page.clock.runFor(520);
       await expect
         .poll(() => recentLabel.evaluate((label) => label.classList.value), { timeout: 1_500 })
         .toContain("hover-marquee--scrolling");

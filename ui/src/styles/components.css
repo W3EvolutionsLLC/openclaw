@@ -5678,15 +5678,10 @@ td.data-table-key-col {
      everything on its line. Rows outside this host keep the ring's own size. */
   --session-row-ring-size: calc(var(--session-row-glyph-size) - 3px);
 
-  /* One grid for everything in the trailing column. The action buttons set it:
-     their box plus a hair of separation, so adjacent hover fills stay distinct
-     and adjacent hit areas never touch, and the endcap's bare glyphs then
-     borrow the same pitch and the same inset. Left to their own values the
-     buttons stepped 25px while the badges stepped 20px and sat 5px further
-     right, so no glyph ever landed under the one above it. The box is the
-     smallest that still reads as a button around a 14px glyph; anything wider
-     spaced the whole column out for the sake of empty hover fill. */
-  --session-row-action-size: 20px;
+  /* One grid for everything in the trailing column. The 24px action target and
+     its hair of separation set the desktop pitch; bare endcap glyphs borrow
+     that pitch and the button's inset so both lines share one trailing axis. */
+  --session-row-action-size: 24px;
   --session-row-action-gap: 1px;
   --session-row-glyph-pitch: calc(var(--session-row-action-size) + var(--session-row-action-gap));
   --session-row-glyph-gap: calc(var(--session-row-glyph-pitch) - var(--session-row-glyph-size));
@@ -5701,6 +5696,10 @@ td.data-table-key-col {
   );
 
   position: relative;
+}
+
+.session-row-host[data-session-row-action-count="1"] {
+  --session-row-actions-reserve: calc(var(--session-row-action-size) + 3px);
 }
 
 .session-row-host--draft {
@@ -5885,6 +5884,7 @@ td.data-table-key-col {
 }
 
 .session-action {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -5899,11 +5899,22 @@ td.data-table-key-col {
   pointer-events: none;
   transition:
     opacity var(--duration-fast) ease,
-    background var(--duration-fast) ease,
     color var(--duration-fast) ease;
 }
 
+.session-action::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: transparent;
+  pointer-events: none;
+  transition: background var(--duration-fast) ease;
+}
+
 .session-action svg {
+  position: relative;
+  z-index: 1;
   width: var(--session-row-glyph-size, 14px);
   height: var(--session-row-glyph-size, 14px);
   stroke: currentColor;
@@ -5913,8 +5924,11 @@ td.data-table-key-col {
   stroke-linejoin: round;
 }
 
-.session-action:hover:not(:disabled) {
+.session-action:hover:not(:disabled)::before {
   background: color-mix(in srgb, var(--bg-hover) 92%, transparent);
+}
+
+.session-action:hover:not(:disabled) {
   color: var(--text);
 }
 
@@ -5946,6 +5960,13 @@ td.data-table-key-col {
 /* Sidebar rows are now the direct management surface after removing the
    duplicate picker; touch users need pin/menu controls without hover. */
 @media (hover: none), (pointer: coarse) {
+  .sidebar-recent-session.session-row-host {
+    --session-row-action-size: 44px;
+    /* Keep semantic endcap glyphs compact while their trailing axis follows
+       the larger touch target through --session-row-glyph-inset. */
+    --session-row-glyph-pitch: 25px;
+  }
+
   .sidebar-recent-session .session-action {
     opacity: 1;
     pointer-events: auto;
