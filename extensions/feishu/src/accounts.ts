@@ -211,7 +211,7 @@ function mergeFeishuAccountConfig(cfg: ClawdbotConfig, accountId: string): Feish
  */
 export function resolveFeishuCredentials(
   cfg?: FeishuConfig,
-  options?: { mode?: FeishuCredentialResolutionMode },
+  options?: { mode?: FeishuCredentialResolutionMode; rootConfig?: ClawdbotConfig },
 ): {
   appId: string;
   appSecret: string;
@@ -220,11 +220,11 @@ export function resolveFeishuCredentials(
   domain: FeishuDomain;
 } | null {
   const mode = options?.mode ?? "strict";
-  const base = resolveFeishuBaseCredentials(cfg, mode);
+  const base = resolveFeishuBaseCredentials(cfg, mode, options?.rootConfig);
   if (!base) {
     return null;
   }
-  const eventSecrets = resolveFeishuEventSecrets(cfg, mode);
+  const eventSecrets = resolveFeishuEventSecrets(cfg, mode, options?.rootConfig);
 
   return {
     ...base,
@@ -232,8 +232,8 @@ export function resolveFeishuCredentials(
   };
 }
 
-export function inspectFeishuCredentials(cfg?: FeishuConfig) {
-  return resolveFeishuCredentials(cfg, { mode: "inspect" });
+export function inspectFeishuCredentials(cfg?: FeishuConfig, rootConfig?: ClawdbotConfig) {
+  return resolveFeishuCredentials(cfg, { mode: "inspect", rootConfig });
 }
 
 function buildResolvedFeishuAccount(params: {
