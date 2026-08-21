@@ -371,6 +371,93 @@ describe("createOAuthManager", () => {
     });
   });
 
+  it("does not mirror a stale refresh over a newer same-identity main login", async () => {
+    await withOAuthAgentDirs(
+      "oauth-manager-main-mirror-generation-",
+      async ({ mainAgentDir, agentDir }) => {
+        const profileId = "openai:oauth";
+        const expired = createCredential({
+          access: "expired-access",
+          refresh: "expired-refresh",
+          expires: Date.now() - 60_000,
+          accountId: "acct-123",
+        });
+        const olderMainCredential = createCredential({
+          access: "older-main-access",
+          refresh: "older-main-refresh",
+          expires: Date.now() - 120_000,
+          accountId: "acct-123",
+        });
+        const relogged = createCredential({
+          access: "relogged-access",
+          refresh: "relogged-refresh",
+          expires: Date.now() + 10 * 60_000,
+          accountId: "acct-123",
+        });
+        saveAuthProfileStore(
+          {
+            version: 1,
+            profiles: { [profileId]: olderMainCredential },
+            usageStats: { [profileId]: { credentialGeneration: 3 } },
+          },
+          mainAgentDir,
+          { filterExternalAuthProfiles: false },
+        );
+        saveAuthProfileStore(
+          {
+            version: 1,
+            profiles: { [profileId]: expired },
+            usageStats: { [profileId]: { credentialGeneration: 3 } },
+          },
+          agentDir,
+          { filterExternalAuthProfiles: false },
+        );
+
+        const manager = createOAuthManager({
+          buildApiKey: async (_provider, credential) => credential.access,
+          refreshCredential: vi.fn(async () => {
+            saveAuthProfileStore(
+              {
+                version: 1,
+                profiles: { [profileId]: relogged },
+                usageStats: { [profileId]: { credentialGeneration: 4 } },
+              },
+              mainAgentDir,
+              { filterExternalAuthProfiles: false },
+            );
+            return {
+              access: "rotated-access",
+              refresh: "rotated-refresh",
+              expires: Date.now() + 20 * 60_000,
+            };
+          }),
+          readBootstrapCredential: () => null,
+          isRefreshTokenReusedError: () => false,
+        });
+
+        const result = await manager.resolveOAuthAccess({
+          store: ensureAuthProfileStoreWithoutExternalProfiles(agentDir, {
+            allowKeychainPrompt: false,
+          }),
+          profileId,
+          credential: expired,
+          agentDir,
+        });
+
+        expect(result?.apiKey).toBe("rotated-access");
+        const mainStore = ensureAuthProfileStoreWithoutExternalProfiles(mainAgentDir, {
+          allowKeychainPrompt: false,
+        });
+        expect(mainStore.profiles[profileId]).toMatchObject({
+          access: "relogged-access",
+          refresh: "relogged-refresh",
+          accountId: "acct-123",
+        });
+        expect(mainStore.usageStats?.[profileId]?.credentialGeneration).toBe(4);
+      },
+    );
+  });
+
   it("adopts main-store OAuth when the local expiry is out of range", async () => {
     await withOAuthAgentDirs("oauth-manager-invalid-local-", async ({ mainAgentDir, agentDir }) => {
       const profileId = "openai-codex:default";

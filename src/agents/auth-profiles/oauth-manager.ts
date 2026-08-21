@@ -386,12 +386,23 @@ export function createOAuthManager(adapter: OAuthManagerAdapter) {
   async function mirrorRefreshedCredentialIntoMainStore(params: {
     profileId: string;
     refreshed: OAuthCredential;
+    expectedCredentialGeneration: number;
   }): Promise<void> {
     try {
       await updateAuthProfileStoreWithLock({
         agentDir: undefined,
         updater: (store) => {
           const existing = store.profiles[params.profileId];
+          if (
+            (store.usageStats?.[params.profileId]?.credentialGeneration ?? 0) !==
+            params.expectedCredentialGeneration
+          ) {
+            authProfilesLog.debug(
+              "skipped OAuth credential mirror because the main profile generation changed",
+              { profileId: params.profileId },
+            );
+            return false;
+          }
           const decision = shouldMirrorRefreshedOAuthCredential({
             existing,
             refreshed: params.refreshed,
@@ -530,6 +541,7 @@ export function createOAuthManager(adapter: OAuthManagerAdapter) {
         const credentialGeneration =
           store.usageStats?.[params.profileId]?.credentialGeneration ?? 0;
         let credentialToRefresh = cred;
+        let mainCredentialGeneration: number | undefined;
 
         if (!params.forceRefresh && hasUsableOAuthCredential(cred)) {
           return {
@@ -544,6 +556,8 @@ export function createOAuthManager(adapter: OAuthManagerAdapter) {
         if (params.agentDir) {
           try {
             const mainStore = loadStoredOAuthRefreshStore(undefined);
+            mainCredentialGeneration =
+              mainStore.usageStats?.[params.profileId]?.credentialGeneration ?? 0;
             const mainCred = mainStore.profiles[params.profileId];
             if (
               mainCred?.type === "oauth" &&
@@ -691,12 +705,13 @@ export function createOAuthManager(adapter: OAuthManagerAdapter) {
             };
           }
         }
-        if (ownerAgentDir) {
+        if (ownerAgentDir && mainCredentialGeneration !== undefined) {
           const mainPath = resolveSharedAuthStorePath();
           if (mainPath !== authPath) {
             await mirrorRefreshedCredentialIntoMainStore({
               profileId: params.profileId,
               refreshed: refreshedCredentials,
+              expectedCredentialGeneration: mainCredentialGeneration,
             });
           }
         }
