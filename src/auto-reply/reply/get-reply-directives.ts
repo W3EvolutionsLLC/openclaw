@@ -17,9 +17,11 @@ import { isFastTestRuntimeEnv } from "../../infra/env.js";
 import { normalizeAgentId } from "../../routing/session-key.js";
 import { ModelSelectionLockedError } from "../../sessions/model-overrides.js";
 import { createLazyImportLoader } from "../../shared/lazy-promise.js";
-import { resolveInlineSkillReferences } from "../../skills/discovery/chat-command-invocation.js";
+import {
+  expandExplicitSkillReferences,
+  hasSkillReferenceCandidate,
+} from "../../skills/discovery/chat-command-invocation.js";
 import type { SkillCommandSpec } from "../../skills/types.js";
-import { INTERNAL_MESSAGE_CHANNEL } from "../../utils/message-channel.js";
 import { isNativeCommandTurn, resolveCommandTurnContext } from "../command-turn-context.js";
 import { shouldHandleTextCommands } from "../commands-text-routing.js";
 import { markCommandReplyForDelivery } from "../reply-payload.js";
@@ -57,7 +59,6 @@ import {
   resolveContextTokens,
 } from "./model-selection.js";
 import { formatElevatedUnavailableMessage, resolveElevatedPermissions } from "./reply-elevated.js";
-import { isPotentialInlineSkillName, listColonMarkedInlineSkillNames } from "./reply-inline.js";
 import { resolveRuntimePolicySessionKey } from "./runtime-policy-session-key.js";
 import type { TypingController } from "./typing.js";
 
@@ -240,11 +241,8 @@ export async function resolveReplyDirectives(params: {
     Object.values(cfg.agents?.defaults?.models ?? {}).some((entry) =>
       Boolean(normalizeOptionalString(entry.alias)),
     );
-  const canUseInlineSkills = canInterpretTextDirectives && ctx.Surface === INTERNAL_MESSAGE_CHANNEL;
-  const inlineSkillMarkerNames = canUseInlineSkills
-    ? listColonMarkedInlineSkillNames(commandText)
-    : [];
-  const hasInlineSkillCandidate = inlineSkillMarkerNames.some(isPotentialInlineSkillName);
+  const hasSkillReferences =
+    canInterpretTextDirectives && hasSkillReferenceCandidate(command.commandBodyNormalized);
   const reservedCommands = new Set<string>();
   if (hasConfiguredModelAliases) {
     const { listChatCommands } = await loadCommandsRegistry();
@@ -263,12 +261,10 @@ export async function resolveReplyDirectives(params: {
       })
     : [];
 
-  // Only load workspace skill commands when aliases or explicit WebChat skill markers need them.
+  // Only load workspace skill commands when aliases or explicit skill references need them.
   // This avoids scanning skills for ordinary text, paths, and built-in slash directives.
   const skillCommands =
-    canInterpretTextDirectives &&
-    commandTextHasSlash &&
-    (rawAliases.length > 0 || hasInlineSkillCandidate)
+    canInterpretTextDirectives && (rawAliases.length > 0 || hasSkillReferences)
       ? (await loadSkillCommands()).listSkillCommandsForWorkspace({
           workspaceDir,
           cfg,
@@ -280,13 +276,14 @@ export async function resolveReplyDirectives(params: {
       : [];
   reserveSkillCommandNames({ reservedCommands, skillCommands });
 
-  const hasInlineSkillInvocation =
-    canUseInlineSkills &&
+  const hasExplicitSkillInvocation =
+    hasSkillReferences &&
     skillCommands.length > 0 &&
-    resolveInlineSkillReferences({
-      commandBodyNormalized: command.commandBodyNormalized,
+    expandExplicitSkillReferences({
+      text: command.commandBodyNormalized,
       skillCommands,
     }).skills.length > 0;
+  const canInterpretMessageDirectives = canInterpretTextDirectives && !hasExplicitSkillInvocation;
 
   const configuredAliases = rawAliases.filter(
     (alias) => !reservedCommands.has(normalizeLowercaseStringOrEmpty(alias)),
@@ -309,7 +306,7 @@ export async function resolveReplyDirectives(params: {
     agentText: sessionCtx.agentText,
     modelAliases: configuredAliases,
     nativeCommand: nativeDirectiveCommand,
-    canInterpretTextDirectives: canInterpretTextDirectives && !hasInlineSkillInvocation,
+    canInterpretTextDirectives: canInterpretMessageDirectives,
     isAuthorizedSender: command.isAuthorizedSender,
     isGroup,
     wasMentioned: ctx.WasMentioned === true,
@@ -514,7 +511,7 @@ export async function resolveReplyDirectives(params: {
     );
   const effectiveModelDirective = isModelInfoDirective ? undefined : directives.rawModelDirective;
 
-  const inlineStatusRequested = hasInlineStatus && canInterpretTextDirectives;
+  const inlineStatusRequested = hasInlineStatus && canInterpretMessageDirectives;
 
   const applyResult = await applyInlineDirectiveOverrides({
     ctx,

@@ -117,58 +117,6 @@ function resolveSkillReferenceInvocations(params: {
   return resolved;
 }
 
-function cleanInlineSkillInvocations(
-  body: string,
-  ranges: Array<{ start: number; end: number }>,
-): string {
-  let cursor = 0;
-  const parts: string[] = [];
-  for (const range of ranges) {
-    parts.push(body.slice(cursor, range.start), " ");
-    cursor = range.end;
-  }
-  parts.push(body.slice(cursor));
-  return parts
-    .join("")
-    .replace(/[^\S\r\n]+/gu, " ")
-    .trim();
-}
-
-export function resolveInlineSkillReferences(params: {
-  commandBodyNormalized: string;
-  skillCommands: SkillCommandSpec[];
-}): { body: string; skills: SkillCommandSpec[] } {
-  const body = params.commandBodyNormalized;
-  const skills: SkillCommandSpec[] = [];
-  const seen = new Set<string>();
-  const ranges: Array<{ start: number; end: number }> = [];
-  const pattern = /(?:^|\s)\/(?:(?:skill\s*:\s*([^\s:]+))|([^\s:]+)\s*:\s*)/giu;
-  for (const match of body.matchAll(pattern)) {
-    const command = findSkillCommand(params.skillCommands, match[1] ?? match[2] ?? "");
-    if (
-      !command ||
-      command.modelVisible === false ||
-      command.promptTemplate ||
-      match.index === undefined
-    ) {
-      continue;
-    }
-    const leadingWhitespace = match[0].length - match[0].trimStart().length;
-    ranges.push({
-      start: match.index + leadingWhitespace,
-      end: match.index + match[0].length,
-    });
-    if (!seen.has(command.name)) {
-      seen.add(command.name);
-      skills.push(command);
-    }
-  }
-  return {
-    body: ranges.length > 0 ? cleanInlineSkillInvocations(body, ranges) : body,
-    skills,
-  };
-}
-
 export function resolveSkillCommandInvocation(params: {
   commandBodyNormalized: string;
   skillCommands: SkillCommandSpec[];
@@ -343,16 +291,4 @@ function expandResolvedSkillReferences(params: {
     body: `${instructionPrefix}${params.text}`,
     skills: params.skills,
   };
-}
-
-/** Expands every eligible colon-marked inline skill through the explicit-reference path. */
-export function expandInlineSkillReferences(params: {
-  text: string;
-  skillCommands: SkillCommandSpec[];
-}): { body: string; error?: string; skills: SkillCommandSpec[] } {
-  const resolved = resolveInlineSkillReferences({
-    commandBodyNormalized: params.text,
-    skillCommands: params.skillCommands,
-  });
-  return expandResolvedSkillReferences({ text: resolved.body, skills: resolved.skills });
 }

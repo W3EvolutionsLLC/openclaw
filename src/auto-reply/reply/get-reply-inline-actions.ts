@@ -13,13 +13,11 @@ import { createLazyImportLoader } from "../../shared/lazy-promise.js";
 import {
   expandBundleCommandPromptTemplate,
   expandExplicitSkillReferences,
-  expandInlineSkillReferences,
   hasSkillReferenceCandidate,
   listReservedChatSlashCommandNames,
   resolveSkillCommandInvocation,
 } from "../../skills/discovery/chat-commands.js";
 import type { ExplicitSkillSelection, SkillCommandSpec } from "../../skills/types.js";
-import { INTERNAL_MESSAGE_CHANNEL } from "../../utils/message-channel.js";
 import {
   copyReplyPayloadMetadata,
   markCommandReplyForDelivery,
@@ -50,12 +48,7 @@ import type { InlineDirectives } from "./directive-handling.parse.js";
 import { extractExplicitGroupId } from "./group-id.js";
 import { stripMentions, stripStructuralPrefixes } from "./mentions.js";
 import type { createModelSelectionState } from "./model-selection.js";
-import {
-  extractInlineSimpleCommand,
-  getStandaloneSlashCommandName,
-  isPotentialInlineSkillName,
-  listColonMarkedInlineSkillNames,
-} from "./reply-inline.js";
+import { extractInlineSimpleCommand, getStandaloneSlashCommandName } from "./reply-inline.js";
 import type { TypingController } from "./typing.js";
 
 type SkillCommandsRuntime = typeof import("../../skills/discovery/chat-commands.runtime.js");
@@ -329,19 +322,15 @@ export async function handleInlineActions(params: {
   }
 
   const slashCommandName = getStandaloneSlashCommandName(command.commandBodyNormalized);
+  const explicitSkillReferenceBody = command.commandBodyNormalized;
   const hasSkillReferences =
-    command.isAuthorizedSender && hasSkillReferenceCandidate(initialCleanedBody);
+    command.isAuthorizedSender && hasSkillReferenceCandidate(explicitSkillReferenceBody);
   const hasSkillSlashCandidate =
     command.isAuthorizedSender &&
     slashCommandName !== null &&
     (slashCommandName === "skill" || !getBuiltinSlashCommands().has(slashCommandName));
-  const canUseInlineSkills = command.isAuthorizedSender && ctx.Surface === INTERNAL_MESSAGE_CHANNEL;
-  const hasInlineSkillCandidate =
-    canUseInlineSkills &&
-    !ctx.CommandInterpretationSuppressed &&
-    listColonMarkedInlineSkillNames(command.commandBodyNormalized).some(isPotentialInlineSkillName);
   const shouldLoadSkillCommands =
-    allowTextCommands && (hasSkillReferences || hasSkillSlashCandidate || hasInlineSkillCandidate);
+    allowTextCommands && (hasSkillReferences || hasSkillSlashCandidate);
   const skillCommands =
     shouldLoadSkillCommands &&
     execOverrides === undefined &&
@@ -360,9 +349,7 @@ export async function handleInlineActions(params: {
           })
         : [];
   const allSkillCommands =
-    allowTextCommands &&
-    (hasSkillReferences || hasSkillSlashCandidate || hasInlineSkillCandidate) &&
-    skillFilter !== undefined
+    allowTextCommands && (hasSkillReferences || hasSkillSlashCandidate) && skillFilter !== undefined
       ? (await loadSkillCommandsRuntime()).listSkillCommandsForWorkspace({
           workspaceDir,
           cfg,
@@ -500,11 +487,18 @@ export async function handleInlineActions(params: {
     cleanedBody = rewrittenBody;
   }
 
-  const inlineReferences =
-    !skillInvocation && allowTextCommands && hasInlineSkillCandidate && skillCommands.length > 0
-      ? expandInlineSkillReferences({ text: command.commandBodyNormalized, skillCommands })
+  const referenced =
+    allowTextCommands &&
+    (hasSkillReferences || hasSkillSlashCandidate) &&
+    !skillInvocation &&
+    (hasSkillSlashCandidate || resolveSlashCommandName(cleanedBody) === null)
+      ? expandExplicitSkillReferences({
+          text: hasSkillReferences ? explicitSkillReferenceBody : cleanedBody,
+          skillCommands,
+          allSkillCommands,
+        })
       : null;
-  const hasInlineSkillReferences = Boolean(inlineReferences?.skills.length);
+  const hasExplicitSkillReferences = Boolean(referenced?.skills.length);
 
   const sendInlineReply = async (reply?: ReplyPayload) => {
     if (!reply || !opts?.onBlockReply) {
@@ -521,7 +515,7 @@ export async function handleInlineActions(params: {
   };
 
   const inlineCommand =
-    allowTextCommands && command.isAuthorizedSender && !hasInlineSkillReferences
+    allowTextCommands && command.isAuthorizedSender && !hasExplicitSkillReferences
       ? extractInlineSimpleCommand(cleanedBody)
       : null;
   if (inlineCommand) {
@@ -532,18 +526,6 @@ export async function handleInlineActions(params: {
     sessionCtx.BodyStripped = cleanedBody;
   }
 
-  const referenced = hasInlineSkillReferences
-    ? inlineReferences
-    : allowTextCommands &&
-        (hasSkillReferences || hasSkillSlashCandidate) &&
-        !skillInvocation &&
-        (hasSkillSlashCandidate || resolveSlashCommandName(cleanedBody) === null)
-      ? expandExplicitSkillReferences({
-          text: cleanedBody,
-          skillCommands,
-          allSkillCommands,
-        })
-      : null;
   if (referenced) {
     if (referenced.error) {
       typing.cleanup();
@@ -569,7 +551,7 @@ export async function handleInlineActions(params: {
   }
 
   const handleInlineStatus =
-    !hasInlineSkillReferences &&
+    !hasExplicitSkillReferences &&
     !isDirectiveOnly({
       directives,
       cleanedBody: directives.cleaned,
@@ -671,7 +653,7 @@ export async function handleInlineActions(params: {
     }
   }
 
-  if (directiveAck && !hasInlineSkillReferences) {
+  if (directiveAck && !hasExplicitSkillReferences) {
     await sendInlineReply(directiveAck);
   }
 
@@ -681,7 +663,7 @@ export async function handleInlineActions(params: {
   }
 
   const shouldRunCommandHandlers =
-    !hasInlineSkillReferences &&
+    !hasExplicitSkillReferences &&
     (inlineCommand !== null ||
       directiveAck !== undefined ||
       inlineStatusRequested ||

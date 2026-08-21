@@ -784,43 +784,9 @@ describe("handleInlineActions", () => {
     );
   });
 
-  it("rewrites a skill marker embedded in normal prose", async () => {
+  it("resolves every eligible explicit skill reference in one message", async () => {
     const typing = createTypingController();
-    const body = "Please use /office_hours: to build me a deployment plan";
-    const ctx = buildTestCtx({
-      Body: body,
-      CommandBody: body,
-      Provider: "webchat",
-      Surface: "webchat",
-    });
-
-    const result = await handleInlineActions(
-      createHandleInlineActionsInput({
-        ctx,
-        typing,
-        cleanedBody: body,
-        command: {
-          isAuthorizedSender: true,
-          rawBodyNormalized: body,
-          commandBodyNormalized: body,
-        },
-        overrides: {
-          allowTextCommands: true,
-          cfg: { commands: { text: true } },
-          skillCommands: officeHoursInlineSkillCommands(),
-        },
-      }),
-    );
-
-    const expected = expandedOfficeHoursRequest("Please use to build me a deployment plan");
-    expect(result).toMatchObject({ kind: "continue", cleanedBody: expected });
-    expect(ctx.Body).toBe(expected);
-    expect(handleCommandsMock).not.toHaveBeenCalled();
-  });
-
-  it("resolves every eligible inline skill marker in one message", async () => {
-    const typing = createTypingController();
-    const body = "Compare /office_hours: with /release_notes: for this rollout";
+    const body = "Compare $office_hours with $release_notes for this rollout";
     const ctx = buildTestCtx({
       Body: body,
       CommandBody: body,
@@ -874,47 +840,13 @@ describe("handleInlineActions", () => {
     }
     expect(result.cleanedBody).toContain("- office-hours");
     expect(result.cleanedBody).toContain("- release-notes");
-    expect(result.cleanedBody).toContain("Compare with for this rollout");
+    expect(result.cleanedBody).toContain(body);
     expect(handleCommandsMock).not.toHaveBeenCalled();
   });
 
-  it("keeps inline skill markers literal when command interpretation is suppressed", async () => {
+  it("preserves slash commands inside an explicitly referenced skill payload", async () => {
     const typing = createTypingController();
-    const body = "Please use /office_hours: to build me a deployment plan";
-    const ctx = buildTestCtx({
-      Body: body,
-      CommandBody: body,
-      Provider: "webchat",
-      Surface: "webchat",
-      CommandInterpretationSuppressed: true,
-    });
-
-    const result = await handleInlineActions(
-      createHandleInlineActionsInput({
-        ctx,
-        typing,
-        cleanedBody: body,
-        command: {
-          isAuthorizedSender: true,
-          rawBodyNormalized: body,
-          commandBodyNormalized: body,
-        },
-        overrides: {
-          allowTextCommands: true,
-          cfg: { commands: { text: true } },
-          skillCommands: officeHoursInlineSkillCommands(),
-        },
-      }),
-    );
-
-    expect(result).toMatchObject({ kind: "continue", cleanedBody: body });
-    expect(ctx.Body).toBe(body);
-    expect(handleCommandsMock).not.toHaveBeenCalled();
-  });
-
-  it("preserves slash commands inside an inline skill payload", async () => {
-    const typing = createTypingController();
-    const body = "/office_hours: compare /help and /commands with /status";
+    const body = "$office_hours compare /help and /commands with /status";
     const cleanedBody = stripInlineStatus(body).cleaned;
     const ctx = buildTestCtx({
       Body: body,
@@ -942,16 +874,16 @@ describe("handleInlineActions", () => {
       }),
     );
 
-    const expected = expandedOfficeHoursRequest("compare /help and /commands with /status");
+    const expected = expandedOfficeHoursRequest(body);
     expect(result).toMatchObject({ kind: "continue", cleanedBody: expected });
     expect(ctx.Body).toBe(expected);
     expect(buildStatusReplyMock).not.toHaveBeenCalled();
     expect(handleCommandsMock).not.toHaveBeenCalled();
   });
 
-  it("keeps unauthorized inline skill markers as plain text", async () => {
+  it("keeps unauthorized explicit skill references as plain text", async () => {
     const typing = createTypingController();
-    const body = "Please use /office_hours: to build me a deployment plan";
+    const body = "Please use $office_hours to build me a deployment plan";
     const ctx = buildTestCtx({
       Body: body,
       CommandBody: body,
@@ -981,63 +913,6 @@ describe("handleInlineActions", () => {
     expect(ctx.Body).toBe(body);
     expect(handleCommandsMock).not.toHaveBeenCalled();
   });
-
-  it("keeps authorized messaging-channel inline skill markers as plain text", async () => {
-    const typing = createTypingController();
-    const body = "Please use /office_hours: to build me a deployment plan";
-    const ctx = buildTestCtx({ Body: body, CommandBody: body });
-
-    const result = await handleInlineActions(
-      createHandleInlineActionsInput({
-        ctx,
-        typing,
-        cleanedBody: body,
-        command: {
-          isAuthorizedSender: true,
-          rawBodyNormalized: body,
-          commandBodyNormalized: body,
-        },
-        overrides: {
-          allowTextCommands: true,
-          cfg: { commands: { text: true } },
-        },
-      }),
-    );
-
-    expect(result).toMatchObject({ kind: "continue", cleanedBody: body });
-    expect(ctx.Body).toBe(body);
-    expect(listSkillCommandsForWorkspaceMock).not.toHaveBeenCalled();
-    expect(handleCommandsMock).not.toHaveBeenCalled();
-  });
-
-  it.each(["/office_hours:", "/skill:office_hours"])(
-    "keeps authorized messaging-channel root marker %j as plain text",
-    async (body) => {
-      const typing = createTypingController();
-      const ctx = buildTestCtx({ Body: body, CommandBody: body });
-
-      const result = await handleInlineActions(
-        createHandleInlineActionsInput({
-          ctx,
-          typing,
-          cleanedBody: body,
-          command: {
-            isAuthorizedSender: true,
-            rawBodyNormalized: body,
-            commandBodyNormalized: body,
-          },
-          overrides: {
-            allowTextCommands: true,
-            cfg: { commands: { text: true } },
-            skillCommands: officeHoursInlineSkillCommands(),
-          },
-        }),
-      );
-
-      expect(result).toMatchObject({ kind: "continue", cleanedBody: body });
-      expect(ctx.Body).toBe(body);
-    },
-  );
 
   it.each(["Review /tmp/foo before continuing", "/tmp/foo should stay a path"])(
     "does not load workspace skills for a bare path in %j",

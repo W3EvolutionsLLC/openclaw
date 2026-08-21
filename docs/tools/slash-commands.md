@@ -531,7 +531,7 @@ See [BTW side questions](/tools/btw) for the full behavior.
     - Command-only messages from allowlisted senders are handled immediately (bypass queue + model).
     - Inline shortcuts (`/help`, `/commands`, `/status`, `/whoami`) also work embedded in normal messages and are stripped before the model sees the remaining text.
     - In Control UI, selecting an inline shortcut runs it separately and removes only that token from the composer; the surrounding draft remains unsent.
-    - In Control UI (WebChat), skill commands can be embedded in normal messages with a colon-terminated marker (for example, `Please use /weather: to check Sydney`). The skill marker selects the skill and the surrounding text becomes its input; bare root-style tokens such as `/weather` remain ordinary text unless selected in the Control UI.
+    - In Control UI (WebChat), selecting a skill from slash completion inserts the existing `$skill-name` reference into the message (for example, `Please use $weather to check Sydney`).
     - Session-changing control commands such as `/reset` remain command-only. This prevents prose that merely mentions a command from executing it.
     - Unauthorized command-only messages are silently ignored; inline `/...` tokens are treated as plain text.
 

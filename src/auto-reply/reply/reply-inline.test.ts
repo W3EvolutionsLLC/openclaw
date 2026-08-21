@@ -1,20 +1,6 @@
 // Tests inline reply directive parsing and whitespace-preserving behavior.
 import { describe, expect, it } from "vitest";
-import {
-  extractInlineSimpleCommand,
-  isPotentialInlineSkillName,
-  stripInlineStatus,
-} from "./reply-inline.js";
-
-describe("isPotentialInlineSkillName", () => {
-  it.each(["office_hours", "weather", "skill"])("accepts skill marker name %s", (name) => {
-    expect(isPotentialInlineSkillName(name)).toBe(true);
-  });
-
-  it.each(["status", "model", "think", "help"])("rejects built-in name %s", (name) => {
-    expect(isPotentialInlineSkillName(name)).toBe(false);
-  });
-});
+import { extractInlineSimpleCommand, stripInlineStatus } from "./reply-inline.js";
 
 describe("stripInlineStatus", () => {
   it("strips /status directive from message", () => {

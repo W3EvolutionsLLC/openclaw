@@ -252,8 +252,8 @@ describe("reply directive aliases", () => {
     expect(sessionEntry).toEqual(createSessionEntry());
   });
 
-  it("keeps accepted inline skill payloads opaque to model directives", async () => {
-    const body = "Please use /office_hours: compare /model openai/gpt-5.6-luna with the default";
+  it("keeps explicitly referenced skill payloads opaque to model directives", async () => {
+    const body = "Please use $office_hours to compare /model openai/gpt-5.6-luna with the default";
     skillCommandMocks.listForWorkspace.mockReturnValue([
       {
         name: "office_hours",
@@ -292,8 +292,8 @@ describe("reply directive aliases", () => {
     expect(sessionEntry).toEqual(createSessionEntry());
   });
 
-  it("still routes model directives after unknown inline skill markers", async () => {
-    const body = "Please use /missing_skill: then /model anthropic/claude-opus-4-6";
+  it("still routes model directives after unknown skill references", async () => {
+    const body = "Please use $missing_skill then /model anthropic/claude-opus-4-6";
 
     const { result } = await resolveModelDirective({
       body,
@@ -309,7 +309,7 @@ describe("reply directive aliases", () => {
       hasModelDirective: true,
       rawModelDirective: "anthropic/claude-opus-4-6",
     });
-    expect(result.result.cleanedBody).toBe("Please use /missing_skill: then");
+    expect(result.result.cleanedBody).toBe("Please use $missing_skill then");
   });
 
   it("keeps commands.text:false model syntax literal, including an empty agent projection", async () => {

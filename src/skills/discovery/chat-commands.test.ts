@@ -7,7 +7,6 @@ import { createTempDirTracker } from "../../../test/helpers/temp-dir.js";
 let listSkillCommandsForAgents: typeof import("./chat-commands.js").listSkillCommandsForAgents;
 let listSkillCommandsForWorkspace: typeof import("./chat-commands.js").listSkillCommandsForWorkspace;
 let expandExplicitSkillReferences: typeof import("./chat-commands.js").expandExplicitSkillReferences;
-let resolveInlineSkillReferences: typeof import("./chat-command-invocation.js").resolveInlineSkillReferences;
 let resolveSkillCommandInvocation: typeof import("./chat-commands.js").resolveSkillCommandInvocation;
 let lastPluginMetadataSnapshot: unknown;
 
@@ -166,7 +165,6 @@ vi.mock("./agent-filter.js", () => ({
 }));
 
 beforeAll(async () => {
-  ({ resolveInlineSkillReferences } = await import("./chat-command-invocation.js"));
   ({
     expandExplicitSkillReferences,
     listSkillCommandsForAgents,
@@ -220,70 +218,6 @@ describe("resolveSkillCommandInvocation", () => {
     });
     expect(invocation?.command.name).toBe("demo_skill");
     expect(invocation?.args).toBe("first line\nsecond line");
-  });
-
-  it("matches direct skill invocations embedded in a sentence", () => {
-    const invocation = resolveInlineSkillReferences({
-      commandBodyNormalized: "Please use /demo_skill: to do the thing",
-      skillCommands: [{ name: "demo_skill", skillName: "demo-skill", description: "Demo" }],
-    });
-    expect(invocation.skills.map((skill) => skill.skillName)).toEqual(["demo-skill"]);
-    expect(invocation.body).toBe("Please use to do the thing");
-  });
-
-  it("matches /skill invocations embedded in a sentence", () => {
-    const invocation = resolveInlineSkillReferences({
-      commandBodyNormalized: "Please ask /skill:demo_skill about this",
-      skillCommands: [{ name: "demo_skill", skillName: "demo-skill", description: "Demo" }],
-    });
-    expect(invocation.skills.map((skill) => skill.name)).toEqual(["demo_skill"]);
-    expect(invocation.body).toBe("Please ask about this");
-  });
-
-  it("resolves and removes every unique inline skill reference", () => {
-    const invocation = resolveInlineSkillReferences({
-      commandBodyNormalized: "Compare /demo_skill: with /skill:release_notes and /demo_skill:",
-      skillCommands: [
-        { name: "demo_skill", skillName: "demo-skill", description: "Demo" },
-        { name: "release_notes", skillName: "release-notes", description: "Release notes" },
-      ],
-    });
-
-    expect(invocation.skills.map((skill) => skill.name)).toEqual(["demo_skill", "release_notes"]);
-    expect(invocation.body).toBe("Compare with and");
-  });
-
-  it.each(["Please use /hidden_skill: for this", "Please use /skill:hidden_skill for this"])(
-    "does not resolve model-hidden inline skill invocations in %j",
-    (commandBodyNormalized) => {
-      expect(
-        resolveInlineSkillReferences({
-          commandBodyNormalized,
-          skillCommands: [
-            {
-              name: "hidden_skill",
-              skillName: "hidden-skill",
-              description: "Slash only",
-              modelVisible: false,
-            },
-          ],
-        }),
-      ).toEqual({ body: commandBodyNormalized, skills: [] });
-    },
-  );
-
-  it("does not treat URL or path fragments as inline skill invocations", () => {
-    const skillCommands = [{ name: "demo_skill", skillName: "demo-skill", description: "Demo" }];
-    for (const commandBodyNormalized of [
-      "See https://example.com/demo_skill",
-      "Open tmp/demo_skill please",
-      "Open /demo_skill please",
-    ]) {
-      expect(resolveInlineSkillReferences({ commandBodyNormalized, skillCommands })).toEqual({
-        body: commandBodyNormalized,
-        skills: [],
-      });
-    }
   });
 
   it("normalizes /skill lookup names", () => {
