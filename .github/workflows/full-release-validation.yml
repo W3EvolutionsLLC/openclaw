@@ -1092,16 +1092,10 @@ jobs:
             scripts/full-release-validation-state.mjs
             scripts/full-release-validation-policy.mjs
             scripts/release-ci-summary.mjs
+            scripts/lib/full-release-validation-log-checkpoint.mjs
             scripts/lib/plain-gh.mjs
           sparse-checkout-cone-mode: false
           persist-credentials: false
-
-      - name: Restore immutable release execution plan
-        if: ${{ github.run_attempt != 1 }}
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          name: full-release-execution-plan-${{ github.run_id }}
-          path: ${{ runner.temp }}/full-release-execution-plan
 
       - name: Seal immutable release execution plan
         id: plan
@@ -1226,12 +1220,13 @@ jobs:
           node scripts/full-release-validation-state.mjs plan
 
       - name: Upload immutable release execution plan
-        if: ${{ always() && github.run_attempt == 1 }}
+        if: ${{ always() && steps.plan.outputs.sha256 != '' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: full-release-execution-plan-${{ github.run_id }}
           path: ${{ runner.temp }}/full-release-execution-plan
           if-no-files-found: error
+          overwrite: true
 
   release_decision:
     name: Release Decision
@@ -1249,6 +1244,7 @@ jobs:
           sparse-checkout: |
             scripts/full-release-validation-state.mjs
             scripts/full-release-validation-policy.mjs
+            scripts/lib/full-release-validation-log-checkpoint.mjs
           sparse-checkout-cone-mode: false
           persist-credentials: false
 
@@ -1316,6 +1312,7 @@ jobs:
             scripts/full-release-validation-state.mjs
             scripts/full-release-validation-policy.mjs
             scripts/release-ci-summary.mjs
+            scripts/lib/full-release-validation-log-checkpoint.mjs
             scripts/lib/plain-gh.mjs
           sparse-checkout-cone-mode: false
           persist-credentials: false
@@ -1393,6 +1390,7 @@ jobs:
             scripts/full-release-validation-state.mjs
             scripts/full-release-validation-policy.mjs
             scripts/release-ci-summary.mjs
+            scripts/lib/full-release-validation-log-checkpoint.mjs
             scripts/lib/plain-gh.mjs
           sparse-checkout-cone-mode: false
           persist-credentials: false
