@@ -13,7 +13,6 @@ import {
 } from "../../../lib/chat/commands.ts";
 import { resolveThinkingCommandArgOptionsForSession } from "../../../lib/chat/thinking.ts";
 import { areUiSessionKeysEquivalent } from "../../../lib/sessions/session-key.ts";
-import { exportChatMarkdown } from "../export.ts";
 import { adjustTextareaHeight, paneDomId } from "./chat-composer-dom.ts";
 import { findDirectInlineSlashArgumentInvocation } from "./chat-composer-inline-slash.ts";
 import { commitComposerDraft, getChatComposerState } from "./chat-composer-state.ts";
@@ -592,10 +591,6 @@ export function getActiveSlashMenuOptionLabel(state: ChatComposerState): string 
 
 function renderSlashIcon(name: string) {
   return icons[name as IconName] ?? icons.terminal;
-}
-
-export function exportMarkdown(props: Pick<ChatComposerProps, "messages" | "assistantName">): void {
-  exportChatMarkdown(props.messages, props.assistantName);
 }
 
 export function renderSlashMenu(
