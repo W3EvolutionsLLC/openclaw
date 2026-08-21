@@ -9,7 +9,7 @@ import {
   buildApiKeyCredential,
   ensureApiKeyFromEnvOrPrompt,
   normalizeOptionalSecretInput,
-  upsertAuthProfileWithLock,
+  upsertAuthProfileAfterLoginWithLockOrThrow,
   type OpenClawConfig,
   type SecretInput,
 } from "openclaw/plugin-sdk/provider-auth";
@@ -545,7 +545,7 @@ export async function configureLlamaServerNonInteractive(
     if (!credential) {
       return null;
     }
-    await upsertAuthProfileWithLock({
+    await upsertAuthProfileAfterLoginWithLockOrThrow({
       profileId: PROFILE_ID,
       credential,
       agentDir: ctx.agentDir,

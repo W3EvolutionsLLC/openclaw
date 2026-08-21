@@ -16,11 +16,11 @@ import {
 const discoverMock = vi.hoisted(() => vi.fn());
 const runtimeApiKeyMock = vi.hoisted(() => vi.fn());
 const removeProviderAuthProfilesWithLockMock = vi.hoisted(() => vi.fn());
-const upsertAuthProfileWithLockMock = vi.hoisted(() => vi.fn());
+const upsertAuthProfileAfterLoginWithLockOrThrowMock = vi.hoisted(() => vi.fn());
 
 vi.mock("openclaw/plugin-sdk/provider-auth", async (importOriginal) => ({
   ...(await importOriginal<typeof import("openclaw/plugin-sdk/provider-auth")>()),
-  upsertAuthProfileWithLock: upsertAuthProfileWithLockMock,
+  upsertAuthProfileAfterLoginWithLockOrThrow: upsertAuthProfileAfterLoginWithLockOrThrowMock,
 }));
 
 vi.mock("openclaw/plugin-sdk/provider-auth-runtime", async (importOriginal) => ({
@@ -173,8 +173,8 @@ describe("llama-server setup", () => {
     runtimeApiKeyMock.mockResolvedValue(undefined);
     removeProviderAuthProfilesWithLockMock.mockReset();
     removeProviderAuthProfilesWithLockMock.mockResolvedValue({ version: 1, profiles: {} });
-    upsertAuthProfileWithLockMock.mockReset();
-    upsertAuthProfileWithLockMock.mockResolvedValue({ version: 1, profiles: {} });
+    upsertAuthProfileAfterLoginWithLockOrThrowMock.mockReset();
+    upsertAuthProfileAfterLoginWithLockOrThrowMock.mockResolvedValue(undefined);
   });
 
   it("detects a running local server without writing config", async () => {
@@ -434,7 +434,7 @@ describe("llama-server setup", () => {
     );
     expect(result.profiles).toEqual([]);
     expect(removeProviderAuthProfilesWithLockMock).not.toHaveBeenCalled();
-    expect(upsertAuthProfileWithLockMock).not.toHaveBeenCalled();
+    expect(upsertAuthProfileAfterLoginWithLockOrThrowMock).not.toHaveBeenCalled();
   });
 
   it("removes managed-only state when switching to an existing server", async () => {
@@ -771,7 +771,7 @@ describe("llama-server setup", () => {
 
     if (testCase.action === "upsert") {
       expect(ctx.toApiKeyCredential).toHaveBeenCalledOnce();
-      expect(upsertAuthProfileWithLockMock).toHaveBeenCalledWith(
+      expect(upsertAuthProfileAfterLoginWithLockOrThrowMock).toHaveBeenCalledWith(
         expect.objectContaining({
           profileId: "llama-cpp:default",
           agentDir: "/test/agent",
@@ -789,12 +789,12 @@ describe("llama-server setup", () => {
       expect(removeProviderAuthProfilesWithLockMock).not.toHaveBeenCalled();
     } else if (testCase.action === "preserve") {
       expect(ctx.toApiKeyCredential).not.toHaveBeenCalled();
-      expect(upsertAuthProfileWithLockMock).not.toHaveBeenCalled();
+      expect(upsertAuthProfileAfterLoginWithLockOrThrowMock).not.toHaveBeenCalled();
       expect(removeProviderAuthProfilesWithLockMock).not.toHaveBeenCalled();
       expect(configured?.auth).toEqual(ctx.config.auth);
     } else {
       expect(ctx.toApiKeyCredential).not.toHaveBeenCalled();
-      expect(upsertAuthProfileWithLockMock).not.toHaveBeenCalled();
+      expect(upsertAuthProfileAfterLoginWithLockOrThrowMock).not.toHaveBeenCalled();
       expect(removeProviderAuthProfilesWithLockMock).toHaveBeenCalledWith({
         agentDir: "/test/agent",
         provider: "llama-cpp",
