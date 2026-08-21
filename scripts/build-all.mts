@@ -518,11 +518,11 @@ export function resolveBuildAllEnvironment(
 }
 
 export function resolveBuildAllTsdownPlan(
-  requiresDeclarationAdmission: boolean,
+  requiresAdmission: boolean,
   env: NodeJS.ProcessEnv,
   params: Omit<MemoryLimitParams, "env"> = {},
 ) {
-  if (!requiresDeclarationAdmission) {
+  if (!requiresAdmission) {
     return { env, heapShortfall: null };
   }
   const plan = resolveTsdownBuildPlan({ ...params, env });
@@ -813,13 +813,8 @@ export function resolveBuildAllStepCacheState(
 
 type BuildAllCacheState = ReturnType<typeof resolveBuildAllStepCacheState>;
 
-export function requiresFullBuildTsdownAdmission(
-  cacheEnabled: boolean,
-  cacheStates: Array<{ fresh: boolean; label: string }>,
-) {
-  return cacheStates.some(
-    (cacheState) => cacheState.label === "tsdown-unified" && (!cacheEnabled || !cacheState.fresh),
-  );
+export function requiresFullBuildTsdownAdmission(cacheStates: Array<{ label: string }>) {
+  return cacheStates.some((cacheState) => cacheState.label === "tsdown-unified");
 }
 
 export function writeBuildAllStepCacheStamp(
@@ -1005,13 +1000,7 @@ if (isMainModule()) {
           }),
         );
         const buildPlan = resolveBuildAllTsdownPlan(
-          requiresFullBuildTsdownAdmission(
-            cacheEnabled,
-            [...plannedTsdownCaches].map(([label, entry]) => ({
-              label,
-              fresh: entry.cacheState.fresh,
-            })),
-          ),
+          requiresFullBuildTsdownAdmission([...plannedTsdownCaches].map(([label]) => ({ label }))),
           buildEnv,
         );
         const heapShortfall = buildPlan.heapShortfall;
