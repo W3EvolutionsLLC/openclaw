@@ -1007,7 +1007,10 @@ if (isMainModule()) {
         const buildPlan = resolveBuildAllTsdownPlan(
           requiresFullBuildTsdownAdmission(
             cacheEnabled,
-            [...plannedTsdownCaches].map(([label, entry]) => ({ label, ...entry.cacheState })),
+            [...plannedTsdownCaches].map(([label, entry]) => ({
+              label,
+              fresh: entry.cacheState.fresh,
+            })),
           ),
           buildEnv,
         );
