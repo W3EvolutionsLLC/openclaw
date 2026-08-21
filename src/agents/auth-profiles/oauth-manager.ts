@@ -429,6 +429,7 @@ export function createOAuthManager(adapter: OAuthManagerAdapter) {
     agentDir?: string;
     profileId: string;
     expected: OAuthCredential | OAuthCredential[];
+    expectedCredentialGeneration: number;
     credential: OAuthCredential;
   }): Promise<boolean> {
     let saved = false;
@@ -441,6 +442,8 @@ export function createOAuthManager(adapter: OAuthManagerAdapter) {
           : [params.expected];
         if (
           existing?.type !== "oauth" ||
+          (store.usageStats?.[params.profileId]?.credentialGeneration ?? 0) !==
+            params.expectedCredentialGeneration ||
           !expectedCredentials.some((expected) => areOAuthCredentialsEquivalent(existing, expected))
         ) {
           authProfilesLog.debug("skipped OAuth credential write because stored profile changed", {
@@ -469,6 +472,7 @@ export function createOAuthManager(adapter: OAuthManagerAdapter) {
     agentDir?: string;
     profileId: string;
     refreshed: OAuthCredential;
+    expectedCredentialGeneration: number;
   }): Promise<OAuthCredential | null> {
     // Single locked pass decides both outcomes so no relog can slip between a
     // pre-read and the update: same identity persists the rotation, different
@@ -479,6 +483,13 @@ export function createOAuthManager(adapter: OAuthManagerAdapter) {
       updater: (store) => {
         const existing = store.profiles[params.profileId];
         if (existing?.type !== "oauth" || existing.provider !== params.refreshed.provider) {
+          return false;
+        }
+        if (
+          (store.usageStats?.[params.profileId]?.credentialGeneration ?? 0) !==
+          params.expectedCredentialGeneration
+        ) {
+          adopted = hasUsableOAuthCredential(existing) ? existing : null;
           return false;
         }
         // Refresh tokens rotate server-side before persist. Same-identity CAS
@@ -516,6 +527,8 @@ export function createOAuthManager(adapter: OAuthManagerAdapter) {
         if (!cred || cred.type !== "oauth") {
           return null;
         }
+        const credentialGeneration =
+          store.usageStats?.[params.profileId]?.credentialGeneration ?? 0;
         let credentialToRefresh = cred;
 
         if (!params.forceRefresh && hasUsableOAuthCredential(cred)) {
@@ -606,6 +619,7 @@ export function createOAuthManager(adapter: OAuthManagerAdapter) {
                 agentDir: ownerAgentDir,
                 profileId: params.profileId,
                 expected: cred,
+                expectedCredentialGeneration: credentialGeneration,
                 credential: externallyManaged,
               });
             }
@@ -654,6 +668,7 @@ export function createOAuthManager(adapter: OAuthManagerAdapter) {
             credentialToRefresh === cred || areOAuthCredentialsEquivalent(credentialToRefresh, cred)
               ? credentialToRefresh
               : [credentialToRefresh, cred],
+          expectedCredentialGeneration: credentialGeneration,
           credential: refreshedCredentials,
         });
         if (!persisted) {
@@ -661,6 +676,7 @@ export function createOAuthManager(adapter: OAuthManagerAdapter) {
             agentDir: ownerAgentDir,
             profileId: params.profileId,
             refreshed: refreshedCredentials,
+            expectedCredentialGeneration: credentialGeneration,
           });
           if (!recovered) {
             throw new Error("Failed to persist refreshed OAuth credential");

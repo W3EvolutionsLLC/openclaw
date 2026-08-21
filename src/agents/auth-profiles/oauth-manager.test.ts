@@ -545,6 +545,7 @@ describe("createOAuthManager", () => {
           profiles: {
             [profileId]: expired,
           },
+          usageStats: { [profileId]: { credentialGeneration: 3 } },
         },
         agentDir,
         { filterExternalAuthProfiles: false },
@@ -564,6 +565,7 @@ describe("createOAuthManager", () => {
                   accountId: "acct-123",
                 }),
               },
+              usageStats: { [profileId]: { credentialGeneration: 3 } },
             },
             agentDir,
             { filterExternalAuthProfiles: false },
@@ -597,6 +599,78 @@ describe("createOAuthManager", () => {
         refresh: "rotated-refresh",
         accountId: "acct-123",
       });
+      expect(persisted.usageStats?.[profileId]?.credentialGeneration).toBe(3);
+    });
+  });
+
+  it("uses a same-identity re-login after the credential generation advances", async () => {
+    await withOAuthTempRoot("oauth-manager-cas-newer-generation-", async (tempRoot) => {
+      const agentDir = path.join(tempRoot, "agents", "main", "agent");
+      await fs.mkdir(agentDir, { recursive: true });
+      const profileId = "openai:oauth";
+      const expired = createCredential({
+        access: "expired-access",
+        refresh: "expired-refresh",
+        expires: Date.now() - 60_000,
+        accountId: "acct-123",
+      });
+      const relogged = createCredential({
+        access: "relogged-access",
+        refresh: "relogged-refresh",
+        expires: Date.now() + 10 * 60_000,
+        accountId: "acct-123",
+      });
+      saveAuthProfileStore(
+        {
+          version: 1,
+          profiles: { [profileId]: expired },
+          usageStats: { [profileId]: { credentialGeneration: 3 } },
+        },
+        agentDir,
+        { filterExternalAuthProfiles: false },
+      );
+
+      const manager = createOAuthManager({
+        buildApiKey: async (_provider, credential) => credential.access,
+        refreshCredential: vi.fn(async () => {
+          saveAuthProfileStore(
+            {
+              version: 1,
+              profiles: { [profileId]: relogged },
+              usageStats: { [profileId]: { credentialGeneration: 4 } },
+            },
+            agentDir,
+            { filterExternalAuthProfiles: false },
+          );
+          return {
+            access: "rotated-access",
+            refresh: "rotated-refresh",
+            expires: Date.now() + 60_000,
+          };
+        }),
+        readBootstrapCredential: () => null,
+        isRefreshTokenReusedError: () => false,
+      });
+
+      const result = await manager.resolveOAuthAccess({
+        store: ensureAuthProfileStoreWithoutExternalProfiles(agentDir, {
+          allowKeychainPrompt: false,
+        }),
+        profileId,
+        credential: expired,
+        agentDir,
+      });
+
+      expect(result?.apiKey).toBe("relogged-access");
+      const persisted = ensureAuthProfileStoreWithoutExternalProfiles(agentDir, {
+        allowKeychainPrompt: false,
+      });
+      expect(persisted.profiles[profileId]).toMatchObject({
+        access: "relogged-access",
+        refresh: "relogged-refresh",
+        accountId: "acct-123",
+      });
+      expect(persisted.usageStats?.[profileId]?.credentialGeneration).toBe(4);
     });
   });
 
