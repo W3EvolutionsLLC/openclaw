@@ -12,7 +12,7 @@ import {
   type SlashCommandDef,
 } from "../../../lib/chat/commands.ts";
 import { exportChatMarkdown } from "../export.ts";
-import { adjustTextareaHeight } from "./chat-composer-dom.ts";
+import { adjustTextareaHeight, paneDomId } from "./chat-composer-dom.ts";
 import { findDirectInlineSlashArgumentInvocation } from "./chat-composer-inline-slash.ts";
 import { commitComposerDraft, getChatComposerState } from "./chat-composer-state.ts";
 import type { ChatComposerProps, ChatComposerState } from "./chat-composer-types.ts";
@@ -508,10 +508,6 @@ function slashOptionIdSegment(value: string): string {
       .replace(/[^a-z0-9_-]+/gu, "-")
       .replace(/^-+|-+$/gu, "") || "item"
   );
-}
-
-export function paneDomId(paneId: string, suffix: string): string {
-  return `chat-${encodeURIComponent(paneId)}-${suffix}`;
 }
 
 function getSlashCommandOptionId(paneId: string, cmd: SlashCommandDef): string {
