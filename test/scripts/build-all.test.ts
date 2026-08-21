@@ -20,6 +20,7 @@ import {
   resolveBuildAllStepOnCacheHit,
   resolveBuildAllSteps,
   resolveBuildAllTsdownPlan,
+  requiresFullBuildTsdownAdmission,
   restoreBuildAllStepCacheOutputs,
   writeBuildAllStepCacheStamp,
 } from "../../scripts/build-all.mts";
@@ -384,7 +385,7 @@ describe("resolveBuildAllSteps", () => {
 
   it("admits the complete default build once and freezes its heap for every child", () => {
     const fullPlan = resolveBuildAllTsdownPlan(
-      "full",
+      true,
       {},
       {
         cgroupMemoryLimitBytes: 4 * 1024 * 1024 * 1024,
@@ -396,10 +397,16 @@ describe("resolveBuildAllSteps", () => {
 
     const partialEnv = { MARKER: "unchanged" };
     expect(
-      resolveBuildAllTsdownPlan("qaRuntime", partialEnv, {
+      resolveBuildAllTsdownPlan(false, partialEnv, {
         cgroupMemoryLimitBytes: 4 * 1024 * 1024 * 1024,
       }),
     ).toEqual({ env: partialEnv, heapShortfall: null });
+  });
+
+  it("requires declaration admission only when a full-profile tsdown cache will miss", () => {
+    expect(requiresFullBuildTsdownAdmission(true, [{ fresh: true }, { fresh: true }])).toBe(false);
+    expect(requiresFullBuildTsdownAdmission(true, [{ fresh: true }, { fresh: false }])).toBe(true);
+    expect(requiresFullBuildTsdownAdmission(false, [{ fresh: true }, { fresh: true }])).toBe(true);
   });
 
   it("rebuilds runtime JS while reusing fresh declaration groups", () => {
