@@ -9,6 +9,7 @@ import {
 import { closeOpenClawStateDatabaseForTest } from "../../state/openclaw-state-db.js";
 import { withEnvAsync } from "../../test-utils/env.js";
 import { loadPersistedAuthProfileStore } from "./persisted.js";
+import { clearRuntimeAuthProfileStoreSnapshots } from "./runtime-snapshots.js";
 import {
   inspectPersistedAuthProfileStateRaw,
   inspectPersistedAuthProfileStoreRaw,
@@ -35,6 +36,7 @@ async function withAgentDir(run: (agentDir: string) => Promise<void>): Promise<v
   try {
     await withEnvAsync({ OPENCLAW_STATE_DIR: root }, async () => await run(agentDir));
   } finally {
+    clearRuntimeAuthProfileStoreSnapshots();
     closeOpenClawAgentDatabasesForTest();
     closeOpenClawStateDatabaseForTest();
   }
@@ -155,6 +157,57 @@ describe("auth profile batch persistence", () => {
       receipt.rollback();
 
       expect(loadPersistedAuthProfileStore(agentDir)).toMatchObject({
+        profiles: { [profileId]: { key: "sk-stale" } },
+        usageStats: {
+          [profileId]: {
+            errorCount: 4,
+            failureCounts: { auth_permanent: 4 },
+            blockedUntil,
+            blockedReason: "subscription_limit",
+          },
+        },
+      });
+    });
+  });
+
+  it("resets an inherited profile at its main-agent owner", async () => {
+    await withAgentDir(async (agentDir) => {
+      const root = path.dirname(path.dirname(path.dirname(agentDir)));
+      const mainAgentDir = path.join(root, "agents", "main", "agent");
+      const profileId = "openai:shared";
+      const blockedUntil = Date.now() + 60_000;
+      fs.mkdirSync(mainAgentDir, { recursive: true });
+      saveAuthProfileStore(
+        {
+          version: 1,
+          profiles: { [profileId]: apiKey("sk-stale") },
+          usageStats: {
+            [profileId]: {
+              errorCount: 4,
+              failureCounts: { auth_permanent: 4 },
+              blockedUntil,
+              blockedReason: "subscription_limit",
+            },
+          },
+        },
+        mainAgentDir,
+      );
+
+      const receipt = await persistAuthProfileBatch({
+        agentDir,
+        profiles: [{ ...profile(profileId, "sk-fresh"), resetFailureState: true }],
+        resolveProfileOwners: true,
+      });
+
+      expect(loadPersistedAuthProfileStore(mainAgentDir)).toMatchObject({
+        profiles: { [profileId]: { key: "sk-fresh" } },
+        usageStats: { [profileId]: { credentialGeneration: 1, errorCount: 0 } },
+      });
+      expect(loadPersistedAuthProfileStore(agentDir)).toBeNull();
+
+      receipt.rollback();
+
+      expect(loadPersistedAuthProfileStore(mainAgentDir)).toMatchObject({
         profiles: { [profileId]: { key: "sk-stale" } },
         usageStats: {
           [profileId]: {

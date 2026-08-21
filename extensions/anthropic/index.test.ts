@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { clearRuntimeAuthProfileStoreSnapshots } from "openclaw/plugin-sdk/agent-runtime";
 import { calculateCost, type Usage } from "openclaw/plugin-sdk/llm";
 import type {
   ProviderResolveDynamicModelContext,
@@ -15,6 +16,10 @@ import {
   ensureAuthProfileStore,
   updateAuthProfileStoreWithLock,
 } from "openclaw/plugin-sdk/provider-auth";
+import {
+  closeOpenClawAgentDatabasesForTest,
+  closeOpenClawStateDatabaseForTest,
+} from "openclaw/plugin-sdk/sqlite-runtime-testing";
 // Anthropic tests cover index plugin behavior.
 import { createRequireRecord } from "openclaw/plugin-sdk/test-fixtures";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -1347,6 +1352,9 @@ describe("anthropic provider replay hooks", () => {
         errorCount: 0,
       });
     } finally {
+      clearRuntimeAuthProfileStoreSnapshots();
+      closeOpenClawAgentDatabasesForTest();
+      closeOpenClawStateDatabaseForTest();
       fs.rmSync(agentDir, { recursive: true, force: true });
     }
   });

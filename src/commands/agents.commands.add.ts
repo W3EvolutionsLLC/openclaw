@@ -494,6 +494,7 @@ export async function agentsAddCommand(
             profiles: stagedAuthProfiles,
             ...(stagedAuthOrder ? { order: stagedAuthOrder } : {}),
             agentDir,
+            resolveProfileOwners: true,
           }
         : undefined;
 

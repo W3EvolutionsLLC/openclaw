@@ -2,10 +2,15 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
+  clearRuntimeAuthProfileStoreSnapshots,
   loadAuthProfileStoreWithoutExternalProfiles,
   saveAuthProfileStore,
 } from "openclaw/plugin-sdk/agent-runtime";
 import type { ProviderAuthMethodNonInteractiveContext } from "openclaw/plugin-sdk/plugin-entry";
+import {
+  closeOpenClawAgentDatabasesForTest,
+  closeOpenClawStateDatabaseForTest,
+} from "openclaw/plugin-sdk/sqlite-runtime-testing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LLAMA_CPP_PROVIDER_ID } from "../defaults.js";
 import type { LlamaServerDiscoveryResult } from "./discovery.js";
@@ -48,6 +53,9 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  clearRuntimeAuthProfileStoreSnapshots();
+  closeOpenClawAgentDatabasesForTest();
+  closeOpenClawStateDatabaseForTest();
   await fs.rm(tempRoot, { recursive: true, force: true });
 });
 

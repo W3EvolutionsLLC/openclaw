@@ -710,7 +710,7 @@ describe("agents add command", () => {
     await withAgentsAddStateRoot("openclaw-agents-add-auth-guided-", async (root) => {
       const destAgentDir = path.join(root, "agents", "work", "agent");
       const workspaceDir = path.join(root, "workspace-work");
-      await seedAgentAuthStore(root, "main", {
+      const mainAgentDir = await seedAgentAuthStore(root, "main", {
         version: AUTH_STORE_VERSION,
         profiles: {
           "openai:api-key": {
@@ -748,13 +748,18 @@ describe("agents add command", () => {
 
       const persisted = loadPersistedAuthProfileStore(destAgentDir);
       expect(persisted?.profiles).toMatchObject({
-        "openai:api-key": { key: "guided-wins" },
         "openai:portable": { key: "portable-retained" },
         "openai:guided": { key: "guided-retained" },
       });
-      expect(persisted?.order?.openai).toEqual(["openai:api-key", "openai:portable"]);
+      expect(persisted?.profiles["openai:api-key"]).toBeUndefined();
+      expect(persisted?.order?.openai).toEqual(["openai:portable"]);
+      expect(loadPersistedAuthProfileStore(mainAgentDir)?.profiles["openai:api-key"]).toMatchObject(
+        {
+          key: "guided-wins",
+        },
+      );
       expect(wizard.note).toHaveBeenCalledWith(
-        'Copied 2 portable auth profiles from "main".',
+        'Copied 1 portable auth profile from "main".',
         "Auth profiles",
       );
     });
@@ -796,6 +801,7 @@ describe("agents add command", () => {
       expect(authProfileMocks.persistBatch).toHaveBeenCalledWith(
         expect.objectContaining({
           profiles: [expect.objectContaining({ resetFailureState: true })],
+          resolveProfileOwners: true,
         }),
       );
       expect(authChoiceMocks.warnIfModelConfigLooksOff).toHaveBeenCalledWith(
