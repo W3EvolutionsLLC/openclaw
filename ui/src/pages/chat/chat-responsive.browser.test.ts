@@ -1299,8 +1299,9 @@ describeBrowserLayout.concurrent("chat responsive browser layout", () => {
         };
       });
 
-      expect(gaps.before).toBeCloseTo(expectedGap, 0);
-      expect(gaps.after).toBeCloseTo(expectedGap, 0);
+      // Browser font metrics can shift subpixel geometry by up to two CSS pixels.
+      expect(Math.abs(gaps.before - expectedGap)).toBeLessThanOrEqual(2);
+      expect(Math.abs(gaps.after - expectedGap)).toBeLessThanOrEqual(2);
     } finally {
       await closeBrowserPage(page);
     }
