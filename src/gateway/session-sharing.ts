@@ -1,3 +1,4 @@
+import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import {
   ErrorCodes,
@@ -22,6 +23,10 @@ import type {
   SessionMutationAuthorization,
 } from "./server-methods/types.js";
 import type { GatewayWsClient } from "./server/ws-types.js";
+import {
+  sessionBulkMessageOwnerKey,
+  sessionBulkMessageTask,
+} from "./session-bulk-message-operation-access.js";
 import { resolveSessionGroupMutationTargetsByName } from "./session-group-mutation-targets.js";
 import {
   invalidateSessionSharingSnapshot,
@@ -337,9 +342,37 @@ function resolveApprovalSessionTarget(
 function resolveSessionMutationTargets(params: {
   method: string;
   requestParams: unknown;
+  client: GatewayClient | null;
   context: GatewayRequestContext;
   getCfg: () => OpenClawConfig;
 }): SessionMutationTarget[] | undefined {
+  if (params.method === "sessions.operations.create") {
+    const targets = isRecord(params.requestParams) ? params.requestParams.targets : undefined;
+    return Array.isArray(targets)
+      ? targets.slice(0, 201).flatMap((target): SessionMutationTarget[] => {
+          const sessionKey = readStringParam(target, "key");
+          const agentId = readStringParam(target, "agentId");
+          return sessionKey ? [{ sessionKey, ...(agentId ? { agentId } : {}) }] : [];
+        })
+      : undefined;
+  }
+  if (params.method === "sessions.operations.retry") {
+    const taskId = readStringParam(params.requestParams, "id");
+    if (!taskId) {
+      return undefined;
+    }
+    const found = sessionBulkMessageTask({
+      taskId,
+      ownerKey: sessionBulkMessageOwnerKey(params.client),
+    });
+    return found?.detail.targets
+      .filter((target) => target.status === "failed" || target.status === "pending")
+      .map((target) =>
+        target.agentId
+          ? { sessionKey: target.key, agentId: target.agentId }
+          : { sessionKey: target.key },
+      );
+  }
   if (params.method === "sessions.patchMany") {
     const targets = (params.requestParams as { targets?: unknown } | null)?.targets;
     return Array.isArray(targets)
@@ -482,6 +515,7 @@ export function resolveSessionMutationAuthorization(params: {
   const targetRefs = resolveSessionMutationTargets({
     method: params.method,
     requestParams: params.requestParams,
+    client: params.client,
     context: params.context,
     getCfg,
   });

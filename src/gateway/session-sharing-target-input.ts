@@ -77,6 +77,8 @@ const REQUIRED_SESSION_TARGET_METHODS = new Set([
   "sessions.reclaim",
   "sessions.recover",
   "sessions.move",
+  "sessions.operations.create",
+  "sessions.operations.retry",
   "sessions.reset",
   "sessions.rewind",
   "sessions.send",
@@ -106,7 +108,8 @@ export function isSessionProfileDependentMethod(method: string): boolean {
     SESSION_TARGET_FIELDS_BY_METHOD.has(method) ||
     REQUIRED_SESSION_TARGET_METHODS.has(method) ||
     APPROVAL_SESSION_TARGET_METHODS.has(method) ||
-    method === "sessions.patchMany"
+    method === "sessions.patchMany" ||
+    method.startsWith("sessions.operations.")
   );
 }
 

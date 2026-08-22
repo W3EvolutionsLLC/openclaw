@@ -169,6 +169,62 @@ describe("session sharing policy", () => {
     });
   });
 
+  it("authorizes every bulk-message target and rechecks identity before dispatch", async () => {
+    await withOpenClawTestState({ scenario: "minimal" }, async () => {
+      const targets = ["agent:main:bulk-owned", "agent:main:bulk-revoked"];
+      for (const [index, sessionKey] of targets.entries()) {
+        await upsertSessionEntryCore(
+          { agentId: "main", sessionKey },
+          {
+            sessionId: `session-bulk-${index}`,
+            updatedAt: 1,
+            visibility: "read-only",
+            createdActor: { type: "human", id: "owner@example.com" },
+          },
+        );
+      }
+      const requestParams = {
+        requestId: "bulk-auth",
+        message: "Report status.",
+        targets: targets.map((key, index) => ({
+          key,
+          expectedSessionId: `session-bulk-${index}`,
+        })),
+      };
+      const context = { getRuntimeConfig: () => ({}) } as GatewayRequestContext;
+
+      expect(
+        resolveSessionMutationAuthorization({
+          client: client({ user: "outsider@example.com" }),
+          method: "sessions.operations.create",
+          requestParams,
+          context,
+        }).error,
+      ).toMatchObject({ details: { code: "SESSION_PARTICIPATION_REQUIRED" } });
+
+      const authorization = resolveSessionMutationAuthorization({
+        client: client({ user: "owner@example.com" }),
+        method: "sessions.operations.create",
+        requestParams,
+        context,
+      });
+      expect(authorization.error).toBeNull();
+      await upsertSessionEntryCore(
+        { agentId: "main", sessionKey: targets[1]! },
+        {
+          sessionId: "session-bulk-replacement",
+          updatedAt: 2,
+          visibility: "read-only",
+          createdActor: { type: "human", id: "replacement-owner@example.com" },
+        },
+      );
+
+      expect(() =>
+        authorization.authorization?.assertTargetCurrent({ sessionKey: targets[1]! }),
+      ).toThrow(SessionMutationAuthorizationChangedError);
+    });
+  });
+
   it("extracts every message-cut lifecycle target from sessionKey", async () => {
     await withOpenClawTestState({ scenario: "minimal" }, async () => {
       const sessionKey = "agent:main:message-cut-target";

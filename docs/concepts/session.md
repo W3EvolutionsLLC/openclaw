@@ -301,7 +301,8 @@ session identity is no longer current are excluded or fail visibly rather than
 receiving stale work.
 
 The **Operations** tab records the message, target identities, and result for
-30 days in the Gateway task ledger. `Accepted` means the
+30 days in the Gateway task ledger. Identified operators see only operations
+created by their own authenticated profile. `Accepted` means the
 Gateway admitted that target's turn; it does not claim that the agent has
 finished. Busy sessions use their existing queue policy and are never steered
 or aborted by a bulk message. Partial failures remain visible with their target

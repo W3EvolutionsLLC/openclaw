@@ -15,9 +15,6 @@ import {
   validateSessionsOperationsRetryParams,
 } from "../../../packages/gateway-protocol/src/index.js";
 import {
-  findTaskByRunId,
-  getTaskById,
-  listTaskRecords,
   setTaskCleanupAfterById,
   updateTaskProgressDetailById,
   type TaskRecord,
@@ -27,27 +24,22 @@ import {
   SESSION_BULK_MESSAGE_RETENTION_MS,
   SESSION_BULK_MESSAGE_TASK_KIND,
 } from "../../tasks/session-bulk-message-task-contract.js";
-import {
-  createRunningTaskRunCore,
-  finalizeTaskRunById,
-  finalizeTaskRunByRunIdCore,
-} from "../../tasks/task-executor.js";
+import { createRunningTaskRunCore, finalizeTaskRunById } from "../../tasks/task-executor.js";
 import type { JsonValue } from "../../tasks/task-registry.types.js";
+import {
+  findSessionBulkMessageTask,
+  parseSessionBulkMessageDetail,
+  sessionBulkMessageOwnerKey,
+  sessionBulkMessageTask,
+  sessionBulkMessageTasks,
+  type StoredBulkMessageDetail,
+} from "../session-bulk-message-operation-access.js";
+import { SessionMutationAuthorizationChangedError } from "../session-sharing.js";
 import { sessionMessagingHandlers } from "./sessions-messaging.js";
 import type { GatewayRequestHandlerOptions, GatewayRequestHandlers, RespondFn } from "./types.js";
 import { assertValidParams } from "./validation.js";
 
-const BULK_MESSAGE_DETAIL_VERSION = 1;
 const DEFAULT_OPERATION_LIST_LIMIT = 50;
-
-type StoredBulkMessageDetail = {
-  version: 1;
-  kind: "bulk-message";
-  requestId: string;
-  message: string;
-  targets: SessionsOperationTargetOutcome[];
-  retryOf?: string;
-};
 
 type SendOutcome = {
   ok: boolean;
@@ -58,64 +50,6 @@ type SendOutcome = {
 function storedDetailValue(detail: StoredBulkMessageDetail): JsonValue {
   // SAFETY: StoredBulkMessageDetail is composed only of the task ledger's JSON value domain.
   return structuredClone(detail) as JsonValue;
-}
-
-function parseStoredDetail(task: TaskRecord): StoredBulkMessageDetail | null {
-  const detail = task.detail;
-  if (!detail || typeof detail !== "object" || Array.isArray(detail)) {
-    return null;
-  }
-  if (
-    detail.version !== BULK_MESSAGE_DETAIL_VERSION ||
-    detail.kind !== "bulk-message" ||
-    typeof detail.requestId !== "string" ||
-    typeof detail.message !== "string" ||
-    !Array.isArray(detail.targets)
-  ) {
-    return null;
-  }
-  const targets: SessionsOperationTargetOutcome[] = [];
-  for (const candidate of detail.targets) {
-    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
-      return null;
-    }
-    const key = normalizeOptionalString(candidate.key);
-    const expectedSessionId = normalizeOptionalString(candidate.expectedSessionId);
-    const status = candidate.status;
-    if (
-      !key ||
-      !expectedSessionId ||
-      (status !== "pending" && status !== "accepted" && status !== "failed")
-    ) {
-      return null;
-    }
-    const agentId = normalizeOptionalString(candidate.agentId);
-    const runId = normalizeOptionalString(candidate.runId);
-    const storedError = candidate.error;
-    const error =
-      isRecord(storedError) &&
-      typeof storedError.code === "string" &&
-      typeof storedError.message === "string"
-        ? errorShape(ErrorCodes.UNAVAILABLE, storedError.message)
-        : undefined;
-    targets.push({
-      key,
-      expectedSessionId,
-      status,
-      ...(agentId ? { agentId } : {}),
-      ...(runId ? { runId } : {}),
-      ...(error ? { error } : {}),
-    });
-  }
-  const retryOf = normalizeOptionalString(detail.retryOf);
-  return {
-    version: BULK_MESSAGE_DETAIL_VERSION,
-    kind: "bulk-message",
-    requestId: detail.requestId,
-    message: detail.message,
-    targets,
-    ...(retryOf ? { retryOf } : {}),
-  };
 }
 
 function operationCounts(targets: SessionsOperationTargetOutcome[]) {
@@ -169,17 +103,6 @@ function projectOperation(task: TaskRecord, detail: StoredBulkMessageDetail): Se
   };
 }
 
-function operationTask(
-  taskId: string,
-): { task: TaskRecord; detail: StoredBulkMessageDetail } | null {
-  const task = getTaskById(taskId);
-  if (!task || task.taskKind !== SESSION_BULK_MESSAGE_TASK_KIND) {
-    return null;
-  }
-  const detail = parseStoredDetail(task);
-  return detail ? { task, detail } : null;
-}
-
 function reconcileRetryOutcome(
   original: { task: TaskRecord; detail: StoredBulkMessageDetail },
   retry: SessionsOperation,
@@ -230,6 +153,20 @@ async function invokeSingleSend(
   const respond: RespondFn = (ok, payload, error) => {
     outcome = { ok, payload, error };
   };
+  try {
+    options.sessionMutationAuthorization?.assertTargetCurrent({
+      sessionKey: params.target.key,
+      ...(params.target.agentId ? { agentId: params.target.agentId } : {}),
+    });
+  } catch (error) {
+    return {
+      ok: false,
+      error:
+        error instanceof SessionMutationAuthorizationChangedError
+          ? error.error
+          : errorShape(ErrorCodes.UNAVAILABLE, "session authorization changed before dispatch"),
+    };
+  }
   await handler({
     ...options,
     params: {
@@ -256,7 +193,7 @@ function initialDetail(params: {
   retryOf?: string;
 }): StoredBulkMessageDetail {
   return {
-    version: BULK_MESSAGE_DETAIL_VERSION,
+    version: 1,
     kind: "bulk-message",
     requestId: params.requestId,
     message: params.message,
@@ -288,9 +225,10 @@ async function executeBulkMessage(params: {
   targets: SessionsOperationTarget[];
   retryOf?: string;
 }): Promise<{ ok: true; operation: SessionsOperation } | { ok: false; error: ErrorShape }> {
-  const existing = findTaskByRunId(params.requestId);
+  const ownerKey = sessionBulkMessageOwnerKey(params.options.client);
+  const existing = findSessionBulkMessageTask({ ownerKey, requestId: params.requestId });
   if (existing) {
-    const detail = parseStoredDetail(existing);
+    const detail = parseSessionBulkMessageDetail(existing);
     if (!detail || !sameOperationInput(detail, params)) {
       return {
         ok: false,
@@ -305,12 +243,13 @@ async function executeBulkMessage(params: {
 
   const startedAt = Date.now();
   const detail = initialDetail(params);
+  const taskRunId = JSON.stringify([ownerKey, params.requestId]);
   const task = createRunningTaskRunCore({
     runtime: "cli",
     taskKind: SESSION_BULK_MESSAGE_TASK_KIND,
     sourceId: params.requestId,
-    runId: params.requestId,
-    ownerKey: "",
+    runId: taskRunId,
+    ownerKey,
     requesterSessionKey: "",
     scopeKind: "system",
     label: "Bulk session message",
@@ -358,24 +297,21 @@ async function executeBulkMessage(params: {
   const endedAt = Date.now();
   const counts = operationCounts(detail.targets);
   const failed = counts.failed > 0;
-  finalizeTaskRunByRunIdCore({
-    runId: params.requestId,
-    runtime: "cli",
+  finalizeTaskRunById({
+    taskId: task.taskId,
     status: failed ? "failed" : "succeeded",
     endedAt,
-    progressSummary: `${counts.accepted}/${detail.targets.length} accepted`,
     terminalSummary: failed
       ? `${counts.accepted} accepted, ${counts.failed} failed`
       : `${counts.accepted} accepted`,
     terminalOutcome: failed ? "blocked" : "succeeded",
     detail: storedDetailValue(detail),
-    suppressDelivery: true,
   });
   setTaskCleanupAfterById({
     taskId: task.taskId,
     cleanupAfter: endedAt + SESSION_BULK_MESSAGE_RETENTION_MS,
   });
-  const completed = operationTask(task.taskId);
+  const completed = sessionBulkMessageTask({ taskId: task.taskId, ownerKey });
   return completed
     ? { ok: true, operation: projectOperation(completed.task, completed.detail) }
     : {
@@ -416,7 +352,7 @@ export const sessionOperationHandlers: GatewayRequestHandlers = {
       options.respond(false, undefined, result.error);
     }
   },
-  "sessions.operations.list": ({ params, respond }) => {
+  "sessions.operations.list": ({ params, respond, client }) => {
     if (
       !assertValidParams(
         params,
@@ -428,20 +364,20 @@ export const sessionOperationHandlers: GatewayRequestHandlers = {
       return;
     }
     const limit = params.limit ?? DEFAULT_OPERATION_LIST_LIMIT;
-    const operations = listTaskRecords()
-      .filter((task) => task.taskKind === SESSION_BULK_MESSAGE_TASK_KIND)
+    const ownerKey = sessionBulkMessageOwnerKey(client);
+    const operations = sessionBulkMessageTasks(ownerKey)
       .toSorted(
         (left, right) =>
           (right.lastEventAt ?? right.createdAt) - (left.lastEventAt ?? left.createdAt),
       )
       .flatMap((task) => {
-        const detail = parseStoredDetail(task);
+        const detail = parseSessionBulkMessageDetail(task);
         return detail ? [projectOperationSummary(task, detail)] : [];
       })
       .slice(0, limit);
     respond(true, { operations });
   },
-  "sessions.operations.get": ({ params, respond }) => {
+  "sessions.operations.get": ({ params, respond, client }) => {
     if (
       !assertValidParams(
         params,
@@ -452,7 +388,10 @@ export const sessionOperationHandlers: GatewayRequestHandlers = {
     ) {
       return;
     }
-    const found = operationTask(params.id);
+    const found = sessionBulkMessageTask({
+      taskId: params.id,
+      ownerKey: sessionBulkMessageOwnerKey(client),
+    });
     if (!found) {
       respondOperationMissing(respond, params.id);
       return;
@@ -470,7 +409,10 @@ export const sessionOperationHandlers: GatewayRequestHandlers = {
     ) {
       return;
     }
-    const found = operationTask(options.params.id);
+    const found = sessionBulkMessageTask({
+      taskId: options.params.id,
+      ownerKey: sessionBulkMessageOwnerKey(options.client),
+    });
     if (!found) {
       respondOperationMissing(options.respond, options.params.id);
       return;

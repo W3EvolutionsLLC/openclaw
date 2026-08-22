@@ -4,7 +4,8 @@ import {
   SESSION_BULK_MESSAGE_RETENTION_MS,
 } from "../../tasks/session-bulk-message-task-contract.js";
 import type { TaskRecord } from "../../tasks/task-registry.types.js";
-import type { GatewayRequestHandlerOptions } from "./types.js";
+import { SessionMutationAuthorizationChangedError } from "../session-sharing.js";
+import type { GatewayClient, GatewayRequestHandlerOptions } from "./types.js";
 
 const taskStore = vi.hoisted(() => {
   const tasks = new Map<string, TaskRecord>();
@@ -17,8 +18,8 @@ const taskStore = vi.hoisted(() => {
         runtime: params.runtime,
         taskKind: params.taskKind,
         sourceId: params.sourceId,
-        requesterSessionKey: "",
-        ownerKey: "",
+        requesterSessionKey: params.requesterSessionKey ?? "",
+        ownerKey: params.ownerKey ?? "",
         scopeKind: "system",
         runId: params.runId,
         label: params.label,
@@ -108,7 +109,23 @@ vi.mock("./sessions-messaging.js", () => ({
 
 import { sessionOperationHandlers } from "./sessions-operations.js";
 
-function options(method: string, params: Record<string, unknown>) {
+function profileClient(profileId: string): GatewayClient {
+  return {
+    connect: { scopes: ["operator.read", "operator.write"] },
+    authenticatedUserProfile: {
+      profileId,
+      displayName: profileId,
+      hasAvatar: false,
+      updatedAt: 1,
+    },
+  } as GatewayClient;
+}
+
+function options(
+  method: string,
+  params: Record<string, unknown>,
+  overrides: Partial<GatewayRequestHandlerOptions> = {},
+) {
   const respond = vi.fn();
   return {
     respond,
@@ -119,6 +136,7 @@ function options(method: string, params: Record<string, unknown>) {
       context: {},
       client: null,
       isWebchatConnect: () => false,
+      ...overrides,
     } as unknown as GatewayRequestHandlerOptions,
   };
 }
@@ -179,6 +197,45 @@ describe("sessions operations", () => {
     const createParams = taskStore.create.mock.calls[0]?.[0];
     expect(Number(createParams?.cleanupAfter) - Number(createParams?.startedAt)).toBe(
       SESSION_BULK_MESSAGE_RETENTION_MS,
+    );
+  });
+
+  it("revalidates every target immediately before dispatch", async () => {
+    const assertTargetCurrent = vi.fn(({ sessionKey }: { sessionKey: string }) => {
+      if (sessionKey === "agent:main:revoked") {
+        throw new SessionMutationAuthorizationChangedError({
+          code: "INVALID_REQUEST",
+          message: "session is read-only for this connection",
+        });
+      }
+    });
+    const created = options(
+      "sessions.operations.create",
+      {
+        requestId: "bulk-revalidate",
+        message: "Report status.",
+        targets: [
+          { key: "agent:main:accepted", expectedSessionId: "session-accepted" },
+          { key: "agent:main:revoked", expectedSessionId: "session-revoked" },
+        ],
+      },
+      { sessionMutationAuthorization: { assertCurrent: vi.fn(), assertTargetCurrent } },
+    );
+
+    await sessionOperationHandlers["sessions.operations.create"]?.(created.options);
+
+    expect(assertTargetCurrent.mock.calls.map(([target]) => target.sessionKey)).toEqual([
+      "agent:main:accepted",
+      "agent:main:revoked",
+    ]);
+    expect(send.mock.calls.map(([call]) => call.params.key)).toEqual(["agent:main:accepted"]);
+    expect(created.respond).toHaveBeenCalledWith(
+      true,
+      expect.objectContaining({
+        operation: expect.objectContaining({
+          counts: { pending: 0, accepted: 1, failed: 1 },
+        }),
+      }),
     );
   });
 
@@ -247,6 +304,58 @@ describe("sessions operations", () => {
           status: "interrupted",
           counts: { pending: 1, accepted: 0, failed: 0 },
         }),
+      ],
+    });
+  });
+
+  it("keeps history, details, and retry handles private to the creating profile", async () => {
+    const alice = profileClient("alice");
+    const bob = profileClient("bob");
+    const created = options(
+      "sessions.operations.create",
+      {
+        requestId: "bulk-private",
+        message: "Private operation message.",
+        targets: [{ key: "agent:main:failed", expectedSessionId: "session-failed" }],
+      },
+      { client: alice },
+    );
+    await sessionOperationHandlers["sessions.operations.create"]?.(created.options);
+    const operationId = taskStore.tasks.values().next().value?.taskId;
+    if (!operationId) {
+      throw new Error("Expected created bulk operation");
+    }
+    send.mockClear();
+
+    const bobList = options("sessions.operations.list", {}, { client: bob });
+    const bobGet = options("sessions.operations.get", { id: operationId }, { client: bob });
+    const bobRetry = options(
+      "sessions.operations.retry",
+      { id: operationId, requestId: "bulk-private-retry" },
+      { client: bob },
+    );
+    await sessionOperationHandlers["sessions.operations.list"]?.(bobList.options);
+    await sessionOperationHandlers["sessions.operations.get"]?.(bobGet.options);
+    await sessionOperationHandlers["sessions.operations.retry"]?.(bobRetry.options);
+
+    expect(bobList.respond).toHaveBeenCalledWith(true, { operations: [] });
+    expect(bobGet.respond).toHaveBeenCalledWith(
+      false,
+      undefined,
+      expect.objectContaining({ message: `sessions operation not found: ${operationId}` }),
+    );
+    expect(bobRetry.respond).toHaveBeenCalledWith(
+      false,
+      undefined,
+      expect.objectContaining({ message: `sessions operation not found: ${operationId}` }),
+    );
+    expect(send).not.toHaveBeenCalled();
+
+    const aliceList = options("sessions.operations.list", {}, { client: alice });
+    await sessionOperationHandlers["sessions.operations.list"]?.(aliceList.options);
+    expect(aliceList.respond).toHaveBeenCalledWith(true, {
+      operations: [
+        expect.objectContaining({ id: operationId, messagePreview: "Private operation message." }),
       ],
     });
   });
