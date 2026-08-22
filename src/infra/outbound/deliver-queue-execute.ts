@@ -283,9 +283,16 @@ export async function deliverOutboundPayloadsWithQueueCleanup(
       partialFailuresAreProvenNotSent &&= isProvenDeliveryNotSentError(err);
       params.onError?.(err, payload);
     },
-    ...(auditPayloadOutcomes || stablePayloadOutcomes
+    ...(params.onPayloadDeliveryOutcome || auditPayloadOutcomes || stablePayloadOutcomes
       ? {
           onPayloadDeliveryOutcome: (outcome: OutboundPayloadDeliveryOutcome) => {
+            if (
+              outcome.status === "failed" &&
+              queuedPreSendState === "marked" &&
+              !isProvenDeliveryNotSentError(outcome.error)
+            ) {
+              outcome.sentBeforeError = true;
+            }
             auditPayloadOutcomes?.push(outcome);
             stablePayloadOutcomes?.push(outcome);
             params.onPayloadDeliveryOutcome?.(outcome);
@@ -540,9 +547,7 @@ export async function deliverOutboundPayloadsWithQueueCleanup(
           );
         }
       } else if (!platformResultsReturned) {
-        const sendEvidence =
-          deliveredResults.length > 0 ||
-          (err instanceof OutboundDeliveryError && err.sentBeforeError);
+        const sendEvidence = hasPlatformSendEvidence && !isProvenDeliveryNotSentError(err);
         if (sendEvidence) {
           try {
             queuedPostSendState ??= await persistOwnedPostSendState();

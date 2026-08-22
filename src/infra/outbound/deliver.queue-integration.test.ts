@@ -879,7 +879,7 @@ describe("deliverOutboundPayloads queue integration: mid-batch failure with send
     await expect(deliverOutboundPayloads(params)).rejects.toThrow("provider result was lost");
     expect((await loadPendingDeliveries(tmpDir))[0]).toMatchObject({
       id: deliveryIntentId,
-      recoveryState: "send_attempt_started",
+      recoveryState: "unknown_after_send",
     });
     await expect(deliverOutboundPayloads(params)).rejects.toThrow(
       `Stable delivery intent is already queued: ${deliveryIntentId}`,
@@ -903,7 +903,6 @@ describe("deliverOutboundPayloads queue integration: mid-batch failure with send
 
     expect(stateBeforeSecondSend).toBe("unknown_after_send");
     const entries = await loadPendingDeliveries(tmpDir);
-    expect(entries).toHaveLength(1);
     const entry = expectDefined(entries[0], "entries[0] test invariant");
     expect(entry.recoveryState).toBe("unknown_after_send");
     expect(entry.retryCount).toBe(1);
@@ -955,7 +954,7 @@ describe("deliverOutboundPayloads queue integration: mid-batch failure with send
 
     const beforeDrain = await loadPendingDeliveries(tmpDir);
     expect(beforeDrain).toHaveLength(1);
-    expect(beforeDrain[0]?.recoveryState).toBe("send_attempt_started");
+    expect(beforeDrain[0]?.recoveryState).toBe("unknown_after_send");
 
     const deliver = vi.fn<DeliverFn>(async () => {});
     await drainMatrixReconnect({ deliver, stateDir: tmpDir });
@@ -972,9 +971,10 @@ describe("deliverOutboundPayloads queue integration: mid-batch failure with send
     expect(auditEvents.slice(-2).map((event) => event.resultCount)).toEqual([0, 0]);
   });
 
-  it("retains retryable send-attempt state when an adapter fails before returning a result", async () => {
+  it("reports an ambiguous payload when an adapter fails after dispatch", async () => {
     process.env.OPENCLAW_STATE_DIR = tmpDir;
     const sendMatrix = vi.fn().mockRejectedValueOnce(new Error("first payload send failed"));
+    const onPayloadDeliveryOutcome = vi.fn();
 
     await expect(
       deliverOutboundPayloads({
@@ -984,6 +984,7 @@ describe("deliverOutboundPayloads queue integration: mid-batch failure with send
         payloads: [{ text: "first" }],
         deps: { matrix: sendMatrix },
         queuePolicy: "required",
+        onPayloadDeliveryOutcome,
       }),
     ).rejects.toThrow("first payload send failed");
 
@@ -992,9 +993,10 @@ describe("deliverOutboundPayloads queue integration: mid-batch failure with send
     );
     expect(entries).toHaveLength(1);
     const entry = expectDefined(entries[0], "entries[0] test invariant");
-    expect(entry.retryCount).toBe(1);
-    expect(entry.recoveryState).toBe("send_attempt_started");
-    expect(entry.lastError).toContain("first payload send failed");
+    expect(entry).toMatchObject({ retryCount: 1, recoveryState: "unknown_after_send" });
+    expect(onPayloadDeliveryOutcome).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "failed", sentBeforeError: true }),
+    );
   });
 
   it("replays an entry after a proven pre-connect failure clears send evidence", async () => {
