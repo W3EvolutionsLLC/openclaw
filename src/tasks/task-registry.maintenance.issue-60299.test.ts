@@ -4,11 +4,7 @@ import type { AcpSessionStoreEntry } from "../acp/runtime/session-meta.js";
 import type { SessionEntry } from "../config/sessions.js";
 import type { ParsedAgentSessionKey } from "../routing/session-key.js";
 import { getDetachedTaskLifecycleRuntime } from "./detached-task-runtime.js";
-import {
-  SESSION_BULK_MESSAGE_INTERRUPTED_ERROR,
-  SESSION_BULK_MESSAGE_RETENTION_MS,
-  SESSION_BULK_MESSAGE_TASK_KIND,
-} from "./session-bulk-message-task-contract.js";
+import * as bulkMessageTask from "./session-bulk-message-task-contract.js";
 import {
   CRON_HISTORY_KEEP_PER_JOB,
   getInspectableActiveTaskRestartBlockers,
@@ -765,28 +761,12 @@ describe("task-registry maintenance issue #60299", () => {
   });
 
   it("preserves bulk message detail and retention when restart interrupts dispatch", async () => {
-    const now = Date.now();
-    const cleanupAfter = now + SESSION_BULK_MESSAGE_RETENTION_MS;
-    const detail = {
-      version: 1,
-      kind: "bulk-message",
-      requestId: "bulk-restart",
-      message: "Report status.",
-      targets: [
-        {
-          key: "agent:main:pending",
-          expectedSessionId: "session-pending",
-          status: "pending",
-        },
-      ],
-    };
+    const cleanupAfter = Date.now() + bulkMessageTask.SESSION_BULK_MESSAGE_RETENTION_MS;
+    const detail = { targets: [{ key: "k", expectedSessionId: "s", status: "pending" }] };
     const task = makeStaleTask({
       runtime: "cli",
-      taskKind: SESSION_BULK_MESSAGE_TASK_KIND,
-      sourceId: "bulk-restart",
-      runId: "bulk-restart",
-      ownerKey: "",
-      requesterSessionKey: "",
+      taskKind: bulkMessageTask.SESSION_BULK_MESSAGE_TASK_KIND,
+      runId: "r",
       cleanupAfter,
       detail,
     });
@@ -794,12 +774,10 @@ describe("task-registry maintenance issue #60299", () => {
 
     expectMaintenanceCounts(await runTaskRegistryMaintenance(), { reconciled: 1 });
     const interrupted = currentTasks.get(task.taskId);
-    expect(interrupted).toMatchObject({
-      status: "failed",
-      error: SESSION_BULK_MESSAGE_INTERRUPTED_ERROR,
-      cleanupAfter,
-      detail,
-    });
+    expect(interrupted?.status).toBe("failed");
+    expect(interrupted?.error).toBe(bulkMessageTask.SESSION_BULK_MESSAGE_INTERRUPTED_ERROR);
+    expect(interrupted?.cleanupAfter).toBe(cleanupAfter);
+    expect(interrupted?.detail).toEqual(detail);
   });
 
   it("does not keep stale CLI run-context tasks alive through stale subagent session rows", async () => {
