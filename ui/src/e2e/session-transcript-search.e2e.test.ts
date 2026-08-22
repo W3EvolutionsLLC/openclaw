@@ -153,7 +153,7 @@ describeControlUiE2e("Control UI session transcript search", () => {
     });
 
     await page.goto(`${server?.baseUrl ?? ""}sessions`);
-    const { input, search } = await openTranscriptSearch(page);
+    const { input } = await openTranscriptSearch(page);
     await captureUiProof("01-initial.png");
 
     await input.fill("  nebula launch  ");
