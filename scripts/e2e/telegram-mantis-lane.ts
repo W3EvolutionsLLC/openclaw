@@ -20,15 +20,15 @@ import {
 } from "./telegram-mantis-sut.ts";
 
 const execFileAsync = promisify(execFile);
-const MAX_SESSION_MS = 15 * 60_000;
+const MAX_MOCK_DELAY_MS = 15 * 60_000;
 const laneSchema = z.enum(["baseline", "candidate"]);
 const configSchema = z.object({
   configPatch: z.record(z.string(), z.unknown()).optional(),
   mockResponse: z.string().min(1).max(100_000),
-  mockResponseChunkDelayMs: z.number().int().positive().max(MAX_SESSION_MS).optional(),
+  mockResponseChunkDelayMs: z.number().int().positive().max(MAX_MOCK_DELAY_MS).optional(),
 });
 const mockResponseControlSchema = z.object({
-  chunkDelayMs: z.number().int().min(0).max(MAX_SESSION_MS).optional(),
+  chunkDelayMs: z.number().int().min(0).max(MAX_MOCK_DELAY_MS).optional(),
   events: z.array(z.record(z.string(), z.unknown())).min(1).optional(),
   hold: z.boolean().optional(),
   text: z.string().min(1).max(100_000).optional(),
@@ -52,7 +52,7 @@ const sutRuntimeSchema = sutRecoverySchema
   })
   .passthrough();
 const startupSessionSchema = z.object({
-  attempt: z.number().int().positive().max(3),
+  attempt: z.number().int().positive(),
   lane: laneSchema,
   observerPidFile: z.string(),
   observerRequested: z.boolean(),
@@ -74,7 +74,7 @@ const recorderArtifactsSchema = z.object({
   artifacts: z.record(z.string(), z.string()),
 });
 const activeSessionSchema = z.object({
-  attempt: z.number().int().positive().max(3),
+  attempt: z.number().int().positive(),
   config: configSchema,
   invocations: z.array(invocationSchema),
   lane: laneSchema,
@@ -106,14 +106,13 @@ type ObserverResponse = {
   truncated?: boolean;
 } & Record<string, unknown>;
 
-const MAX_ATTEMPTS = 3;
 const MAX_SENDS = 12;
-const MAX_OBSERVE_SECONDS = MAX_SESSION_MS / 1000;
 const MAX_RPC_BYTES = 4 * 1024 * 1024;
 const commandOptions: Record<string, readonly string[]> = {
   abort: ["--lane"],
   block: ["--lane", "--missing-primitive", "--reason"],
   delete: ["--lane", "--message-id"],
+  desktop: ["--lane", "--actions-file", "--timeout-seconds"],
   finish: ["--lane", "--focus-message-id"],
   mock: ["--lane", "--response-file", "--response-events-file", "--chunk-delay-ms"],
   observe: ["--lane", "--seconds", "--since"],
@@ -235,6 +234,16 @@ function publicRelativePath(root: string, file: string, label: string): string {
   if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
     throw new Error(`${label} must be inside the Mantis output directory.`);
   }
+  // Node has no openat(2), so containment is re-proven component by component: a directory
+  // swapped for a symlink after the caller resolved the path would otherwise route an
+  // already-open descriptor outside the root, which O_NOFOLLOW only prevents for the leaf.
+  let cursor = resolvedRoot;
+  for (const segment of relative.split(path.sep)) {
+    cursor = path.join(cursor, segment);
+    if (fs.lstatSync(cursor).isSymbolicLink()) {
+      throw new Error(`${label} must be inside the Mantis output directory.`);
+    }
+  }
   return relative;
 }
 
@@ -245,11 +254,11 @@ function readPublicFile(
   maxBytes: number,
 ): { relative: string; text: string } {
   const resolved = fs.realpathSync(input);
-  publicRelativePath(root, resolved, label);
   const descriptor = fs.openSync(resolved, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
   try {
-    const opened = fs.realpathSync(`/proc/self/fd/${descriptor}`);
-    const relative = publicRelativePath(root, opened, label);
+    // Containment is checked after the open so the descriptor being read is the file the
+    // check accepted, not one a concurrent swap redirected it to.
+    const relative = publicRelativePath(root, resolved, label);
     const stat = fs.fstatSync(descriptor);
     if (!stat.isFile() || stat.size > maxBytes) {
       throw new Error(`${label} must be a regular file no larger than ${maxBytes} bytes.`);
@@ -286,20 +295,26 @@ function readStartup(sessionRoot: string, lane: Lane): StartupSession {
   return startupSessionSchema.parse(readJson(startupFile(sessionRoot, lane)));
 }
 
-function readActive(sessionRoot: string, lane: Lane, allowExpired = false): ActiveSession {
+function readActive(sessionRoot: string, lane: Lane): ActiveSession {
   const file = activeFile(sessionRoot, lane);
   if (!fs.existsSync(file)) {
     throw new Error(`No active ${lane} lane. Run start first.`);
   }
-  const state = activeSessionSchema.parse(readJson(file));
-  if (!allowExpired && Date.now() - Date.parse(state.startedAt) > MAX_SESSION_MS) {
-    throw new Error(`${lane} exceeded its 15-minute session budget; run abort.`);
-  }
-  return state;
+  return activeSessionSchema.parse(readJson(file));
 }
 
 function saveActive(sessionRoot: string, state: ActiveSession): void {
   writeJsonAtomic(activeFile(sessionRoot, state.lane), state);
+}
+
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    // EPERM means the pid exists under another user; only ESRCH proves the lock owner is gone.
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
 }
 
 function acquireHarnessLock(sessionRoot: string): () => void {
@@ -319,7 +334,7 @@ function acquireHarnessLock(sessionRoot: string): () => void {
         throw error;
       }
       const owner = Number(fs.readFileSync(lock, "utf8").trim());
-      if (Number.isInteger(owner) && owner > 0 && fs.existsSync(`/proc/${owner}`)) {
+      if (Number.isInteger(owner) && owner > 0 && processIsAlive(owner)) {
         throw new Error("The shared Telegram harness already has a command in progress.", {
           cause: error,
         });
@@ -658,9 +673,6 @@ async function startLane(values: Map<string, string>, roots: Roots): Promise<voi
   const attemptsRoot = path.join(roots.sessionRoot, "attempts", lane);
   fs.mkdirSync(attemptsRoot, { recursive: true });
   const attempt = fs.readdirSync(attemptsRoot).filter((entry) => /^\d+$/u.test(entry)).length + 1;
-  if (attempt > MAX_ATTEMPTS) {
-    throw new Error(`${lane} already used its ${MAX_ATTEMPTS} allowed attempts.`);
-  }
   const privateDir = path.join(attemptsRoot, String(attempt));
   fs.mkdirSync(privateDir, { mode: 0o770 });
   const recorderSession = path.join(privateDir, "recorder.json");
@@ -806,9 +818,7 @@ async function startLane(values: Map<string, string>, roots: Roots): Promise<voi
       lane,
       status: "ready",
       budgets: {
-        maxObserveSeconds: MAX_OBSERVE_SECONDS,
         maxSends: MAX_SENDS,
-        sessionSeconds: MAX_SESSION_MS / 1000,
       },
       commands: commandNames.filter((command) => command !== "start"),
     });
@@ -920,6 +930,7 @@ async function revealSentMessage(
     "--message-id",
     sent.messageId,
   ]);
+  state.lastViewedMessageId = sent.messageId;
   appendInvocation(state, "reveal", { messageId: sent.messageId }, response.cursor);
   return sent.messageId;
 }
@@ -948,9 +959,6 @@ async function observe(
   secret: string,
 ): Promise<ObserverResponse> {
   const seconds = numberOption(values, "--seconds", 60);
-  if (state.observeSeconds + seconds > MAX_OBSERVE_SECONDS) {
-    throw new Error(`The ${MAX_OBSERVE_SECONDS}-second observation budget is exhausted.`);
-  }
   const since = values.has("--since")
     ? numberOption(values, "--since", Number.MAX_SAFE_INTEGER)
     : state.lastCursor;
@@ -997,7 +1005,7 @@ function updateMockResponse(
     throw new Error("--response-file must contain 1 to 100000 characters.");
   }
   const chunkDelayMs = values.has("--chunk-delay-ms")
-    ? numberOption(values, "--chunk-delay-ms", MAX_SESSION_MS)
+    ? numberOption(values, "--chunk-delay-ms", MAX_MOCK_DELAY_MS)
     : 0;
   const current = readMockResponseControl(state);
   writeJsonAtomic(state.sut.mockResponseControl, { chunkDelayMs, hold: current.hold, text });
@@ -1046,6 +1054,56 @@ async function observerAction(
   return response;
 }
 
+async function runDesktopActions(
+  state: ActiveSession,
+  values: Map<string, string>,
+  roots: Roots,
+): Promise<Record<string, unknown>> {
+  const actions = readPublicFile(
+    roots.outputRoot,
+    required(values, "--actions-file"),
+    "--actions-file",
+    64 * 1024,
+  );
+  if (!actions.text.trim()) {
+    throw new Error("--actions-file must not be empty.");
+  }
+  const timeoutSeconds = values.has("--timeout-seconds")
+    ? numberOption(values, "--timeout-seconds", 300, 1)
+    : 60;
+  const privateActions = path.join(
+    state.privateDir,
+    `desktop-actions-${state.invocations.length + 1}.json`,
+  );
+  fs.mkdirSync(state.privateDir, { recursive: true });
+  fs.writeFileSync(privateActions, actions.text, { mode: 0o640 });
+  const actionsSha256 = createHash("sha256").update(actions.text).digest("hex");
+  appendInvocation(state, "desktop", {
+    actionsFile: actions.relative,
+    actionsSha256,
+    timeoutSeconds,
+  });
+  saveActive(roots.sessionRoot, state);
+  const result = z
+    .object({
+      results: z.array(z.object({ command: z.string(), stderr: z.string(), stdout: z.string() })),
+    })
+    .parse(
+      JSON.parse(
+        await runCommandOutput(requiredEnv("OPENCLAW_TELEGRAM_DESKTOP_RECORDER_CMD"), [
+          "actions",
+          "--session",
+          recorderRelativePath(state.recorderSession),
+          "--actions-file",
+          recorderRelativePath(privateActions),
+          "--timeout-seconds",
+          String(timeoutSeconds),
+        ]),
+      ),
+    );
+  return { ...result, actionsSha256 };
+}
+
 async function focusMessage(state: ActiveSession, messageId: string): Promise<void> {
   if (!/^\d+$/u.test(messageId) || BigInt(messageId) < 1n) {
     throw new Error("--message-id must be a positive Telegram server message id.");
@@ -1063,11 +1121,11 @@ async function focusMessage(state: ActiveSession, messageId: string): Promise<vo
           "messageId" in event &&
           event.messageId === messageId &&
           "actor" in event &&
-          event.actor === "bot",
+          (event.actor === "user" || event.actor === "bot"),
       )
     : false;
   if (!observed) {
-    throw new Error(`Message ${messageId} was not emitted by the SUT bot in this proof session.`);
+    throw new Error(`Message ${messageId} was not observed in this proof session.`);
   }
   await runCommand(requiredEnv("OPENCLAW_TELEGRAM_DESKTOP_RECORDER_CMD"), [
     "view",
@@ -1213,7 +1271,7 @@ async function finalize(
   state: ActiveSession,
   roots: Roots,
   options: {
-    blocked?: { name: string; reason: string };
+    blocked?: { name?: string; reason: string };
     focusMessageId?: string;
   },
 ): Promise<void> {
@@ -1225,14 +1283,10 @@ async function finalize(
     primaryError ??= error;
   }
   const cleanupErrors: string[] = [];
-  if (!options.focusMessageId && !options.blocked) {
-    throw new Error(
-      "finish requires --focus-message-id so the final frame shows the evaluated message.",
-    );
-  }
+  const focusMessageId = options.focusMessageId ?? state.lastViewedMessageId;
   try {
-    if (options.focusMessageId) {
-      await focusMessage(state, options.focusMessageId);
+    if (focusMessageId) {
+      await focusMessage(state, focusMessageId);
     }
   } catch (error) {
     primaryError ??= error;
@@ -1240,7 +1294,7 @@ async function finalize(
   const stopped = await stopActiveLane(state, secret, true);
   primaryError ??= stopped.evidenceErrors[0];
   cleanupErrors.push(...stopped.cleanupErrors);
-  appendInvocation(state, "finish", { focusMessageId: options.focusMessageId }, stopped.cursor);
+  appendInvocation(state, "finish", { focusMessageId }, stopped.cursor);
 
   let recorderArtifacts: Record<string, string> = {};
   try {
@@ -1458,14 +1512,12 @@ async function main(): Promise<void> {
       await abortStartup(readStartup(roots.sessionRoot, lane), roots);
       return;
     }
-    const state = readActive(
-      roots.sessionRoot,
-      lane,
-      ["abort", "block", "finish"].includes(cli.command),
-    );
+    const state = readActive(roots.sessionRoot, lane);
     const credential = credentialSchema.parse(readJson(roots.credentialFile));
     if (cli.command === "mock") {
       outputJson(updateMockResponse(state, cli.values, roots.outputRoot));
+    } else if (cli.command === "desktop") {
+      outputJson(await runDesktopActions(state, cli.values, roots));
     } else if (cli.command === "send") {
       const sent = await sendVisibleMessage(state, cli.values, roots, credential.sutToken);
       outputJson({ ...sent.response, revealedMessageId: sent.revealedMessageId });
@@ -1491,13 +1543,13 @@ async function main(): Promise<void> {
       outputJson(await observerAction(state, cli.command as "delete" | "press", cli.values));
     } else if (cli.command === "finish") {
       await finalize(state, roots, {
-        focusMessageId: required(cli.values, "--focus-message-id"),
+        focusMessageId: cli.values.get("--focus-message-id"),
       });
       return;
     } else if (cli.command === "block") {
       await finalize(state, roots, {
         blocked: {
-          name: required(cli.values, "--missing-primitive"),
+          name: cli.values.get("--missing-primitive"),
           reason: required(cli.values, "--reason"),
         },
       });
