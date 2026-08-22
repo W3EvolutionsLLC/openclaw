@@ -65,8 +65,6 @@ const INLINE_SAFE_COMMAND_KEYS = new Set([
   "trace",
   "fast",
   "reasoning",
-  "elevated",
-  "exec",
   "model",
   "queue",
 ]);

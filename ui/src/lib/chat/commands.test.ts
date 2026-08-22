@@ -72,6 +72,8 @@ describe("findInlineSlashCompletion", () => {
       getSlashCommandCompletions("weather", { inlineOnly: true }).map((entry) => entry.name),
     ).toEqual(["weather"]);
     expect(getSlashCommandCompletions("reset", { inlineOnly: true })).toEqual([]);
+    expect(getSlashCommandCompletions("elevated", { inlineOnly: true })).toEqual([]);
+    expect(getSlashCommandCompletions("exec", { inlineOnly: true })).toEqual([]);
     expect(
       getSlashCommandCompletions("think", { inlineOnly: true }).map((entry) => entry.name),
     ).toContain("think");
