@@ -4,11 +4,11 @@ import { isReservedSystemAgentId } from "../system-agent/agent-id.js";
 import {
   PreparedModelRuntimeOwnerNotPublishedError,
   PreparedModelRuntimePublicationSupersededError,
-  hasConfiguredOwnerMatching,
   ownerKey,
   normalizePreparedModelRuntimeInput,
   publishModelRuntimeSnapshot,
   rebindInputToCommittedConfiguredOwner,
+  resolveConfiguredOwnerPublication,
   type PreparedModelRuntimeInput,
   type PreparedModelRuntimeLease,
   type PreparedModelRuntimeOwner,
@@ -116,7 +116,13 @@ export async function acquirePreparedModelRuntimeLeaseFromOwners(
         }
         const canActivateConfiglessSetup =
           input.agentId !== undefined && isReservedSystemAgentId(input.agentId);
-        if (hasConfiguredOwnerMatching(context.owners, input) || !canActivateConfiglessSetup) {
+        const configuredOwner = resolveConfiguredOwnerPublication(context.owners, input);
+        if (configuredOwner.matches || !canActivateConfiglessSetup) {
+          const pending = configuredOwner.pending;
+          if (pending) {
+            await pending;
+            continue;
+          }
           throw error;
         }
         // First-run Model Setup uses the reserved system-agent identity before a configless gateway
