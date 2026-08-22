@@ -54,6 +54,10 @@ import {
   setTaskCleanupAfterById,
 } from "./runtime-internal.js";
 import {
+  isSessionBulkMessageTask,
+  SESSION_BULK_MESSAGE_INTERRUPTED_ERROR,
+} from "./session-bulk-message-task-contract.js";
+import {
   configureTaskAuditTaskProvider,
   listTaskAuditFindings,
   summarizeTaskAuditFindings,
@@ -680,11 +684,42 @@ async function cleanupOrphanedParentOwnedAcpSessions(): Promise<void> {
   }
 }
 
+function projectInterruptedSessionBulkMessageTask(task: TaskRecord, now: number): TaskRecord {
+  return {
+    ...task,
+    status: "failed",
+    endedAt: task.endedAt ?? now,
+    lastEventAt: now,
+    error: SESSION_BULK_MESSAGE_INTERRUPTED_ERROR,
+    terminalSummary: "Interrupted by Gateway restart",
+    terminalOutcome: "blocked",
+  };
+}
+
+function markInterruptedSessionBulkMessageTask(task: TaskRecord, now: number): TaskRecord {
+  const projected = projectInterruptedSessionBulkMessageTask(task, now);
+  const updated =
+    taskRegistryMaintenanceRuntime.markTaskTerminalById({
+      taskId: task.taskId,
+      status: "failed",
+      endedAt: projected.endedAt ?? now,
+      lastEventAt: now,
+      error: SESSION_BULK_MESSAGE_INTERRUPTED_ERROR,
+      terminalSummary: projected.terminalSummary,
+      terminalOutcome: "blocked",
+    }) ?? projected;
+  void taskRegistryMaintenanceRuntime.maybeDeliverTaskTerminalUpdate(updated.taskId);
+  return updated;
+}
+
 function markTaskLost(
   task: TaskRecord,
   now: number,
   context?: BackingSessionLookupContext,
 ): TaskRecord {
+  if (isSessionBulkMessageTask(task)) {
+    return markInterruptedSessionBulkMessageTask(task, now);
+  }
   const lostAt = task.endedAt ?? now;
   const cleanupAfter = resolveEffectiveTaskCleanupAfter({
     ...task,
@@ -748,6 +783,9 @@ function projectTaskLost(
   now: number,
   context?: BackingSessionLookupContext,
 ): TaskRecord {
+  if (isSessionBulkMessageTask(task)) {
+    return projectInterruptedSessionBulkMessageTask(task, now);
+  }
   const projected: TaskRecord = {
     ...task,
     status: "lost",
@@ -1084,7 +1122,7 @@ export async function runTaskRegistryMaintenance(): Promise<TaskRegistryMaintena
         continue;
       }
       const next = markTaskLost(freshAfterHook, now, lostContext);
-      if (next.status === "lost") {
+      if (isTerminalTask(next)) {
         reconciled += 1;
       }
       processed += 1;

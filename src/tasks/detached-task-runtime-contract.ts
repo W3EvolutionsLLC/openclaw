@@ -35,6 +35,7 @@ export type DetachedTaskCreateParams = {
   preferMetadata?: boolean;
   notifyPolicy?: TaskNotifyPolicy;
   deliveryStatus?: TaskDeliveryStatus;
+  cleanupAfter?: number;
   detail?: JsonValue;
 };
 

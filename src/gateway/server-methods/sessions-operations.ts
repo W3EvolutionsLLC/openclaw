@@ -23,6 +23,11 @@ import {
   type TaskRecord,
 } from "../../tasks/runtime-internal.js";
 import {
+  SESSION_BULK_MESSAGE_INTERRUPTED_ERROR,
+  SESSION_BULK_MESSAGE_RETENTION_MS,
+  SESSION_BULK_MESSAGE_TASK_KIND,
+} from "../../tasks/session-bulk-message-task-contract.js";
+import {
   createRunningTaskRunCore,
   finalizeTaskRunById,
   finalizeTaskRunByRunIdCore,
@@ -32,9 +37,7 @@ import { sessionMessagingHandlers } from "./sessions-messaging.js";
 import type { GatewayRequestHandlerOptions, GatewayRequestHandlers, RespondFn } from "./types.js";
 import { assertValidParams } from "./validation.js";
 
-const BULK_MESSAGE_TASK_KIND = "sessions.bulk-message";
 const BULK_MESSAGE_DETAIL_VERSION = 1;
-const BULK_MESSAGE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const DEFAULT_OPERATION_LIST_LIMIT = 50;
 
 type StoredBulkMessageDetail = {
@@ -127,6 +130,9 @@ function operationStatus(
   task: TaskRecord,
   detail: StoredBulkMessageDetail,
 ): SessionsOperationStatus {
+  if (task.error === SESSION_BULK_MESSAGE_INTERRUPTED_ERROR) {
+    return "interrupted";
+  }
   if (task.status === "queued" || task.status === "running") {
     return "running";
   }
@@ -167,7 +173,7 @@ function operationTask(
   taskId: string,
 ): { task: TaskRecord; detail: StoredBulkMessageDetail } | null {
   const task = getTaskById(taskId);
-  if (!task || task.taskKind !== BULK_MESSAGE_TASK_KIND) {
+  if (!task || task.taskKind !== SESSION_BULK_MESSAGE_TASK_KIND) {
     return null;
   }
   const detail = parseStoredDetail(task);
@@ -200,6 +206,7 @@ function reconcileRetryOutcome(
       ? `${counts.accepted} accepted, ${counts.failed} failed, ${counts.pending} pending`
       : `${counts.accepted} accepted after retry`,
     terminalOutcome: unresolved ? "blocked" : "succeeded",
+    error: undefined,
     detail: storedDetailValue(original.detail),
   });
 }
@@ -300,7 +307,7 @@ async function executeBulkMessage(params: {
   const detail = initialDetail(params);
   const task = createRunningTaskRunCore({
     runtime: "cli",
-    taskKind: BULK_MESSAGE_TASK_KIND,
+    taskKind: SESSION_BULK_MESSAGE_TASK_KIND,
     sourceId: params.requestId,
     runId: params.requestId,
     ownerKey: "",
@@ -312,6 +319,7 @@ async function executeBulkMessage(params: {
     notifyPolicy: "silent",
     startedAt,
     progressSummary: `0/${detail.targets.length} accepted`,
+    cleanupAfter: startedAt + SESSION_BULK_MESSAGE_RETENTION_MS,
     detail: storedDetailValue(detail),
   });
   if (!task) {
@@ -365,7 +373,7 @@ async function executeBulkMessage(params: {
   });
   setTaskCleanupAfterById({
     taskId: task.taskId,
-    cleanupAfter: endedAt + BULK_MESSAGE_RETENTION_MS,
+    cleanupAfter: endedAt + SESSION_BULK_MESSAGE_RETENTION_MS,
   });
   const completed = operationTask(task.taskId);
   return completed
@@ -421,7 +429,7 @@ export const sessionOperationHandlers: GatewayRequestHandlers = {
     }
     const limit = params.limit ?? DEFAULT_OPERATION_LIST_LIMIT;
     const operations = listTaskRecords()
-      .filter((task) => task.taskKind === BULK_MESSAGE_TASK_KIND)
+      .filter((task) => task.taskKind === SESSION_BULK_MESSAGE_TASK_KIND)
       .toSorted(
         (left, right) =>
           (right.lastEventAt ?? right.createdAt) - (left.lastEventAt ?? left.createdAt),

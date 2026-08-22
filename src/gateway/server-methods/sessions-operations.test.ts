@@ -1,4 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  SESSION_BULK_MESSAGE_INTERRUPTED_ERROR,
+  SESSION_BULK_MESSAGE_RETENTION_MS,
+} from "../../tasks/session-bulk-message-task-contract.js";
 import type { TaskRecord } from "../../tasks/task-registry.types.js";
 import type { GatewayRequestHandlerOptions } from "./types.js";
 
@@ -26,6 +30,7 @@ const taskStore = vi.hoisted(() => {
         startedAt: params.startedAt,
         lastEventAt: 1,
         progressSummary: params.progressSummary,
+        cleanupAfter: params.cleanupAfter,
         detail: params.detail,
       } as TaskRecord;
       tasks.set(taskId, task);
@@ -171,6 +176,10 @@ describe("sessions operations", () => {
         }),
       }),
     );
+    const createParams = taskStore.create.mock.calls[0]?.[0];
+    expect(Number(createParams?.cleanupAfter) - Number(createParams?.startedAt)).toBe(
+      SESSION_BULK_MESSAGE_RETENTION_MS,
+    );
   });
 
   it("retries only failed or undispatched targets", async () => {
@@ -220,7 +229,8 @@ describe("sessions operations", () => {
     if (!task || !task.detail || typeof task.detail !== "object" || Array.isArray(task.detail)) {
       throw new Error("Expected stored bulk operation detail");
     }
-    task.status = "lost";
+    task.status = "failed";
+    task.error = SESSION_BULK_MESSAGE_INTERRUPTED_ERROR;
     task.detail = {
       ...task.detail,
       targets: [
