@@ -25,8 +25,13 @@ import { focusComposerFromChrome } from "./chat-composer-dom.ts";
 import { renderChatGoal } from "./chat-composer-goal.ts";
 import { renderChatComposerPlusMenu } from "./chat-composer-plus-menu.ts";
 import { renderChatQueue } from "./chat-composer-queue.ts";
-import { renderSkillMenu } from "./chat-composer-skill-menu.ts";
-import { paneDomId, renderSlashMenu } from "./chat-composer-slash-menu.ts";
+import {
+  normalizeSkillTokenSelection,
+  resetSkillMenuState,
+  renderSkillDraftOverlay,
+  renderSkillMenu,
+} from "./chat-composer-skill-menu.ts";
+import { paneDomId, renderSlashMenu, resetSlashMenuState } from "./chat-composer-slash-menu.ts";
 import { commitComposerDraft } from "./chat-composer-state.ts";
 import {
   renderChatRunStatusIndicator,
@@ -37,6 +42,7 @@ import {
 import type { ChatComposerProps, ChatComposerState } from "./chat-composer-types.ts";
 import {
   closeChatComposerPickerOnEscape,
+  ensureChatComposerPickerDismissal,
   handleChatComposerDropdownShow,
   markPointerOpenedChatComposerDropdown,
   restorePointerOpenedChatComposerTrigger,
@@ -114,6 +120,9 @@ export function renderChatComposerView(context: ChatComposerViewContext) {
     slashMenuAnnouncementId,
     composerRunStatus,
   } = context;
+  if (slashMenuVisible || skillMenuVisible) {
+    ensureChatComposerPickerDismissal();
+  }
   const disabledBanner = props.disabledBanner
     ? html`
         <div
@@ -255,6 +264,7 @@ export function renderChatComposerView(context: ChatComposerViewContext) {
           state.dictationSelection?.end ?? visibleDraft.length,
         ).value
       : visibleDraft;
+  const skillDraftOverlay = renderSkillDraftOverlay(dictationPreviewDraft);
   const progressCard = props.progressCard
     ? html`<div class="agent-chat__progress-float">
         ${renderSessionProgressCard(props.progressCard, "composer")}
@@ -321,6 +331,12 @@ export function renderChatComposerView(context: ChatComposerViewContext) {
               @keydown=${closeChatComposerPickerOnEscape}
               @wa-show=${handleChatComposerDropdownShow}
               @wa-after-show=${restorePointerOpenedChatComposerTrigger}
+              @openclaw-composer-dismiss-invocations=${() => {
+                state.slashMenuOpen = false;
+                resetSlashMenuState(state);
+                resetSkillMenuState(state);
+                requestUpdate();
+              }}
               @click=${(event: MouseEvent) => focusComposerFromChrome(event, canCompose)}
               @pointerdown=${(event: PointerEvent) => {
                 markPointerOpenedChatComposerDropdown(event);
@@ -442,6 +458,9 @@ export function renderChatComposerView(context: ChatComposerViewContext) {
                 <div class="agent-chat__composer-combobox">
                   <textarea
                     ${ref(state.textareaRef ?? undefined)}
+                    class=${skillDraftOverlay === nothing
+                      ? ""
+                      : "agent-chat__composer-textarea--rich"}
                     .value=${dictationPreviewDraft}
                     dir=${detectTextDirection(dictationPreviewDraft)}
                     ?disabled=${!canCompose}
@@ -464,6 +483,12 @@ export function renderChatComposerView(context: ChatComposerViewContext) {
                     @beforeinput=${handleBeforeInput}
                     @input=${handleInput}
                     @select=${handleSelect}
+                    @pointerup=${(event: PointerEvent) => {
+                      if (event.currentTarget instanceof HTMLTextAreaElement) {
+                        normalizeSkillTokenSelection(event.currentTarget);
+                      }
+                      handleSelect(event);
+                    }}
                     @compositionstart=${(event: CompositionEvent) => {
                       state.composerComposing = true;
                       state.composingDraft = {
@@ -482,6 +507,7 @@ export function renderChatComposerView(context: ChatComposerViewContext) {
                     placeholder=${dictation?.active ? "" : placeholder}
                     rows="1"
                   ></textarea>
+                  ${skillDraftOverlay}
                   <span
                     id=${slashMenuAnnouncementId}
                     class="sr-only"

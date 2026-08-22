@@ -122,6 +122,18 @@ export function replaceComposerPopoverAnchor(
   return next;
 }
 
+function syncTextareaOverlay(el: HTMLTextAreaElement): HTMLElement | null {
+  const overlay = el.parentElement?.querySelector<HTMLElement>(
+    ".agent-chat__composer-draft-overlay",
+  );
+  if (!overlay) {
+    return null;
+  }
+  overlay.scrollTop = el.scrollTop;
+  overlay.scrollLeft = el.scrollLeft;
+  return overlay;
+}
+
 function updateTextareaOverflow(el: HTMLTextAreaElement) {
   const scrollable = el.scrollHeight > el.clientHeight + 1;
   // Two 16px fades need enough vertical runway not to overlap into a narrow
@@ -132,6 +144,9 @@ function updateTextareaOverflow(el: HTMLTextAreaElement) {
   el.style.overflowY = scrollable ? "auto" : "hidden";
   el.toggleAttribute("data-scroll-fade-top", fadeTop);
   el.toggleAttribute("data-scroll-fade-bottom", fadeBottom);
+  const overlay = syncTextareaOverlay(el);
+  overlay?.toggleAttribute("data-scroll-fade-top", fadeTop);
+  overlay?.toggleAttribute("data-scroll-fade-bottom", fadeBottom);
 }
 
 export function adjustTextareaHeight(el: HTMLTextAreaElement) {
@@ -144,6 +159,9 @@ export function adjustTextareaHeight(el: HTMLTextAreaElement) {
     el.style.overflowY = "";
     el.removeAttribute("data-scroll-fade-top");
     el.removeAttribute("data-scroll-fade-bottom");
+    const overlay = syncTextareaOverlay(el);
+    overlay?.removeAttribute("data-scroll-fade-top");
+    overlay?.removeAttribute("data-scroll-fade-bottom");
     return;
   }
   // Hide the browser's scrollbar while measuring; restore it only when the

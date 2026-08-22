@@ -3,6 +3,7 @@ import { steerableQueuedMessage } from "../chat-queue.ts";
 import { restoreHistoryCaret, scrollActiveMenuOptionIntoView } from "./chat-composer-dom.ts";
 import {
   getActiveSkillMenuOptionId,
+  handleSkillTokenKeydown,
   resetSkillMenuState,
   selectSkillMention,
 } from "./chat-composer-skill-menu.ts";
@@ -103,6 +104,10 @@ export function createComposerKeyDownHandler({
       return;
     }
     if (state.composerComposing || event.isComposing || event.keyCode === 229) {
+      return;
+    }
+
+    if (handleSkillTokenKeydown(event)) {
       return;
     }
 
