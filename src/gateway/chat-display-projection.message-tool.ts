@@ -486,12 +486,13 @@ export function mirrorMessageToolVisibleReplies(messages: unknown[]): unknown[] 
     const textMatchingDeliveryMirrorPending = deliveryMirrorText
       ? pending.filter((item) => item.text.trim() === deliveryMirrorText)
       : [];
-    const matchingDeliveryMirrorPending =
-      exactDeliveryMirrorPending.length === 1
+    const matchingDeliveryMirrorPending = deliveryMirrorCallId
+      ? exactDeliveryMirrorPending.length === 1
         ? exactDeliveryMirrorPending
-        : textMatchingDeliveryMirrorPending.length === 1
-          ? textMatchingDeliveryMirrorPending
-          : [];
+        : []
+      : textMatchingDeliveryMirrorPending.length === 1
+        ? textMatchingDeliveryMirrorPending
+        : [];
     const duplicateDeliveryMirror = matchingDeliveryMirrorPending.some((item) => item.succeeded);
     const visibleReplies = extractMessageToolVisibleReplies(record);
     if (visibleReplies.length > 0) {
@@ -502,10 +503,7 @@ export function mirrorMessageToolVisibleReplies(messages: unknown[]): unknown[] 
           succeeded: false,
         });
       }
-    } else if (
-      matchingDeliveryMirrorPending.length === 0 &&
-      isRenderableAssistantDisplayMessage(record)
-    ) {
+    } else if (deliveryMirrorText === undefined && isRenderableAssistantDisplayMessage(record)) {
       clearPending();
     }
 

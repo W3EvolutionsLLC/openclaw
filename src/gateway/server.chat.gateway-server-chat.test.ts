@@ -1500,6 +1500,58 @@ describe("gateway server chat", () => {
     );
   });
 
+  test("chat.history does not caption-match a populated unmatched delivery ID", async () => {
+    const replyText = "Repeated attachment caption.";
+    const wrongImage = {
+      type: "image",
+      artifactId: "artifact_managed_image_wrong",
+      url: "/api/chat/media/outgoing/agent%3Amain%3Amain/wrong/full",
+      openUrl: "/api/chat/media/outgoing/agent%3Amain%3Amain/wrong/full",
+      alt: "wrong.png",
+      mimeType: "image/png",
+    };
+    const historyMessages = await loadChatHistoryWithMessages([
+      createGatewayHistoryMessageToolCall(
+        "call-message-expected",
+        { action: "send", message: replyText, media: "/tmp/expected.png" },
+        1,
+      ),
+      createGatewayHistoryMessageToolResult(
+        "call-message-expected",
+        { ok: true, messageId: "24276", chatId: "current-run" },
+        2,
+      ),
+      {
+        role: "assistant",
+        provider: "openclaw",
+        model: "delivery-mirror",
+        content: [{ type: "text", text: replyText }, wrongImage],
+        openclawDeliveryMirror: {
+          kind: "message-tool-source-reply",
+          toolCallId: "call-message-other",
+        },
+        timestamp: 3,
+      },
+      createGatewayHistoryText("assistant", "NO_REPLY", 4),
+    ]);
+
+    expect(historyMessages).toContainEqual(
+      expect.objectContaining({
+        content: [{ type: "text", text: replyText }],
+        openclawMessageToolMirror: expect.objectContaining({
+          toolCallId: "call-message-expected",
+        }),
+      }),
+    );
+    expect(historyMessages).toContainEqual(
+      expect.objectContaining({
+        provider: "openclaw",
+        model: "delivery-mirror",
+        content: [{ type: "text", text: replyText }, wrongImage],
+      }),
+    );
+  });
+
   test("chat.history keeps message-tool mirrors before silent completion rows", async () => {
     const replyText = "Visible before completion.";
     const historyMessages = await loadChatHistoryWithMessages([
