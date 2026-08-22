@@ -1,8 +1,7 @@
-import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
+import { Value } from "typebox/value";
 import {
-  ErrorCodes,
-  errorShape,
+  ErrorShapeSchema,
   type SessionsOperationTargetOutcome,
 } from "../../packages/gateway-protocol/src/index.js";
 import { getTaskById, listTaskRecords } from "../tasks/runtime-internal.js";
@@ -60,12 +59,9 @@ export function parseSessionBulkMessageDetail(task: TaskRecord): StoredBulkMessa
     const agentId = normalizeOptionalString(candidate.agentId);
     const runId = normalizeOptionalString(candidate.runId);
     const storedError = candidate.error;
-    const error =
-      isRecord(storedError) &&
-      typeof storedError.code === "string" &&
-      typeof storedError.message === "string"
-        ? errorShape(ErrorCodes.UNAVAILABLE, storedError.message)
-        : undefined;
+    const error = Value.Check(ErrorShapeSchema, storedError)
+      ? structuredClone(storedError)
+      : undefined;
     targets.push({
       key,
       expectedSessionId,

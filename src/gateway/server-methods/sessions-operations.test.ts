@@ -147,7 +147,13 @@ beforeEach(() => {
   send.mockReset();
   send.mockImplementation(async ({ params, respond }: GatewayRequestHandlerOptions) => {
     if (params.key === "agent:main:failed") {
-      respond(false, undefined, { code: "INVALID_REQUEST", message: "session changed" });
+      respond(false, undefined, {
+        code: "INVALID_REQUEST",
+        message: "session changed",
+        details: { reason: "SESSION_MUTATION_AUTHORIZATION_CHANGED" },
+        retryable: true,
+        retryAfterMs: 250,
+      });
     } else {
       respond(true, { runId: `run:${String(params.key)}` });
     }
@@ -191,6 +197,18 @@ describe("sessions operations", () => {
         operation: expect.objectContaining({
           status: "needs_attention",
           counts: { pending: 0, accepted: 1, failed: 1 },
+          targets: expect.arrayContaining([
+            expect.objectContaining({
+              status: "failed",
+              error: {
+                code: "INVALID_REQUEST",
+                message: "session changed",
+                details: { reason: "SESSION_MUTATION_AUTHORIZATION_CHANGED" },
+                retryable: true,
+                retryAfterMs: 250,
+              },
+            }),
+          ]),
         }),
       }),
     );
