@@ -9480,6 +9480,7 @@ public struct SessionsRecoverResult: Codable, Sendable {
 public struct SessionsSendParams: Codable, Sendable {
     public let key: String
     public let agentid: String?
+    public let expectedsessionid: String?
     public let message: String
     public let thinking: String?
     public let attachments: [[String: AnyCodable]]?
@@ -9489,6 +9490,7 @@ public struct SessionsSendParams: Codable, Sendable {
     public init(
         key: String,
         agentid: String? = nil,
+        expectedsessionid: String? = nil,
         message: String,
         thinking: String? = nil,
         attachments: [[String: AnyCodable]]? = nil,
@@ -9497,6 +9499,7 @@ public struct SessionsSendParams: Codable, Sendable {
     {
         self.key = key
         self.agentid = agentid
+        self.expectedsessionid = expectedsessionid
         self.message = message
         self.thinking = thinking
         self.attachments = attachments
@@ -9507,11 +9510,330 @@ public struct SessionsSendParams: Codable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case key
         case agentid = "agentId"
+        case expectedsessionid = "expectedSessionId"
         case message
         case thinking
         case attachments
         case timeoutms = "timeoutMs"
         case idempotencykey = "idempotencyKey"
+    }
+}
+
+public struct SessionsOperationTarget: Codable, Sendable {
+    public let key: String
+    public let agentid: String?
+    public let expectedsessionid: String
+
+    public init(
+        key: String,
+        agentid: String? = nil,
+        expectedsessionid: String)
+    {
+        self.key = key
+        self.agentid = agentid
+        self.expectedsessionid = expectedsessionid
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case key
+        case agentid = "agentId"
+        case expectedsessionid = "expectedSessionId"
+    }
+}
+
+public struct SessionsOperationTargetOutcome: Codable, Sendable {
+    public let key: String
+    public let agentid: String?
+    public let expectedsessionid: String
+    public let status: AnyCodable
+    public let runid: String?
+    public let error: ErrorShape?
+
+    public init(
+        key: String,
+        agentid: String? = nil,
+        expectedsessionid: String,
+        status: AnyCodable,
+        runid: String? = nil,
+        error: ErrorShape? = nil)
+    {
+        self.key = key
+        self.agentid = agentid
+        self.expectedsessionid = expectedsessionid
+        self.status = status
+        self.runid = runid
+        self.error = error
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case key
+        case agentid = "agentId"
+        case expectedsessionid = "expectedSessionId"
+        case status
+        case runid = "runId"
+        case error
+    }
+}
+
+public struct SessionsOperationCounts: Codable, Sendable {
+    public let pending: Int
+    public let accepted: Int
+    public let failed: Int
+
+    public init(
+        pending: Int,
+        accepted: Int,
+        failed: Int)
+    {
+        self.pending = pending
+        self.accepted = accepted
+        self.failed = failed
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case pending
+        case accepted
+        case failed
+    }
+}
+
+public struct SessionsOperationSummary: Codable, Sendable {
+    public let id: String
+    public let requestid: String
+    public let kind: String
+    public let status: AnyCodable
+    public let messagepreview: String
+    public let targetcount: Int
+    public let counts: SessionsOperationCounts
+    public let createdat: Int
+    public let startedat: Int?
+    public let endedat: Int?
+    public let retryof: String?
+
+    public init(
+        id: String,
+        requestid: String,
+        kind: String,
+        status: AnyCodable,
+        messagepreview: String,
+        targetcount: Int,
+        counts: SessionsOperationCounts,
+        createdat: Int,
+        startedat: Int? = nil,
+        endedat: Int? = nil,
+        retryof: String? = nil)
+    {
+        self.id = id
+        self.requestid = requestid
+        self.kind = kind
+        self.status = status
+        self.messagepreview = messagepreview
+        self.targetcount = targetcount
+        self.counts = counts
+        self.createdat = createdat
+        self.startedat = startedat
+        self.endedat = endedat
+        self.retryof = retryof
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case requestid = "requestId"
+        case kind
+        case status
+        case messagepreview = "messagePreview"
+        case targetcount = "targetCount"
+        case counts
+        case createdat = "createdAt"
+        case startedat = "startedAt"
+        case endedat = "endedAt"
+        case retryof = "retryOf"
+    }
+}
+
+public struct SessionsOperation: Codable, Sendable {
+    public let id: String
+    public let requestid: String
+    public let kind: String
+    public let status: AnyCodable
+    public let messagepreview: String
+    public let targetcount: Int
+    public let counts: SessionsOperationCounts
+    public let createdat: Int
+    public let startedat: Int?
+    public let endedat: Int?
+    public let retryof: String?
+    public let message: String
+    public let targets: [SessionsOperationTargetOutcome]
+
+    public init(
+        id: String,
+        requestid: String,
+        kind: String,
+        status: AnyCodable,
+        messagepreview: String,
+        targetcount: Int,
+        counts: SessionsOperationCounts,
+        createdat: Int,
+        startedat: Int? = nil,
+        endedat: Int? = nil,
+        retryof: String? = nil,
+        message: String,
+        targets: [SessionsOperationTargetOutcome])
+    {
+        self.id = id
+        self.requestid = requestid
+        self.kind = kind
+        self.status = status
+        self.messagepreview = messagepreview
+        self.targetcount = targetcount
+        self.counts = counts
+        self.createdat = createdat
+        self.startedat = startedat
+        self.endedat = endedat
+        self.retryof = retryof
+        self.message = message
+        self.targets = targets
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case requestid = "requestId"
+        case kind
+        case status
+        case messagepreview = "messagePreview"
+        case targetcount = "targetCount"
+        case counts
+        case createdat = "createdAt"
+        case startedat = "startedAt"
+        case endedat = "endedAt"
+        case retryof = "retryOf"
+        case message
+        case targets
+    }
+}
+
+public struct SessionsOperationsCreateParams: Codable, Sendable {
+    public let requestid: String
+    public let message: String
+    public let targets: [SessionsOperationTarget]
+
+    public init(
+        requestid: String,
+        message: String,
+        targets: [SessionsOperationTarget])
+    {
+        self.requestid = requestid
+        self.message = message
+        self.targets = targets
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case requestid = "requestId"
+        case message
+        case targets
+    }
+}
+
+public struct SessionsOperationsCreateResult: Codable, Sendable {
+    public let operation: SessionsOperation
+
+    public init(
+        operation: SessionsOperation)
+    {
+        self.operation = operation
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case operation
+    }
+}
+
+public struct SessionsOperationsListParams: Codable, Sendable {
+    public let limit: Int?
+
+    public init(
+        limit: Int? = nil)
+    {
+        self.limit = limit
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case limit
+    }
+}
+
+public struct SessionsOperationsListResult: Codable, Sendable {
+    public let operations: [SessionsOperationSummary]
+
+    public init(
+        operations: [SessionsOperationSummary])
+    {
+        self.operations = operations
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case operations
+    }
+}
+
+public struct SessionsOperationsGetParams: Codable, Sendable {
+    public let id: String
+
+    public init(
+        id: String)
+    {
+        self.id = id
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+    }
+}
+
+public struct SessionsOperationsGetResult: Codable, Sendable {
+    public let operation: SessionsOperation
+
+    public init(
+        operation: SessionsOperation)
+    {
+        self.operation = operation
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case operation
+    }
+}
+
+public struct SessionsOperationsRetryParams: Codable, Sendable {
+    public let id: String
+    public let requestid: String
+
+    public init(
+        id: String,
+        requestid: String)
+    {
+        self.id = id
+        self.requestid = requestid
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case requestid = "requestId"
+    }
+}
+
+public struct SessionsOperationsRetryResult: Codable, Sendable {
+    public let operation: SessionsOperation
+
+    public init(
+        operation: SessionsOperation)
+    {
+        self.operation = operation
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case operation
     }
 }
 
