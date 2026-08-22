@@ -1429,6 +1429,77 @@ describe("gateway server chat", () => {
     );
   });
 
+  test("chat.history binds equal-text delivery mirrors to their message tool calls", async () => {
+    const replyText = "Repeated attachment caption.";
+    const imageBlocks = ["first", "second"].map((name) => ({
+      type: "image",
+      artifactId: `artifact_managed_image_${name}`,
+      url: `/api/chat/media/outgoing/agent%3Amain%3Amain/${name}/full`,
+      openUrl: `/api/chat/media/outgoing/agent%3Amain%3Amain/${name}/full`,
+      alt: `${name}.png`,
+      mimeType: "image/png",
+    }));
+    const historyMessages = await loadChatHistoryWithMessages([
+      {
+        role: "assistant",
+        content: ["first", "second"].map((name) => ({
+          type: "toolCall",
+          id: `call-message-${name}`,
+          name: "message",
+          arguments: {
+            action: "send",
+            message: replyText,
+            media: `/tmp/${name}.png`,
+          },
+        })),
+        timestamp: 1,
+      },
+      ...["first", "second"].map((name, index) => ({
+        role: "toolResult",
+        toolName: "message",
+        toolCallId: `call-message-${name}`,
+        content: [{ type: "text", text: "Sent visible reply via internal-ui." }],
+        details: {
+          status: "ok",
+          deliveryStatus: "sent",
+          sourceReplySink: "internal-ui",
+        },
+        timestamp: index + 2,
+      })),
+      ...["first", "second"].map((name, index) => ({
+        role: "assistant",
+        provider: "openclaw",
+        model: "delivery-mirror",
+        content: [{ type: "text", text: replyText }, imageBlocks[index]],
+        openclawDeliveryMirror: {
+          kind: "message-tool-source-reply",
+          toolCallId: `call-message-${name}`,
+        },
+        timestamp: index + 4,
+      })),
+    ]);
+
+    const mirrors = historyMessages.filter(hasGatewayHistoryMessageToolMirror);
+    expect(mirrors).toHaveLength(2);
+    expect(mirrors).toEqual([
+      expect.objectContaining({
+        content: [{ type: "text", text: replyText }, imageBlocks[0]],
+        openclawMessageToolMirror: expect.objectContaining({
+          toolCallId: "call-message-first",
+        }),
+      }),
+      expect.objectContaining({
+        content: [{ type: "text", text: replyText }, imageBlocks[1]],
+        openclawMessageToolMirror: expect.objectContaining({
+          toolCallId: "call-message-second",
+        }),
+      }),
+    ]);
+    expect(historyMessages).not.toContainEqual(
+      expect.objectContaining({ provider: "openclaw", model: "delivery-mirror" }),
+    );
+  });
+
   test("chat.history keeps message-tool mirrors before silent completion rows", async () => {
     const replyText = "Visible before completion.";
     const historyMessages = await loadChatHistoryWithMessages([

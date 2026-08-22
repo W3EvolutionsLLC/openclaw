@@ -403,6 +403,13 @@ function readMessageToolDeliveryMirrorText(message: Record<string, unknown>): st
   return displayTextForDuplicateCheck(message);
 }
 
+function readMessageToolDeliveryMirrorCallId(message: Record<string, unknown>): string | undefined {
+  if (!isOpenClawDeliveryMirrorAssistantMessage(message)) {
+    return undefined;
+  }
+  return normalizeOptionalString(readRecord(message.openclawDeliveryMirror)?.toolCallId);
+}
+
 export function mirrorMessageToolVisibleReplies(messages: unknown[]): unknown[] {
   if (messages.length === 0) {
     return messages;
@@ -472,9 +479,19 @@ export function mirrorMessageToolVisibleReplies(messages: unknown[]): unknown[] 
 
     const flushAfterCurrentMessage: PendingMessageToolVisibleReply[] = [];
     const deliveryMirrorText = readMessageToolDeliveryMirrorText(record);
-    const matchingDeliveryMirrorPending = deliveryMirrorText
+    const deliveryMirrorCallId = readMessageToolDeliveryMirrorCallId(record);
+    const exactDeliveryMirrorPending = deliveryMirrorCallId
+      ? pending.filter((item) => item.toolCallId === deliveryMirrorCallId)
+      : [];
+    const textMatchingDeliveryMirrorPending = deliveryMirrorText
       ? pending.filter((item) => item.text.trim() === deliveryMirrorText)
       : [];
+    const matchingDeliveryMirrorPending =
+      exactDeliveryMirrorPending.length === 1
+        ? exactDeliveryMirrorPending
+        : textMatchingDeliveryMirrorPending.length === 1
+          ? textMatchingDeliveryMirrorPending
+          : [];
     const duplicateDeliveryMirror = matchingDeliveryMirrorPending.some((item) => item.succeeded);
     const visibleReplies = extractMessageToolVisibleReplies(record);
     if (visibleReplies.length > 0) {
