@@ -12,6 +12,7 @@ import {
 } from "../../../lib/sessions/tool-overrides.ts";
 import { detectTextDirection } from "../../../lib/text-direction.ts";
 import type { ComposerDictationController } from "../composer-dictation.ts";
+import { insertComposerDictation } from "../composer-dictation.ts";
 import {
   handleChatAttachmentPaste,
   renderAttachmentPreview,
@@ -25,7 +26,7 @@ import { renderChatGoal } from "./chat-composer-goal.ts";
 import { renderChatComposerPlusMenu } from "./chat-composer-plus-menu.ts";
 import { renderChatQueue } from "./chat-composer-queue.ts";
 import { renderSkillMenu } from "./chat-composer-skill-menu.ts";
-import { renderSlashMenu } from "./chat-composer-slash-menu.ts";
+import { paneDomId, renderSlashMenu } from "./chat-composer-slash-menu.ts";
 import { commitComposerDraft } from "./chat-composer-state.ts";
 import {
   renderChatRunStatusIndicator,
@@ -34,8 +35,14 @@ import {
   type ComposerRunStatus,
 } from "./chat-composer-status.ts";
 import type { ChatComposerProps, ChatComposerState } from "./chat-composer-types.ts";
+import {
+  closeChatComposerPickerOnEscape,
+  handleChatComposerDropdownShow,
+  markPointerOpenedChatComposerDropdown,
+  restorePointerOpenedChatComposerTrigger,
+} from "./chat-picker-overlay.ts";
 import type { createGatewayQuestionPanelProps } from "./chat-question-card.ts";
-import { renderChatVoiceError } from "./chat-voice-activity.ts";
+import { renderChatVoiceError, renderMicrophoneActivity } from "./chat-voice-activity.ts";
 
 type ChatComposerViewContext = {
   props: ChatComposerProps;
@@ -115,9 +122,14 @@ export function renderChatComposerView(context: ChatComposerViewContext) {
             : "info"} callout--action"
           role="status"
         >
-          ${props.disabledBanner.icon === "warning"
-            ? html`<span class="agent-chat__disabled-banner-icon" aria-hidden="true"
-                >${icons.alertTriangle}</span
+          ${props.disabledBanner.icon
+            ? html`<span
+                class="agent-chat__disabled-banner-icon agent-chat__disabled-banner-icon--${props
+                  .disabledBanner.icon}"
+                aria-hidden="true"
+                >${props.disabledBanner.icon === "archive"
+                  ? icons.archive
+                  : icons.alertTriangle}</span
               >`
             : nothing}
           <div class="callout__content">
@@ -151,6 +163,7 @@ export function renderChatComposerView(context: ChatComposerViewContext) {
   if (!props.capabilityMenu) {
     state.capabilityMenuView = "root";
   }
+  const disabledReasonId = paneDomId(props.paneId, "disabled-reason");
   const overrideCount = countSessionToolOverrides(props.toolOverrides);
   const overrideTooltip = sessionToolOverrideNames(
     props.toolOverrides,
@@ -164,6 +177,88 @@ export function renderChatComposerView(context: ChatComposerViewContext) {
           ? undefined
           : props.onDismissRealtimeTalkError,
       })
+    : nothing;
+  const runError = props.runError
+    ? html`
+        <div class="agent-chat__composer-error agent-chat__run-error chat-run-error" role="alert">
+          <span class="agent-chat__composer-error-icon chat-run-error__icon" aria-hidden="true"
+            >${icons.alertTriangle}</span
+          >
+          <span class="agent-chat__composer-error-text chat-run-error__summary"
+            >${props.runError.summary}</span
+          >
+        </div>
+      `
+    : nothing;
+  const interruptedNotice =
+    composerRunStatus?.phase === "interrupted"
+      ? html`
+          <div
+            class="agent-chat__composer-error agent-chat__run-error chat-run-error"
+            role="status"
+          >
+            <span class="agent-chat__composer-error-icon chat-run-error__icon" aria-hidden="true"
+              >${icons.stop}</span
+            >
+            <span class="agent-chat__composer-error-text chat-run-error__summary"
+              >${t("chat.composer.runInterrupted")}</span
+            >
+          </div>
+        `
+      : nothing;
+  const disabledNotice =
+    showComposerInput && props.disabledReason
+      ? html`
+          <div id=${disabledReasonId} class="agent-chat__composer-notice" role="note">
+            <span class="agent-chat__composer-notice-icon" aria-hidden="true"
+              >${icons.shieldQuestion}</span
+            >
+            <span class="agent-chat__composer-error-text">${props.disabledReason}</span>
+          </div>
+        `
+      : nothing;
+  const composerAlerts =
+    voiceError !== nothing ||
+    runError !== nothing ||
+    interruptedNotice !== nothing ||
+    disabledNotice !== nothing
+      ? html`<div
+          class="agent-chat__composer-errors ${showComposerInput
+            ? ""
+            : "agent-chat__composer-errors--standalone"}"
+        >
+          ${voiceError}${runError}${interruptedNotice}${disabledNotice}
+        </div>`
+      : nothing;
+  const offlineHint =
+    showComposerInput && props.offline
+      ? html`<div class="agent-chat__offline-hint" role="status" aria-live="polite">
+          ${props.queuedOutboxCount
+            ? t("chat.composer.offlineQueuedHint", {
+                count: String(props.queuedOutboxCount),
+              })
+            : t("chat.composer.offlineHint")}
+        </div>`
+      : nothing;
+  const composerUnderlaps =
+    showComposerInput && (composerAlerts !== nothing || offlineHint !== nothing)
+      ? html`<div class="agent-chat__composer-underlaps">${composerAlerts}${offlineHint}</div>`
+      : nothing;
+  // Dictation previews at the captured selection. The textarea remains
+  // read-only until stop commits the same insertion into the real draft.
+  const dictationPreviewDraft =
+    dictation?.active && dictation.partial
+      ? insertComposerDictation(
+          visibleDraft,
+          dictation.partial,
+          state.dictationSelection?.start ?? visibleDraft.length,
+          state.dictationSelection?.end ?? visibleDraft.length,
+        ).value
+      : visibleDraft;
+  const progressCard = props.progressCard
+    ? html`<div class="agent-chat__progress-float">
+        ${renderSessionProgressCard(props.progressCard, "composer")}
+      </div>`
     : nothing;
 
   return html`
@@ -183,14 +278,6 @@ export function renderChatComposerView(context: ChatComposerViewContext) {
       editingText: props.queuedEdit?.editingText,
       onQueueRemove: props.onQueueRemove,
     })}
-    ${props.runError
-      ? html`
-          <div class="chat-run-error" role="alert">
-            <span class="chat-run-error__icon" aria-hidden="true">${icons.alertTriangle}</span>
-            <span class="chat-run-error__summary">${props.runError.summary}</span>
-          </div>
-        `
-      : nothing}
     ${showComposerInput && props.typingActors?.length
       ? html`<div
           class="agent-chat__typing-indicator agent-chat__typing-indicator--outside"
@@ -224,333 +311,320 @@ export function renderChatComposerView(context: ChatComposerViewContext) {
             </div>
           `
         : nothing}
-      ${disabledBanner} ${voiceError}
+      ${disabledBanner} ${progressCard} ${showComposerInput ? nothing : composerAlerts}
       ${showComposerInput
         ? html`<div
-            class="agent-chat__input ${props.offline ? "agent-chat__input--offline" : ""}"
-            data-composer-layout="multiline"
-            @click=${(event: MouseEvent) => focusComposerFromChrome(event, canCompose)}
-            @pointerdown=${(event: PointerEvent) => focusComposerFromChrome(event, canCompose)}
-            ${ref(state.composerInputRef ?? undefined)}
-          >
-            ${slashMenuVisible ? renderSlashMenu(requestUpdate, props, visibleDraft) : nothing}
-            ${skillMenuVisible ? renderSkillMenu(requestUpdate, props) : nothing}
-            <!-- Everything that stacks above the editor lives in one flow region so
+              class="agent-chat__input agent-chat__input--chat ${props.offline
+                ? "agent-chat__input--offline"
+                : ""}${dictation?.active ? " agent-chat__input--dictating" : ""}"
+              data-composer-layout="multiline"
+              @keydown=${closeChatComposerPickerOnEscape}
+              @wa-show=${handleChatComposerDropdownShow}
+              @wa-after-show=${restorePointerOpenedChatComposerTrigger}
+              @click=${(event: MouseEvent) => focusComposerFromChrome(event, canCompose)}
+              @pointerdown=${(event: PointerEvent) => {
+                markPointerOpenedChatComposerDropdown(event);
+                focusComposerFromChrome(event, canCompose);
+              }}
+              ${ref(state.composerInputRef ?? undefined)}
+            >
+              ${slashMenuVisible ? renderSlashMenu(requestUpdate, props, visibleDraft) : nothing}
+              ${skillMenuVisible ? renderSkillMenu(requestUpdate, props) : nothing}
+              <!-- Everything that stacks above the editor lives in one flow region so
                  attachments, replies and status all inset and wrap the same way
                  instead of each optional block carrying its own placement. The
                  absolutely positioned menus above stay outside it: they float over
                  the surface rather than adding a row to it. -->
-            <div class="agent-chat__composer-lede">
-              ${props.offline
-                ? html`<div class="agent-chat__offline-hint" role="status" aria-live="polite">
-                    ${props.queuedOutboxCount
-                      ? t("chat.composer.offlineQueuedHint", {
-                          count: String(props.queuedOutboxCount),
-                        })
-                      : t("chat.composer.offlineHint")}
-                  </div>`
-                : nothing}
-              ${renderAttachmentPreview(props)}
-              ${props.replyTarget
-                ? html`
-                    <div class="chat-reply-preview">
-                      <span class="chat-reply-preview__icon">${icons.messageSquare}</span>
-                      <span class="chat-reply-preview__label"
-                        >${t("chat.messages.replyingTo", {
-                          name: props.replyTarget.senderLabel ?? t("chat.messages.message"),
-                        })}</span
-                      >
-                      <span class="chat-reply-preview__text"
-                        >${truncateUtf16Safe(props.replyTarget.text, 120)}${props.replyTarget.text
-                          .length > 120
-                          ? "..."
-                          : ""}</span
-                      >
-                      <button
-                        type="button"
-                        class="chat-reply-preview__dismiss"
-                        @click=${() => props.onClearReply?.()}
-                        aria-label=${t("chat.composer.cancelReply")}
-                        title=${t("chat.composer.cancelReply")}
-                      >
-                        ${icons.x}
-                      </button>
-                    </div>
-                  `
-                : nothing}
-              <div class="agent-chat__composer-status-stack">
-                ${dictation?.active
+              <div class="agent-chat__composer-lede">
+                ${renderAttachmentPreview(props)}
+                ${props.replyTarget
                   ? html`
-                      <div
-                        class=${`agent-chat__dictation-status${dictation.finalizing ? " agent-chat__dictation-status--finalizing" : ""}`}
-                        role="status"
-                        aria-live="polite"
-                        aria-atomic="true"
-                      >
-                        <span class="agent-chat__dictation-label"
-                          >${dictation.finalizing
-                            ? t("chat.composer.dictationFinalizing")
-                            : dictation.connecting
-                              ? t("chat.composer.dictationConnecting")
-                              : t("chat.composer.dictationRecording", {
-                                  elapsed: dictation.elapsed,
-                                })}</span
+                      <div class="chat-reply-preview">
+                        <span class="chat-reply-preview__icon">${icons.messageSquare}</span>
+                        <span class="chat-reply-preview__label"
+                          >${t("chat.messages.replyingTo", {
+                            name: props.replyTarget.senderLabel ?? t("chat.messages.message"),
+                          })}</span
                         >
-                        ${dictation.partial
-                          ? html`<span class="agent-chat__dictation-partial"
-                              >${dictation.partial}</span
-                            >`
-                          : nothing}
-                      </div>
-                    `
-                  : nothing}
-                ${renderSessionProgressCard(props.progressCard, "composer")}
-                ${renderFallbackIndicator(props.fallbackStatus)}
-                ${renderCompactionIndicator(props.compactionStatus)}
-                ${renderChatGoal(state, activeSession?.goal, {
-                  canAct: props.connected && canCompose,
-                  onGoalCommand: props.onGoalCommand,
-                  onGoalEdit: (goal) => {
-                    commitComposerDraft(props, `/goal edit ${goal.objective}`);
-                    requestUpdate();
-                    queueMicrotask(() => state.composerTextarea?.focus({ preventScroll: true }));
-                  },
-                  requestUpdate,
-                })}
-              </div>
-
-              ${renderChatAttachmentInputs({ ...props, disabled: !canCompose })}
-              ${props.realtimeTalkVideoStream
-                ? html`
-                    <div class="agent-chat__video-preview">
-                      <video
-                        class=${mirrorCameraPreview
-                          ? "agent-chat__video-preview-mirrored"
-                          : nothing}
-                        autoplay
-                        .muted=${true}
-                        playsinline
-                        aria-label=${t("chat.composer.cameraPreview")}
-                        ${ref((element) => {
-                          if (element instanceof HTMLVideoElement) {
-                            element.srcObject = props.realtimeTalkVideoStream ?? null;
-                          }
-                        })}
-                      ></video>
-                      ${props.realtimeTalkCameraDevices &&
-                      props.realtimeTalkCameraDevices.length >= 2 &&
-                      props.onSwitchRealtimeCamera
-                        ? html`
-                            <openclaw-tooltip
-                              class="agent-chat__video-preview-switch-tooltip"
-                              .content=${t("chat.composer.switchCamera")}
-                            >
-                              <button
-                                type="button"
-                                class="agent-chat__video-preview-switch"
-                                aria-label=${t("chat.composer.switchCamera")}
-                                ?disabled=${props.realtimeTalkVideoPending}
-                                @click=${props.onSwitchRealtimeCamera}
-                              >
-                                ${icons.switchCamera}
-                              </button>
-                            </openclaw-tooltip>
-                          `
-                        : nothing}
-                    </div>
-                  `
-                : nothing}
-              ${props.disabledReason
-                ? html`
-                    <div class="agent-chat__disabled-reason">
-                      <span>${props.disabledReason}</span>
-                    </div>
-                  `
-                : nothing}
-            </div>
-
-            <div class="agent-chat__composer-input-row">
-              <div class="agent-chat__composer-combobox">
-                <textarea
-                  ${ref(state.textareaRef ?? undefined)}
-                  .value=${visibleDraft}
-                  dir=${detectTextDirection(visibleDraft)}
-                  ?disabled=${!canCompose}
-                  ?readonly=${dictation?.locksComposer === true}
-                  aria-autocomplete="list"
-                  aria-controls=${ifDefined(
-                    slashMenuVisible || skillMenuVisible ? slashMenuListboxId : undefined,
-                  )}
-                  aria-expanded=${ifDefined(
-                    slashMenuVisible || skillMenuVisible ? "true" : undefined,
-                  )}
-                  aria-activedescendant=${ifDefined(activeSlashMenuOptionId ?? undefined)}
-                  aria-describedby=${slashMenuAnnouncementId}
-                  aria-keyshortcuts=${sendShortcut === "enter"
-                    ? "Enter"
-                    : "Control+Enter Meta+Enter"}
-                  @keydown=${handleKeyDown}
-                  @beforeinput=${handleBeforeInput}
-                  @input=${handleInput}
-                  @select=${handleSelect}
-                  @compositionstart=${(event: CompositionEvent) => {
-                    state.composerComposing = true;
-                    state.composingDraft = {
-                      key: draftKey,
-                      value: (event.target as HTMLTextAreaElement).value,
-                    };
-                  }}
-                  @compositionend=${handleCompositionEnd}
-                  @blur=${handleBlur}
-                  @paste=${(event: ClipboardEvent) => {
-                    if (canCompose && !props.suggestionComposer) {
-                      handleChatAttachmentPaste(event, props);
-                    }
-                  }}
-                  placeholder=${placeholder}
-                  rows="1"
-                ></textarea>
-                <span
-                  id=${slashMenuAnnouncementId}
-                  class="sr-only"
-                  role="status"
-                  aria-live="polite"
-                  aria-atomic="true"
-                  >${activeSlashMenuOptionLabel}</span
-                >
-                <span
-                  class="agent-chat__run-status-announcement sr-only"
-                  role="status"
-                  aria-live="polite"
-                  aria-atomic="true"
-                  >${runStatusAnnouncement}</span
-                >
-              </div>
-            </div>
-
-            <div class="agent-chat__composer-footer">
-              <div class="agent-chat__composer-lead">
-                ${renderChatComposerPlusMenu({
-                  attachments: props,
-                  showCapabilities: props.capabilityMenu !== undefined,
-                  basePath: props.capabilityMenu?.basePath ?? "",
-                  disabled: !canCompose || props.suggestionComposer === true,
-                  open: state.capabilityMenuOpen,
-                  view: state.capabilityMenuView,
-                  toolOverrides: props.toolOverrides,
-                  skills: props.capabilityMenu?.skills ?? null,
-                  skillsLoading: props.capabilityMenu?.skillsLoading ?? false,
-                  skillsError: props.capabilityMenu?.skillsError ?? false,
-                  mcpServers: props.capabilityMenu?.mcpServers ?? [],
-                  toolsEffectiveResult: props.capabilityMenu?.toolsEffectiveResult ?? null,
-                  toolsEffectiveLoading: props.capabilityMenu?.toolsEffectiveLoading ?? false,
-                  toolsEffectiveError: props.capabilityMenu?.toolsEffectiveError ?? false,
-                  toolAccessMutationBlockedReason:
-                    props.capabilityMenu?.toolAccessMutationBlockedReason ?? null,
-                  webSearchBaseEnabled: props.capabilityMenu?.webSearchBaseEnabled ?? true,
-                  mutationBlockedReason: props.capabilityMenu?.mutationBlockedReason ?? null,
-                  canAdmin: props.capabilityMenu?.canAdmin ?? false,
-                  adminBlockedReason: props.capabilityMenu?.adminBlockedReason ?? null,
-                  addServerDialog: props.capabilityMenu?.addServerDialog,
-                  onOpenChange: (open) => {
-                    state.capabilityMenuOpen = open;
-                    if (!open) {
-                      state.capabilityMenuView = "root";
-                    }
-                    requestUpdate();
-                  },
-                  onViewChange: (view) => {
-                    state.capabilityMenuView = view;
-                    requestUpdate();
-                  },
-                  onLoadSkills: props.capabilityMenu?.onLoadSkills ?? (() => {}),
-                  onPatchToolOverrides: props.capabilityMenu?.onPatchToolOverrides ?? (() => {}),
-                  onNavigate: props.capabilityMenu?.onNavigate ?? (() => {}),
-                  onAddServer: props.capabilityMenu?.onAddServer,
-                  onEnsureToolAccess: props.capabilityMenu?.onEnsureToolAccess,
-                  onOpenToolAccess: props.capabilityMenu?.onOpenToolAccess,
-                })}
-                ${composerLeadControl}
-                ${props.queuedEdit?.editingId
-                  ? html`
-                      <span class="agent-chat__composer-edit" role="status">
-                        <span class="agent-chat__composer-edit-icon" aria-hidden="true"
-                          >${icons.pencil}</span
+                        <span class="chat-reply-preview__text"
+                          >${truncateUtf16Safe(props.replyTarget.text, 120)}${props.replyTarget.text
+                            .length > 120
+                            ? "..."
+                            : ""}</span
                         >
-                        <span class="agent-chat__sr-only">${t("chat.queue.editing")}</span>
                         <button
-                          class="agent-chat__composer-edit-cancel"
                           type="button"
-                          aria-label=${t("chat.queue.cancelEdit")}
-                          @click=${() => props.queuedEdit?.onCancel()}
+                          class="chat-reply-preview__dismiss"
+                          @click=${() => props.onClearReply?.()}
+                          aria-label=${t("chat.composer.cancelReply")}
+                          title=${t("chat.composer.cancelReply")}
                         >
                           ${icons.x}
                         </button>
-                      </span>
-                    `
-                  : nothing}
-              </div>
-              <div class="agent-chat__composer-trail">
-                ${composerControls !== nothing
-                  ? html`
-                      <div class="agent-chat__composer-controls">
-                        ${composerRunStatus?.phase === "interrupted"
-                          ? html`
-                              <div class="agent-chat__composer-run-status">
-                                ${renderChatRunStatusIndicator(composerRunStatus)}
-                              </div>
-                            `
-                          : nothing}
-                        ${overrideCount > 0 && props.capabilityMenu
-                          ? html`
-                              <openclaw-tooltip .content=${overrideTooltip}>
-                                <span class="agent-chat__session-overrides-pill">
-                                  <button
-                                    type="button"
-                                    class="agent-chat__session-overrides-open"
-                                    @click=${() => {
-                                      state.capabilityMenuView = "root";
-                                      state.capabilityMenuOpen = true;
-                                      requestUpdate();
-                                    }}
-                                  >
-                                    ${t(
-                                      overrideCount === 1
-                                        ? "chat.composer.overrides.countOne"
-                                        : "chat.composer.overrides.count",
-                                      { count: String(overrideCount) },
-                                    )}
-                                  </button>
-                                  <button
-                                    type="button"
-                                    class="agent-chat__session-overrides-clear"
-                                    aria-label=${t("chat.composer.overrides.clear")}
-                                    title=${props.capabilityMenu.mutationBlockedReason ?? ""}
-                                    ?disabled=${props.capabilityMenu.mutationBlockedReason !== null}
-                                    @click=${(event: MouseEvent) => {
-                                      event.stopPropagation();
-                                      if (!props.capabilityMenu?.mutationBlockedReason) {
-                                        props.capabilityMenu?.onPatchToolOverrides(null);
-                                      }
-                                    }}
-                                  >
-                                    ${icons.x}
-                                  </button>
-                                </span>
-                              </openclaw-tooltip>
-                            `
-                          : nothing}
-                        ${composerControls}
                       </div>
                     `
                   : nothing}
-                <div class="agent-chat__composer-meta">${contextNotice}</div>
-                <div class="agent-chat__composer-actions">
-                  ${renderChatPrimaryActions(runControlsProps)}
+                <div class="agent-chat__composer-status-stack">
+                  ${dictation?.active
+                    ? html`
+                        <div
+                          class=${`agent-chat__dictation-status${dictation.finalizing ? " agent-chat__dictation-status--finalizing" : ""}`}
+                        >
+                          <span class="agent-chat__dictation-wave">
+                            ${renderMicrophoneActivity({
+                              status: dictation.connecting ? "connecting" : "listening",
+                              inputLevel: dictation.inputLevel,
+                              bars: 48,
+                              mode: "scroll",
+                            })}
+                          </span>
+                        </div>
+                      `
+                    : nothing}
+                  ${renderFallbackIndicator(props.fallbackStatus)}
+                  ${renderCompactionIndicator(props.compactionStatus)}
+                  ${renderChatGoal(state, activeSession?.goal, {
+                    canAct: props.connected && canCompose,
+                    onGoalCommand: props.onGoalCommand,
+                    onGoalEdit: (goal) => {
+                      commitComposerDraft(props, `/goal edit ${goal.objective}`);
+                      requestUpdate();
+                      queueMicrotask(() => state.composerTextarea?.focus({ preventScroll: true }));
+                    },
+                    requestUpdate,
+                  })}
+                </div>
+
+                ${renderChatAttachmentInputs({ ...props, disabled: !canCompose })}
+                ${props.realtimeTalkVideoStream
+                  ? html`
+                      <div class="agent-chat__video-preview">
+                        <video
+                          class=${mirrorCameraPreview
+                            ? "agent-chat__video-preview-mirrored"
+                            : nothing}
+                          autoplay
+                          .muted=${true}
+                          playsinline
+                          aria-label=${t("chat.composer.cameraPreview")}
+                          ${ref((element) => {
+                            if (element instanceof HTMLVideoElement) {
+                              element.srcObject = props.realtimeTalkVideoStream ?? null;
+                            }
+                          })}
+                        ></video>
+                        ${props.realtimeTalkCameraDevices &&
+                        props.realtimeTalkCameraDevices.length >= 2 &&
+                        props.onSwitchRealtimeCamera
+                          ? html`
+                              <openclaw-tooltip
+                                class="agent-chat__video-preview-switch-tooltip"
+                                .content=${t("chat.composer.switchCamera")}
+                              >
+                                <button
+                                  type="button"
+                                  class="agent-chat__video-preview-switch"
+                                  aria-label=${t("chat.composer.switchCamera")}
+                                  ?disabled=${props.realtimeTalkVideoPending}
+                                  @click=${props.onSwitchRealtimeCamera}
+                                >
+                                  ${icons.switchCamera}
+                                </button>
+                              </openclaw-tooltip>
+                            `
+                          : nothing}
+                      </div>
+                    `
+                  : nothing}
+              </div>
+
+              <div class="agent-chat__composer-input-row">
+                <div class="agent-chat__composer-combobox">
+                  <textarea
+                    ${ref(state.textareaRef ?? undefined)}
+                    .value=${dictationPreviewDraft}
+                    dir=${detectTextDirection(dictationPreviewDraft)}
+                    ?disabled=${!canCompose}
+                    ?readonly=${dictation?.locksComposer === true}
+                    aria-autocomplete="list"
+                    aria-controls=${ifDefined(
+                      slashMenuVisible || skillMenuVisible ? slashMenuListboxId : undefined,
+                    )}
+                    aria-expanded=${ifDefined(
+                      slashMenuVisible || skillMenuVisible ? "true" : undefined,
+                    )}
+                    aria-activedescendant=${ifDefined(activeSlashMenuOptionId ?? undefined)}
+                    aria-describedby=${`${slashMenuAnnouncementId}${
+                      props.disabledReason ? ` ${disabledReasonId}` : ""
+                    }`}
+                    aria-keyshortcuts=${sendShortcut === "enter"
+                      ? "Enter"
+                      : "Control+Enter Meta+Enter"}
+                    @keydown=${handleKeyDown}
+                    @beforeinput=${handleBeforeInput}
+                    @input=${handleInput}
+                    @select=${handleSelect}
+                    @compositionstart=${(event: CompositionEvent) => {
+                      state.composerComposing = true;
+                      state.composingDraft = {
+                        key: draftKey,
+                        value: (event.target as HTMLTextAreaElement).value,
+                      };
+                    }}
+                    @compositionend=${handleCompositionEnd}
+                    @blur=${handleBlur}
+                    @paste=${(event: ClipboardEvent) => {
+                      if (canCompose && !props.suggestionComposer) {
+                        handleChatAttachmentPaste(event, props);
+                      }
+                    }}
+                    aria-label=${placeholder}
+                    placeholder=${dictation?.active ? "" : placeholder}
+                    rows="1"
+                  ></textarea>
+                  <span
+                    id=${slashMenuAnnouncementId}
+                    class="sr-only"
+                    role="status"
+                    aria-live="polite"
+                    aria-atomic="true"
+                    >${activeSlashMenuOptionLabel}</span
+                  >
+                  <span
+                    class="agent-chat__run-status-announcement sr-only"
+                    role="status"
+                    aria-live="polite"
+                    aria-atomic="true"
+                    >${runStatusAnnouncement}</span
+                  >
+                </div>
+              </div>
+
+              <div class="agent-chat__composer-footer">
+                <div class="agent-chat__composer-lead">
+                  ${renderChatComposerPlusMenu({
+                    attachments: props,
+                    showCapabilities: props.capabilityMenu !== undefined,
+                    basePath: props.capabilityMenu?.basePath ?? "",
+                    disabled: !canCompose || props.suggestionComposer === true,
+                    open: state.capabilityMenuOpen,
+                    view: state.capabilityMenuView,
+                    toolOverrides: props.toolOverrides,
+                    skills: props.capabilityMenu?.skills ?? null,
+                    skillsLoading: props.capabilityMenu?.skillsLoading ?? false,
+                    skillsError: props.capabilityMenu?.skillsError ?? false,
+                    mcpServers: props.capabilityMenu?.mcpServers ?? [],
+                    toolsEffectiveResult: props.capabilityMenu?.toolsEffectiveResult ?? null,
+                    toolsEffectiveLoading: props.capabilityMenu?.toolsEffectiveLoading ?? false,
+                    toolsEffectiveError: props.capabilityMenu?.toolsEffectiveError ?? false,
+                    toolAccessMutationBlockedReason:
+                      props.capabilityMenu?.toolAccessMutationBlockedReason ?? null,
+                    webSearchBaseEnabled: props.capabilityMenu?.webSearchBaseEnabled ?? true,
+                    mutationBlockedReason: props.capabilityMenu?.mutationBlockedReason ?? null,
+                    canAdmin: props.capabilityMenu?.canAdmin ?? false,
+                    adminBlockedReason: props.capabilityMenu?.adminBlockedReason ?? null,
+                    addServerDialog: props.capabilityMenu?.addServerDialog,
+                    onOpenChange: (open) => {
+                      state.capabilityMenuOpen = open;
+                      if (!open) {
+                        state.capabilityMenuView = "root";
+                      }
+                      requestUpdate();
+                    },
+                    onViewChange: (view) => {
+                      state.capabilityMenuView = view;
+                      requestUpdate();
+                    },
+                    onLoadSkills: props.capabilityMenu?.onLoadSkills ?? (() => {}),
+                    onPatchToolOverrides: props.capabilityMenu?.onPatchToolOverrides ?? (() => {}),
+                    onNavigate: props.capabilityMenu?.onNavigate ?? (() => {}),
+                    onAddServer: props.capabilityMenu?.onAddServer,
+                    onEnsureToolAccess: props.capabilityMenu?.onEnsureToolAccess,
+                    onOpenToolAccess: props.capabilityMenu?.onOpenToolAccess,
+                  })}
+                  ${composerLeadControl}
+                  ${props.queuedEdit?.editingId
+                    ? html`
+                        <span class="agent-chat__composer-edit" role="status">
+                          <span class="agent-chat__composer-edit-icon" aria-hidden="true"
+                            >${icons.pencil}</span
+                          >
+                          <span class="agent-chat__sr-only">${t("chat.queue.editing")}</span>
+                          <button
+                            class="agent-chat__composer-edit-cancel"
+                            type="button"
+                            aria-label=${t("chat.queue.cancelEdit")}
+                            @click=${() => props.queuedEdit?.onCancel()}
+                          >
+                            ${icons.x}
+                          </button>
+                        </span>
+                      `
+                    : nothing}
+                </div>
+                <div class="agent-chat__composer-trail">
+                  <div class="agent-chat__composer-meta">${contextNotice}</div>
+                  ${composerControls !== nothing
+                    ? html`
+                        <div class="agent-chat__composer-controls">
+                          ${composerRunStatus?.phase === "interrupted"
+                            ? html`
+                                <div class="agent-chat__composer-run-status">
+                                  ${renderChatRunStatusIndicator(composerRunStatus)}
+                                </div>
+                              `
+                            : nothing}
+                          ${overrideCount > 0 && props.capabilityMenu
+                            ? html`
+                                <openclaw-tooltip .content=${overrideTooltip}>
+                                  <span class="agent-chat__session-overrides-pill">
+                                    <button
+                                      type="button"
+                                      class="agent-chat__session-overrides-open"
+                                      @click=${() => {
+                                        state.capabilityMenuView = "root";
+                                        state.capabilityMenuOpen = true;
+                                        requestUpdate();
+                                      }}
+                                    >
+                                      ${t(
+                                        overrideCount === 1
+                                          ? "chat.composer.overrides.countOne"
+                                          : "chat.composer.overrides.count",
+                                        { count: String(overrideCount) },
+                                      )}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      class="agent-chat__session-overrides-clear"
+                                      aria-label=${t("chat.composer.overrides.clear")}
+                                      title=${props.capabilityMenu.mutationBlockedReason ?? ""}
+                                      ?disabled=${props.capabilityMenu.mutationBlockedReason !==
+                                      null}
+                                      @click=${(event: MouseEvent) => {
+                                        event.stopPropagation();
+                                        if (!props.capabilityMenu?.mutationBlockedReason) {
+                                          props.capabilityMenu?.onPatchToolOverrides(null);
+                                        }
+                                      }}
+                                    >
+                                      ${icons.x}
+                                    </button>
+                                  </span>
+                                </openclaw-tooltip>
+                              `
+                            : nothing}
+                          ${composerControls}
+                        </div>
+                      `
+                    : nothing}
+                  <div class="agent-chat__composer-actions">
+                    ${renderChatPrimaryActions(runControlsProps)}
+                  </div>
                 </div>
               </div>
             </div>
-          </div>`
+            ${composerUnderlaps}`
         : nothing}
     </div>
   `;

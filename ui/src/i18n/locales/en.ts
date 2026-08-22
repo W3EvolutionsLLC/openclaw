@@ -5347,7 +5347,7 @@ export const en: TranslationMap = {
       resetToDefault: "Reset to default ({model})",
       defaultWithModel: "Default ({model})",
       defaultWithLevel: "Default ({level})",
-      fastHelp: "Fast responses finish sooner and can use more of your usage limits.",
+      fastHelp: "Faster responses, use more of your limits.",
       speedUnsupported: "Speed control is not supported for this model.",
       contextWindow: "{count} context",
       contextActiveAndMax: "{active} active · {maximum} max",
@@ -5643,6 +5643,7 @@ export const en: TranslationMap = {
       microphonePermissionBlocked:
         "Microphone access is blocked. Allow it in browser site settings to list inputs.",
       holdToRecordSetting: "Hold microphone button to dictate",
+      holdToDictate: "Hold to dictate",
       holdToRecordSettingDescription:
         "Hold the composer microphone button, speak, then release to insert text without sending.",
       dictationAudioUnsupported: "The Gateway returned an unsupported dictation audio format.",
@@ -5656,7 +5657,7 @@ export const en: TranslationMap = {
       dictationProviderUnavailable:
         "No transcription provider is configured for dictation. Choose one in Settings to dictate.",
       dictationRecording: "Recording {elapsed}",
-      dictationReleaseToInsert: "Release to insert dictation",
+      dictationStop: "Stop dictation",
       realtimeTalkRequiresMicrophone: "Realtime voice input requires browser microphone access.",
       selectedMicrophoneUnavailable:
         "The selected microphone is unavailable. Choose another input or System default.",

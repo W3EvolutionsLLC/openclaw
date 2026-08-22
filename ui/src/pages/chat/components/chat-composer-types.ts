@@ -51,7 +51,7 @@ type ChatComposerDisabledBannerContent = {
   title?: string;
   text: string;
   tone?: "info" | "neutral";
-  icon?: "warning";
+  icon?: "warning" | "archive";
   actionLabel: string;
   actionStyle?: "primary";
   busy?: boolean;
@@ -113,6 +113,7 @@ export type ChatComposerProps = ChatAttachmentControlsProps & {
   realtimeTalkCameraError?: boolean;
   gatewayClient?: GatewayBrowserClient | null;
   composerHoldToRecord?: boolean;
+  onComposerHoldToRecordChange?: (enabled: boolean) => void;
   suggestionComposer?: boolean;
   typingActors?: readonly { id: string; label: string }[];
   onTypingChange?: (typing: boolean) => void;

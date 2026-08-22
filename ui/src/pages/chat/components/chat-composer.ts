@@ -60,7 +60,7 @@ export function renderChatComposer(props: ChatComposerProps) {
     isCurrentSessionSubmittedProgress(item, props.sessionKey, props.runStatus),
   );
   const composerRunStatus =
-    showAbortableUi || Boolean(submittedProgress)
+    props.sending || showAbortableUi || Boolean(submittedProgress)
       ? { phase: "in-progress" as const }
       : props.runStatus;
   const compactBusy =
@@ -216,12 +216,9 @@ export function renderChatComposer(props: ChatComposerProps) {
   state.questionTakeoverActive = questionTakeoverActive;
   const showComposer = !questionTakeoverActive;
 
-  const placeholder =
-    !canCompose && props.disabledReason
-      ? props.disabledReason
-      : hasVisualAttachments
-        ? t("chat.composer.placeholderWithAttachments")
-        : t("chat.composer.placeholder", { name: props.assistantName || "agent" });
+  const placeholder = hasVisualAttachments
+    ? t("chat.composer.placeholderWithAttachments")
+    : t("chat.composer.placeholder", { name: props.assistantName || "agent" });
 
   // Offline text and attachments may enter the persisted reconnect queue, but
   // slash commands are live controls and must not execute against stale state.
@@ -375,11 +372,20 @@ export function renderChatComposer(props: ChatComposerProps) {
         selectedDeviceId: selectedMicrophoneId,
         voiceActive: Boolean(props.realtimeTalkActive),
         issue: devicePicker.issue,
+        holdToDictate: props.composerHoldToRecord !== false,
         onOpen: devicePicker.handleOpen,
         onClose: devicePicker.handleClose,
         onSelect: (deviceId: string) => {
           patchSettings({ realtimeTalkInputDeviceId: deviceId.trim() || undefined });
           devicePicker.handleClose();
+        },
+        onHoldToDictateChange: (enabled: boolean) => {
+          if (props.onComposerHoldToRecordChange) {
+            props.onComposerHoldToRecordChange(enabled);
+          } else {
+            patchSettings({ composerHoldToRecord: enabled });
+          }
+          requestUpdate();
         },
       })
     : nothing;
