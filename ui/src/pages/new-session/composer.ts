@@ -31,6 +31,7 @@ type NewSessionComposerOptions = {
   getAttachments: () => ChatAttachment[];
   message: string;
   modelControl?: TemplateResult | typeof nothing;
+  permissionControl?: TemplateResult | typeof nothing;
   pendingAttachmentReads: number;
   readSignal: AbortSignal;
   requiresModifier: boolean;
@@ -207,14 +208,17 @@ function renderVisibilityPill(params: {
   return html`
     <button
       type="button"
-      class="new-session-page__visibility ${active ? "new-session-page__visibility--active" : ""}"
+      class="new-session-page__visibility new-session-page__visibility--${params.mode} ${active
+        ? "new-session-page__visibility--active"
+        : ""}"
       role="switch"
       aria-checked=${String(active)}
       ?disabled=${disabled}
       title=${params.description}
       @click=${() => params.options.onVisibilityChange?.(active ? "normal" : params.mode)}
     >
-      <span aria-hidden="true">${params.icon}</span>${params.label}
+      <span class="new-session-page__visibility-icon" aria-hidden="true">${params.icon}</span>
+      <span class="new-session-page__visibility-label">${params.label}</span>
     </button>
   `;
 }
@@ -300,20 +304,22 @@ function renderNewSessionComposer(options: NewSessionComposerOptions) {
           </div>
         </div>
         <div class="agent-chat__composer-footer">
-          <div class="agent-chat__composer-lead">${renderChatAttachmentMenu(attachmentProps)}</div>
+          <div class="agent-chat__composer-lead">
+            ${renderChatAttachmentMenu(attachmentProps)}${options.permissionControl ?? nothing}
+            ${options.draftAvailable
+              ? renderVisibilityPill({
+                  mode: "draft",
+                  icon: icons.pencil,
+                  label: t("newSession.draft"),
+                  description: t("newSession.draftDescription"),
+                  options,
+                })
+              : nothing}
+          </div>
           <div class="agent-chat__composer-trail">
             <div class="agent-chat__composer-controls">
               ${options.modelControl && options.modelControl !== nothing
                 ? html`<div class="chat-composer-model-control">${options.modelControl}</div>`
-                : nothing}
-              ${options.draftAvailable
-                ? renderVisibilityPill({
-                    mode: "draft",
-                    icon: icons.pencil,
-                    label: t("newSession.draft"),
-                    description: t("newSession.draftDescription"),
-                    options,
-                  })
                 : nothing}
             </div>
             <div class="agent-chat__composer-actions">
@@ -345,6 +351,7 @@ export function renderNewSessionDraftComposer(options: {
   visibility?: NewSessionVisibility;
   draftAvailable?: boolean;
   modelControl: NewSessionModelControl;
+  permissionControl?: TemplateResult;
   textareaController: NewSessionComposerTextareaController;
   voiceControl?: TemplateResult;
   requiresModifier: boolean;
@@ -379,6 +386,7 @@ export function renderNewSessionDraftComposer(options: {
           context: options.context,
           sending: options.submitting,
         }),
+    permissionControl: options.permissionControl,
     pendingAttachmentReads: options.attachmentDraft.pendingReads,
     readSignal,
     requiresModifier: options.requiresModifier,

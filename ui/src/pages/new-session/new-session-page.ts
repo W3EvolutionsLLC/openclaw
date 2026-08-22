@@ -17,6 +17,7 @@ import { SubscriptionsController } from "../../lit/subscriptions-controller.ts";
 import "../../styles/chat.css";
 import "../../styles/new-session.css";
 import { renderChatImageLightbox } from "../chat/components/chat-image-lightbox.ts";
+import { renderChatPermissionPicker } from "../chat/components/chat-permission-picker.ts";
 import { renderWelcomeState } from "../chat/components/chat-welcome.ts";
 import * as catalog from "./catalog-target.ts";
 import type { SubmissionOutcomeReason } from "./cloud-recovery-state.ts";
@@ -30,7 +31,10 @@ import { restoreDraft, retainDraft } from "./draft-navigation-handoff.ts";
 import { DraftPlaceBrowser } from "./draft-place-browser.ts";
 import { DraftPlaceState } from "./draft-place-state.ts";
 import { DraftSubmissionFlow } from "./draft-submission-flow.ts";
-import { renderNewSessionIncognitoControl } from "./incognito-control.ts";
+import {
+  renderNewSessionIncognitoControl,
+  renderNewSessionIncognitoNotice,
+} from "./incognito-control.ts";
 import type { NewSessionRouteData } from "./location.ts";
 import {
   closeAgentPicker,
@@ -552,6 +556,15 @@ class NewSessionPage extends OpenClawLightDomElement {
           visibility: this.submission.visibility,
           draftAvailable: this.submission.canStartAsDraft(),
           modelControl: this.place.modelControl,
+          permissionControl: catalog.isTarget(this.data)
+            ? undefined
+            : renderChatPermissionPicker({
+                canSelectFull: this.place.isAdmin(),
+                mode: this.submission.permissionMode,
+                sessionRoot: this.place.workspacePath(),
+                onSelect: (permissionMode) =>
+                  this.submission.setPermissionMode(permissionMode ?? undefined),
+              }),
           requiresModifier: loadSettings().chatSendShortcut === "modifier-enter",
           submitting: this.submission.submitting,
           textareaController: this.submission.composerTextarea,
@@ -579,6 +592,7 @@ class NewSessionPage extends OpenClawLightDomElement {
           },
           onSubmit: () => void this.submission.submit(),
         })}
+        ${renderNewSessionIncognitoNotice(this.submission.visibility === "incognito")}
       </div>
     `;
   }
@@ -593,6 +607,8 @@ class NewSessionPage extends OpenClawLightDomElement {
       assistantAvatarUrl: agent?.identity?.avatarUrl ?? null,
       hint: t("newSession.hint"),
       composer: this.renderDraftBlock(),
+      hideSecondaryContent: this.submission.visibility === "incognito",
+      fadeSecondaryContent: this.submission.message.trim().length > 0,
       modelSetupRequired: this.submission.requiresModelSetup(),
       onModelSetup: () => this.context?.navigate("model-setup"),
       sessions: this.context?.sessions.state.result,
@@ -635,7 +651,11 @@ class NewSessionPage extends OpenClawLightDomElement {
 
   override render() {
     return html`
-      <div class="new-session-page">
+      <div
+        class="new-session-page ${this.submission.visibility === "incognito"
+          ? "new-session-page--incognito"
+          : ""}"
+      >
         ${renderNewSessionIncognitoControl(this.submission)}
         <div
           class="new-session-page__scroll"

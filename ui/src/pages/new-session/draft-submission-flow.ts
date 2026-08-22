@@ -1,5 +1,6 @@
 import type {
   ProjectsAddResult,
+  SessionPermissionMode,
   SessionsCatalogStartTerminalResult,
 } from "../../../../packages/gateway-protocol/src/index.js";
 import { selectApplicationSession } from "../../app/agent-selection.ts";
@@ -45,6 +46,7 @@ import {
 export class DraftSubmissionFlow {
   private visibilityValue: NewSessionVisibility = "normal";
   private messageValue = "";
+  private permissionModeValue: SessionPermissionMode | undefined;
   private submittingValue = false;
   private blockedSubmitGate: string | null = null;
   private submissionOutcomeUnknownValue: SubmissionOutcomeReason | null = null;
@@ -75,6 +77,10 @@ export class DraftSubmissionFlow {
     return this.submittingValue;
   }
 
+  get permissionMode(): SessionPermissionMode | undefined {
+    return this.permissionModeValue;
+  }
+
   get submissionOutcomeUnknown(): SubmissionOutcomeReason | null {
     return this.submissionOutcomeUnknownValue;
   }
@@ -85,6 +91,11 @@ export class DraftSubmissionFlow {
 
   setMessage(message: string) {
     this.messageValue = message;
+    this.callbacks.requestUpdate();
+  }
+
+  setPermissionMode(permissionMode: SessionPermissionMode | undefined) {
+    this.permissionModeValue = permissionMode;
     this.callbacks.requestUpdate();
   }
 
@@ -176,6 +187,7 @@ export class DraftSubmissionFlow {
       message: options.message ?? "",
       model: this.place.modelControl.selected,
       thinkingLevel: this.place.modelControl.thinkingLevel,
+      permissionMode: this.permissionModeValue,
       visibility: options.visibility ?? this.visibilityValue,
       attachments: options.attachments,
       projectId: this.place.browser.remoteProject?.projectId ?? this.place.browser.projectId,
@@ -311,6 +323,7 @@ export class DraftSubmissionFlow {
       ? (this.submissionOutcomeUnknownValue ?? "cloud-interrupted")
       : null;
     this.visibilityValue = "normal";
+    this.permissionModeValue = undefined;
     this.attachmentDraft.reset({ release: true });
     if (preservePendingCloud) {
       if (!this.pendingCloud.restored) {
