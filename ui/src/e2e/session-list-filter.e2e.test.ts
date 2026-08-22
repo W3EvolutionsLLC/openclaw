@@ -245,6 +245,7 @@ suite.define(() => {
     expect(initialPageParams).toMatchObject({ limit: 50 });
     expect(initialPageParams).not.toHaveProperty("activeMinutes");
 
+    await sessionsPage.getByRole("button", { name: "Filters" }).click();
     const activeMinutes = sessionsPage.getByLabel("Updated within");
     const limit = sessionsPage.getByLabel("Limit");
     await expect.poll(() => activeMinutes.inputValue()).toBe("");
@@ -262,6 +263,7 @@ suite.define(() => {
     await expect.poll(() => sessionsPage.getByText(sessionLabel, { exact: true }).count()).toBe(0);
 
     requestCount = (await gateway.getRequests("sessions.list")).length;
+    await sessionsPage.getByRole("button", { name: "Filters" }).click();
     await sessionsPage.getByRole("button", { name: "Show all" }).click();
     await expect
       .poll(async () => (await gateway.getRequests("sessions.list")).length)
@@ -295,6 +297,7 @@ suite.define(() => {
 
     await currentPage.goto(`${suite.server?.baseUrl ?? ""}sessions`);
     await gateway.waitForRequest("sessions.list");
+    await currentPage.getByRole("button", { name: "Filters" }).click();
     const activeMinutes = currentPage.getByLabel("Updated within");
     const limit = currentPage.getByLabel("Limit");
     const cases = [

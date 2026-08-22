@@ -46,6 +46,7 @@ suite.define(() => {
 
     try {
       await page.goto(`${suite.server.baseUrl}sessions?status=archived`);
+      await page.getByRole("button", { name: "Filters" }).click();
       const remove = page.getByRole("button", { name: /Delete all archived/ });
       await remove.waitFor();
       await gateway.setMethodResponse("sessions.list", {
@@ -111,7 +112,9 @@ suite.define(() => {
 
       await rowFor("Alpha").locator('input[type="checkbox"]').check();
       await page.locator(".data-table-bulk-bar").getByText("1 selected").waitFor();
-      await page.locator('.sessions-toolbar__search input[type="text"]').fill("Bravo");
+      expect(await page.locator(".sessions-toolbar__search").count()).toBe(0);
+      await page.locator(".data-table-bulk-bar").getByRole("button", { name: "Unselect" }).click();
+      await page.locator('.sessions-toolbar__search input[type="search"]').fill("Bravo");
 
       await expect.poll(() => rowFor("Alpha").count()).toBe(0);
       await expect.poll(() => page.locator(".data-table-bulk-bar").count()).toBe(0);
