@@ -925,7 +925,18 @@ extension OnboardingAISetupModel {
             }
             guard self.isCurrentAttempt(context), !Task.isCancelled else { return }
             if result.ok {
-                finishConnected(kind: kind, activationOwner: activationOwner)
+                if let failure = await finishSuccessfulActivation(
+                    kind: kind,
+                    expectedModel: modelRef,
+                    context: context,
+                    activationOwner: activationOwner,
+                    before: persistedStateBeforeActivation,
+                    originalServerLease: lease,
+                    gatewayRestartRequired: result.gatewayRestartRequired == true)
+                {
+                    self.statuses[kind] = .failed(failure)
+                    self.exposeActivationFailure(failure, whenTerminal: !tryNextCandidateOnFailure)
+                }
             } else {
                 self.pendingActivationVerification = false
                 self.clearPendingHandoff(ifOwnedBy: context, activationOwner: activationOwner)
@@ -1034,7 +1045,10 @@ extension OnboardingAISetupModel {
             guard self.isCurrentAttempt(context), !Task.isCancelled else { return false }
             let leaseTimeoutMs = deadline.remainingMilliseconds(cappedAt: 3000)
             guard leaseTimeoutMs > 0 else { return false }
-            if let replacementLease = try? await gateway.acquireServerLease(
+            // A successful activation reply can precede its deferred restart.
+            // Never verify or hand off on the physical socket that scheduled it.
+            if await !(gateway.isCurrentServerLease(originalServerLease)),
+               let replacementLease = try? await gateway.acquireServerLease(
                 ifSameRouteAs: originalServerLease,
                 timeoutMs: Double(leaseTimeoutMs)),
                 await reconcilePersistedActivation(
@@ -1059,6 +1073,46 @@ extension OnboardingAISetupModel {
             delayMs = min(delayMs * 2, 2000)
         }
         return false
+    }
+
+    private func finishSuccessfulActivation(
+        kind: String,
+        expectedModel: String,
+        context: AttemptContext,
+        activationOwner: OnboardingSystemAgentResumeStore.ActivationOwner,
+        before: PersistedActivationState?,
+        originalServerLease: GatewayConnection.ServerLease,
+        gatewayRestartRequired: Bool) async -> Failure?
+    {
+        guard gatewayRestartRequired else {
+            self.finishConnected(kind: kind, activationOwner: activationOwner)
+            return nil
+        }
+        guard OnboardingSystemAgentResumeStore.markCompleted(
+            ifOwnedBy: context.routeIdentity,
+            activationOwner: activationOwner,
+            defaults: self.defaults)
+        else {
+            self.finishConnected(kind: kind, activationOwner: activationOwner)
+            return nil
+        }
+        self.pendingActivationVerification = true
+        self.phase = .detecting
+        if await self.reconcileActivationAfterGatewayRestart(
+            kind: kind,
+            expectedModel: expectedModel,
+            context: context,
+            activationOwner: activationOwner,
+            before: before,
+            originalServerLease: originalServerLease)
+        {
+            return nil
+        }
+        guard self.isCurrentAttempt(context), !Task.isCancelled else { return nil }
+        self.retainCompletedReceiptForRetry(context: context)
+        self.phase = .ready
+        return Self.transportFailure(
+            "The Gateway did not finish restarting after AI setup. Try again once it is available.")
     }
 
     private func reconcilePersistedActivation(
@@ -1510,6 +1564,7 @@ extension OnboardingAISetupModel {
             ifCurrentServerLease: lease)
         guard self.isCurrentAttempt(context), !Task.isCancelled else { return }
         let requestTimeoutMs = Self.activationRequestTimeoutMs(for: "api-key")
+        let persistedStateBeforeActivation = self.lastDetectedActivationState
         // Same keychain-unavailable degradation as detected candidates: an
         // unbound lease keeps the ambiguity window without a resume receipt.
         let activationOwner = routeFingerprint.map { fingerprint in
@@ -1568,9 +1623,14 @@ extension OnboardingAISetupModel {
             guard self.isCurrentAttempt(context), !Task.isCancelled else { return }
             if result.ok {
                 self.manualKey = ""
-                self.finishConnected(
+                self.manualError = await self.finishSuccessfulActivation(
                     kind: "api-key",
-                    activationOwner: activationOwner)
+                    expectedModel: result.modelRef ?? "",
+                    context: context,
+                    activationOwner: activationOwner,
+                    before: persistedStateBeforeActivation,
+                    originalServerLease: lease,
+                    gatewayRestartRequired: result.gatewayRestartRequired == true)
             } else {
                 self.pendingActivationVerification = false
                 self.clearPendingHandoff(ifOwnedBy: context, activationOwner: activationOwner)

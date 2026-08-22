@@ -81,6 +81,7 @@ extension OnboardingAISetupModel {
         let modelRef: String?
         let status: String?
         let error: String?
+        let gatewayRestartRequired: Bool?
     }
 
     struct Candidate: Identifiable, Equatable {

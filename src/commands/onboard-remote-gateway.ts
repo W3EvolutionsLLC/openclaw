@@ -1,5 +1,6 @@
 // Remote-Gateway onboarding adapters keep inference detection and activation on the Gateway host.
 import { randomUUID } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 import type {
   SystemAgentChatResult,
   SystemAgentSetupActivateResult,
@@ -7,7 +8,11 @@ import type {
   SystemAgentSetupVerifyResult,
 } from "../../packages/gateway-protocol/src/index.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import type { CallGatewayCliOptions } from "../gateway/call.js";
+import {
+  isGatewayClientRequestError,
+  isGatewayTransportError,
+  type CallGatewayCliOptions,
+} from "../gateway/call.js";
 import { defaultRuntime, type RuntimeEnv } from "../runtime.js";
 import type {
   ActivateSetupInferenceParams,
@@ -24,6 +29,7 @@ const GATEWAY_SETUP_ACTIVATE_TIMEOUT_MS = 150_000;
 const GATEWAY_CODEX_SETUP_ACTIVATE_TIMEOUT_MS = 480_000;
 const GATEWAY_SETUP_VERIFY_TIMEOUT_MS = 30_000;
 const GATEWAY_SYSTEM_AGENT_CHAT_TIMEOUT_MS = 190_000;
+const GATEWAY_RESTART_WAIT_TIMEOUT_MS = 45_000;
 
 type CallGateway = <T>(options: CallGatewayCliOptions) => Promise<T>;
 
@@ -137,6 +143,7 @@ function toSetupInferenceActivationResult(
       modelRef: result.modelRef,
       latencyMs: result.latencyMs,
       lines: result.lines,
+      ...(result.gatewayRestartRequired ? { gatewayRestartRequired: true } : {}),
     };
   }
   if (!isSetupInferenceFailureStatus(result.status) || !result.error?.trim()) {
@@ -255,11 +262,33 @@ export async function runRemoteGatewayInferenceOnboarding(
     if (!activation.ok) {
       return activation;
     }
-    const verification = await request<SystemAgentSetupVerifyResult>({
-      method: "openclaw.setup.verify",
-      payload: {},
-      timeoutMs: GATEWAY_SETUP_VERIFY_TIMEOUT_MS,
-    });
+    const restartDeadline = Date.now() + GATEWAY_RESTART_WAIT_TIMEOUT_MS;
+    let retryDelayMs = 250;
+    let verification: SystemAgentSetupVerifyResult;
+    for (;;) {
+      try {
+        verification = await request<SystemAgentSetupVerifyResult>({
+          method: "openclaw.setup.verify",
+          payload: {},
+          timeoutMs: GATEWAY_SETUP_VERIFY_TIMEOUT_MS,
+        });
+        break;
+      } catch (error) {
+        const retryable =
+          activation.gatewayRestartRequired === true &&
+          (isGatewayTransportError(error) ||
+            (isGatewayClientRequestError(error) && error.retryable));
+        const remainingMs = restartDeadline - Date.now();
+        if (!retryable || remainingMs <= 0) {
+          throw error;
+        }
+        const requestedDelay = isGatewayClientRequestError(error)
+          ? (error.retryAfterMs ?? retryDelayMs)
+          : retryDelayMs;
+        await delay(Math.min(requestedDelay, remainingMs));
+        retryDelayMs = Math.min(retryDelayMs * 2, 2_000);
+      }
+    }
     assertVerifiedActivation({
       activation,
       verification,

@@ -713,11 +713,17 @@ private func failedActivationResponse(id: String) -> Data {
     Data(#"{"type":"res","id":"\#(id)","ok":true,"payload":{"ok":false,"status":"auth","error":"rejected"}}"#.utf8)
 }
 
-private func successfulActivationResponse(id: String, modelRef: String, latencyMs: Int) -> Data {
+private func successfulActivationResponse(
+    id: String,
+    modelRef: String,
+    latencyMs: Int,
+    gatewayRestartRequired: Bool = false) -> Data
+{
+    let restartField = gatewayRestartRequired ? ",\"gatewayRestartRequired\":true" : ""
     Data(
         """
         {"type":"res","id":"\(id)","ok":true,"payload":{
-          "ok":true,"modelRef":"\(modelRef)","latencyMs":\(latencyMs),"lines":["Model ready"]}}
+          "ok":true,"modelRef":"\(modelRef)","latencyMs":\(latencyMs),"lines":["Model ready"]\(restartField)}}
         """.utf8)
 }
 
@@ -1258,6 +1264,77 @@ struct OnboardingAISetupTests {
         model.clearCompletedHandoffIfOwned()
 
         #expect(pendingState(defaults) == .none)
+    }
+
+    @Test func `successful activation waits for required Gateway restart before handoff`() async throws {
+        let defaults = try #require(isolatedAISetupDefaults(prefix: "OnboardingRequiredRestartTests"))
+        let recorder = AISetupRequestRecorder()
+        let restartGate = AISetupRequestGate()
+        let socketGeneration = AISetupSocketGeneration()
+        let session = GatewayTestWebSocketSession(taskFactory: {
+            let generation = socketGeneration.claim()
+            return GatewayTestWebSocketTask(sendHook: { task, message, sendIndex in
+                guard sendIndex > 0, let request = aiSetupRequest(from: message) else { return }
+                if respondToAISetupHealth(task: task, request: request) {
+                    return
+                }
+                await recorder.record(message)
+                if generation == 0 {
+                    switch request.method {
+                    case "openclaw.setup.detect":
+                        task.emitReceiveSuccess(.data(detectedSetupResponse(
+                            id: request.id,
+                            kind: "codex-cli",
+                            modelRef: "openai/gpt-5.5")))
+                    case "openclaw.setup.activate":
+                        task.emitReceiveSuccess(.data(successfulActivationResponse(
+                            id: request.id,
+                            modelRef: "openai/gpt-5.5",
+                            latencyMs: 42,
+                            gatewayRestartRequired: true)))
+                        Task {
+                            await restartGate.wait()
+                            task.emitReceiveFailure()
+                        }
+                    default:
+                        break
+                    }
+                    return
+                }
+                switch request.method {
+                case "openclaw.setup.detect":
+                    task.emitReceiveSuccess(.data(persistedDetectedSetupResponse(id: request.id)))
+                case "openclaw.setup.verify":
+                    task.emitReceiveSuccess(.data(verifiedSetupResponse(id: request.id)))
+                default:
+                    break
+                }
+            })
+        })
+        let url = try #require(URL(string: "ws://example.invalid"))
+        let gateway = makeAISetupGateway(url: url, session: session)
+        let model = makeAISetupModel(gateway: gateway, defaults: defaults)
+        var handoffCount = 0
+        model.onConnected = { handoffCount += 1 }
+
+        let activation = Task { await model.detectAndAutoConnect() }
+        await restartGate.waitUntilStarted()
+        await settleQueuedAISetupTasks()
+
+        #expect(!model.connected)
+        #expect(handoffCount == 0)
+
+        await restartGate.release()
+        await activation.value
+
+        #expect(await (recorder.snapshot()).methods == [
+            "openclaw.setup.detect",
+            "openclaw.setup.activate",
+            "openclaw.setup.detect",
+            "openclaw.setup.verify",
+        ])
+        #expect(model.connected)
+        #expect(handoffCount == 1)
     }
 
     @Test func `adopts pending activation stored under the retired crestodian key`() throws {
