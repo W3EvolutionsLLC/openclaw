@@ -218,6 +218,17 @@ function sameOperationInput(
   );
 }
 
+function hasDuplicateTargets(targets: SessionsOperationTarget[]): boolean {
+  const sessionIds = new Set<string>();
+  for (const target of targets) {
+    if (sessionIds.has(target.expectedSessionId)) {
+      return true;
+    }
+    sessionIds.add(target.expectedSessionId);
+  }
+  return false;
+}
+
 async function executeBulkMessage(params: {
   options: GatewayRequestHandlerOptions;
   requestId: string;
@@ -225,6 +236,15 @@ async function executeBulkMessage(params: {
   targets: SessionsOperationTarget[];
   retryOf?: string;
 }): Promise<{ ok: true; operation: SessionsOperation } | { ok: false; error: ErrorShape }> {
+  if (hasDuplicateTargets(params.targets)) {
+    return {
+      ok: false,
+      error: errorShape(
+        ErrorCodes.INVALID_REQUEST,
+        "sessions operation targets must identify distinct sessions",
+      ),
+    };
+  }
   const ownerKey = sessionBulkMessageOwnerKey(params.options.client);
   const existing = findSessionBulkMessageTask({ ownerKey, requestId: params.requestId });
   if (existing) {

@@ -203,6 +203,13 @@ export async function admitChatSend(params: {
     if (entry && !latestEntry) {
       throw new Error(`Session "${sessionKey}" was deleted while starting work. Retry.`);
     }
+    if (
+      expectedLeafEntryId === undefined &&
+      requestedSessionId !== undefined &&
+      requestedSessionId !== latestEntry?.sessionId
+    ) {
+      throw new Error(`Session "${sessionKey}" changed while starting work. Retry.`);
+    }
     // Capture the exact direct owner under the writer barrier. If it clears
     // later, the opaque target rejects instead of resolving a successor.
     const resolvedInjectionTarget =

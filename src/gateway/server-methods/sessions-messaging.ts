@@ -186,6 +186,7 @@ async function handleSessionSend(params: {
       params: {
         sessionKey: canonicalKey,
         ...(requestedAgentId ? { agentId: requestedAgentId } : {}),
+        ...(expectedSessionId ? { sessionId: expectedSessionId } : {}),
         message: (p as { message: string }).message,
         thinking: (p as { thinking?: string }).thinking,
         attachments: (p as { attachments?: unknown[] }).attachments,

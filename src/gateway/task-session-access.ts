@@ -1,7 +1,7 @@
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { parseAgentSessionKey } from "../routing/session-key.js";
-import { SESSION_BULK_MESSAGE_TASK_KIND } from "../tasks/session-bulk-message-task-contract.js";
+import { isSessionBulkMessageTask } from "../tasks/session-bulk-message-task-contract.js";
 import type { TaskRecord } from "../tasks/task-registry.types.js";
 import type { GatewayClient } from "./server-methods/types.js";
 import { sessionBulkMessageOwnerKey } from "./session-bulk-message-operation-access.js";
@@ -26,7 +26,7 @@ export function canAccessTaskRequesterSession(params: {
   client: GatewayClient | null;
   task: Pick<TaskRecord, "ownerKey" | "requesterAgentId" | "requesterSessionKey" | "taskKind">;
 }): boolean {
-  if (params.task.taskKind === SESSION_BULK_MESSAGE_TASK_KIND) {
+  if (isSessionBulkMessageTask(params.task)) {
     return params.task.ownerKey === sessionBulkMessageOwnerKey(params.client);
   }
   const target = resolveTaskRequesterSessionTarget(params.task);
@@ -38,4 +38,9 @@ export function canAccessTaskRequesterSession(params: {
       ...target,
     })
   );
+}
+
+/** Profile-private tasks use their typed owner RPC instead of the global task event stream. */
+export function canBroadcastTaskEvent(task: Pick<TaskRecord, "taskKind">): boolean {
+  return !isSessionBulkMessageTask(task);
 }

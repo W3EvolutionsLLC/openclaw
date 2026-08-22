@@ -137,6 +137,7 @@ const mockState = vi.hoisted(() => ({
   agentRunId: "run-agent-1",
   sessionEntry: {} as Record<string, unknown>,
   sessionIdsByKey: new Map<string, string>(),
+  sessionIdAfterFirstLoad: undefined as string | undefined,
   sessionMissing: false,
   loadSessionEntryCalls: [] as Array<{ rawKey: string; opts?: { agentId?: string } }>,
   lastDispatchCtx: undefined as MsgContext | undefined,
@@ -256,7 +257,11 @@ vi.mock("../session-utils.js", async () => {
     const entry = mockState.sessionMissing
       ? undefined
       : {
-          sessionId: mockState.sessionIdsByKey.get(rawKey) ?? mockState.sessionId,
+          sessionId:
+            mockState.sessionIdsByKey.get(rawKey) ??
+            (mockState.loadSessionEntryCalls.length > 1
+              ? (mockState.sessionIdAfterFirstLoad ?? mockState.sessionId)
+              : mockState.sessionId),
           sessionFile: mockState.transcriptPath,
           ...mockState.sessionEntry,
         };
@@ -1329,6 +1334,7 @@ describe("chat directive tag stripping for non-streaming final payloads", () => 
     mockState.agentRunId = "run-agent-1";
     mockState.sessionEntry = {};
     mockState.sessionIdsByKey.clear();
+    mockState.sessionIdAfterFirstLoad = undefined;
     mockState.sessionMissing = false;
     mockState.loadSessionEntryCalls = [];
     mockState.lastDispatchCtx = undefined;
@@ -1483,6 +1489,27 @@ describe("chat directive tag stripping for non-streaming final payloads", () => 
       );
       expect(loadTranscriptEventsSync(transcriptScope())).toEqual(before);
     }
+  });
+
+  it("rejects a session replacement while waiting for final chat admission", async () => {
+    await createGatewayUserTurnSqliteFixture("openclaw-chat-send-session-replacement-");
+    const frozenSessionId = mockState.sessionId;
+    mockState.sessionIdAfterFirstLoad = `${frozenSessionId}-replacement`;
+    const { context, respond, send } = createChatRequestFixture();
+
+    await send({
+      idempotencyKey: "idem-session-replacement",
+      requestParams: { sessionId: frozenSessionId },
+      waitFor: "none",
+    });
+
+    expect(lastRespondCall(respond)).toEqual([
+      false,
+      undefined,
+      expect.objectContaining({ message: expect.stringContaining("changed while starting work") }),
+    ]);
+    expect(context.addChatRun).not.toHaveBeenCalled();
+    expect(mockState.lastDispatchCtx).toBeUndefined();
   });
 
   it("rejects a copied exact leaf from the session before a branch switch", async () => {

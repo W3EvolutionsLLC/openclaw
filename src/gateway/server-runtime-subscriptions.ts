@@ -42,7 +42,7 @@ import { defaultSessionCompanionContextReader } from "./session-companion-contex
 import { createSessionCompanion } from "./session-companion.js";
 import { createSessionObserver } from "./session-observer.js";
 import { tryResolveSessionCompatibilityOwnerAgentId } from "./session-request-agent.js";
-import { resolveTaskRequesterSessionTarget } from "./task-session-access.js";
+import { canBroadcastTaskEvent, resolveTaskRequesterSessionTarget } from "./task-session-access.js";
 import type { TerminalSessionManager } from "./terminal/session-manager.js";
 
 function dispatchEventHandler<TEvent>(params: {
@@ -409,6 +409,15 @@ export function startGatewayEventSubscriptions(params: {
   const lastTaskSummaryById = new Map<string, string>();
   const taskObservers = {
     onEvent: (event: TaskRegistryObserverEvent) => {
+      const taskRecord =
+        event.kind === "upserted"
+          ? event.task
+          : event.kind === "deleted"
+            ? event.previous
+            : undefined;
+      if (taskRecord && !canBroadcastTaskEvent(taskRecord)) {
+        return;
+      }
       let payload: TaskEventPayload;
       let sessionTarget: ReturnType<typeof resolveTaskRequesterSessionTarget>;
       switch (event.kind) {

@@ -239,6 +239,29 @@ describe("sessions operations", () => {
     );
   });
 
+  it("rejects duplicate session identities before creating or dispatching", async () => {
+    const created = options("sessions.operations.create", {
+      requestId: "bulk-duplicate",
+      message: "Report status.",
+      targets: [
+        { key: "agent:main:first-alias", expectedSessionId: "session-same" },
+        { key: "agent:main:second-alias", expectedSessionId: "session-same" },
+      ],
+    });
+
+    await sessionOperationHandlers["sessions.operations.create"]?.(created.options);
+
+    expect(created.respond).toHaveBeenCalledWith(
+      false,
+      undefined,
+      expect.objectContaining({
+        message: "sessions operation targets must identify distinct sessions",
+      }),
+    );
+    expect(taskStore.create).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it("retries only failed or undispatched targets", async () => {
     const created = options("sessions.operations.create", {
       requestId: "bulk-one",

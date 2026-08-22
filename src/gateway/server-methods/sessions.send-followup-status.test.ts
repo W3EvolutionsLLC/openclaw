@@ -215,6 +215,7 @@ describe("sessions.send completed subagent follow-up status", () => {
       req: { id: "req-1" } as never,
       params: {
         key: childSessionKey,
+        expectedSessionId: "sess-followup",
         message: "follow-up",
         idempotencyKey: "run-new",
       },
@@ -233,6 +234,11 @@ describe("sessions.send completed subagent follow-up status", () => {
     expect(call?.[1]?.messageSeq).toBe(1);
     expect(call?.[2]).toBeUndefined();
     expect(call?.[3]).toBeUndefined();
+    expect(chatSendMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        params: expect.objectContaining({ sessionId: "sess-followup" }),
+      }),
+    );
     expectSubagentFollowupReactivation({
       replaceSubagentRunAfterSteerMock,
       broadcastToConnIds,

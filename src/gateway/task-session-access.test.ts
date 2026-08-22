@@ -3,7 +3,7 @@ import { SESSION_BULK_MESSAGE_TASK_KIND } from "../tasks/session-bulk-message-ta
 import type { TaskRecord } from "../tasks/task-registry.types.js";
 import type { GatewayClient } from "./server-methods/types.js";
 import { sessionBulkMessageOwnerKey } from "./session-bulk-message-operation-access.js";
-import { canAccessTaskRequesterSession } from "./task-session-access.js";
+import { canAccessTaskRequesterSession, canBroadcastTaskEvent } from "./task-session-access.js";
 
 function client(profileId: string): GatewayClient {
   return {
@@ -40,5 +40,6 @@ describe("task session access", () => {
 
     expect(canAccessTaskRequesterSession({ cfg: {}, client: alice, task })).toBe(true);
     expect(canAccessTaskRequesterSession({ cfg: {}, client: bob, task })).toBe(false);
+    expect(canBroadcastTaskEvent(task)).toBe(false);
   });
 });
