@@ -4788,7 +4788,7 @@ describe("chat attachment picker", () => {
     expect(cards[0]?.querySelector(".chat-browser-annotation-card__meta")?.textContent).toContain(
       "2 marked regions",
     );
-    expect(cards[0]?.textContent).toContain("Element inspected");
+    expect(cards[0]?.textContent).not.toContain("Element inspected");
     expect(cards[1]?.querySelector(".chat-browser-annotation-card__identity")?.textContent).toBe(
       "docs.example.test/narrow-layout",
     );

@@ -4524,25 +4524,79 @@ button.chat-pr__diff {
 .chat-attachments-preview {
   display: flex;
   gap: 8px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   flex-shrink: 0;
+  width: 100%;
+  max-width: 100%;
   margin-top: 4px;
   padding-block-start: 10px;
-  padding-inline-start: 10px;
+  padding-block-end: 5px;
+  padding-inline: 10px;
   margin-bottom: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-inline: contain;
+  scrollbar-width: none;
+}
+
+.chat-attachments-preview::-webkit-scrollbar {
+  display: none;
+}
+
+.chat-attachments-preview[data-scrollable="true"][data-at-start="true"][data-at-end="false"] {
+  mask-image: linear-gradient(to right, black 0, black calc(100% - 18px), transparent 100%);
+}
+
+.chat-attachments-preview[data-scrollable="true"][data-at-start="false"][data-at-end="false"] {
+  mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    black 18px,
+    black calc(100% - 18px),
+    transparent 100%
+  );
+}
+
+.chat-attachments-preview[data-scrollable="true"][data-at-start="false"][data-at-end="true"] {
+  mask-image: linear-gradient(to right, transparent 0, black 18px, black 100%);
 }
 
 .chat-attachment-thumb {
+  --chat-attachment-radius: calc(14px * var(--openclaw-corner-radius-scale));
+
   position: relative;
-  width: 60px;
-  height: 60px;
-  border-radius: var(--radius-sm);
+  flex: 0 0 auto;
+  width: 56px;
+  height: 56px;
+  border-radius: var(--chat-attachment-radius);
+  corner-shape: superellipse(1.5);
   overflow: hidden;
   border: 1px solid var(--border);
+  background: var(--panel);
+  transition:
+    border-color var(--duration-fast) ease,
+    background var(--duration-fast) ease;
+}
+
+.chat-attachment-thumb--file,
+.chat-attachment-thumb--browser-annotation {
+  border-color: color-mix(in srgb, var(--text) 24%, var(--border));
 }
 
 .chat-attachment-thumb--file {
-  width: 180px;
+  width: fit-content;
+  min-width: 0;
+  max-width: min(280px, calc(100vw - 64px));
+  background: transparent;
+}
+
+:root[data-theme-mode="light"] .chat-attachment-thumb,
+:root[data-theme-mode="light"] .chat-attachment-thumb--file {
+  border-color: transparent;
+  box-shadow:
+    0 0 0 1px rgb(0 0 0 / 6%),
+    0 1px 2px -1px rgb(0 0 0 / 6%),
+    0 2px 4px rgb(0 0 0 / 4%);
 }
 
 .chat-attachment-thumb--pasted-text {
@@ -4554,54 +4608,44 @@ button.chat-pr__diff {
 
 .chat-attachment-thumb--browser-annotation {
   display: grid;
-  flex: 1 1 260px;
-  grid-template-columns: clamp(64px, 25%, 92px) minmax(0, 1fr);
-  width: min(360px, 100%);
-  max-width: 360px;
+  flex: 0 0 auto;
+  grid-template-columns: 56px minmax(0, 1fr);
+  width: fit-content;
+  max-width: min(300px, calc(100vw - 64px));
   min-width: 0;
-  height: auto;
-  min-height: 76px;
+  height: 56px;
   box-sizing: border-box;
-  background: var(--panel);
+  background: transparent;
 }
 
 .chat-browser-annotation-card__preview {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  background: color-mix(in srgb, var(--panel) 75%, var(--bg));
+  background: transparent;
   border-inline-end: 1px solid var(--border);
 }
 
 .chat-browser-annotation-card__body {
   justify-content: center;
-  padding: 7px 36px 7px 10px;
+  width: min(210px, calc(100vw - 132px));
+  padding: 7px 30px 7px 10px;
   color: var(--text);
 }
 
-.chat-browser-annotation-card__label {
-  color: var(--muted);
-  font-size: 0.65rem;
-  font-weight: 650;
-  letter-spacing: 0.04em;
-  line-height: 1.1;
-  text-transform: uppercase;
-}
-
 .chat-browser-annotation-card__identity {
-  font-size: 0.78rem;
-  font-weight: 600;
-  line-height: 1.2;
+  font-size: 0.72rem;
+  font-weight: 500;
+  line-height: 1.15;
 }
 
 .chat-browser-annotation-card__meta {
   display: flex;
   min-width: 0;
-  flex-wrap: wrap;
-  gap: 3px 8px;
+  gap: 0;
   overflow: hidden;
   color: var(--muted);
-  font-size: 0.68rem;
+  font-size: 10px;
   line-height: 1.1;
 }
 
@@ -4612,8 +4656,8 @@ button.chat-pr__diff {
 }
 
 .chat-browser-annotation-card__remove {
-  width: 28px;
-  height: 28px;
+  width: 20px;
+  height: 20px;
 }
 
 .chat-browser-annotation-card__remove:not(:disabled) {
@@ -4628,12 +4672,32 @@ button.chat-pr__diff {
 .chat-attachment-thumb img {
   width: 100%;
   height: 100%;
+  border-radius: calc(var(--chat-attachment-radius) - 1px);
+  corner-shape: superellipse(1.5);
   object-fit: cover;
 }
 
 .chat-attachment-image-button {
+  position: relative;
   width: 100%;
   height: 100%;
+  border-radius: calc(var(--chat-attachment-radius) - 1px);
+  corner-shape: superellipse(1.5);
+}
+
+.chat-attachment-image-button::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--text-strong) 8%, transparent);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--duration-fast) ease;
+}
+
+.chat-attachment-thumb:is(:hover, :focus-within) .chat-attachment-image-button::after {
+  opacity: 1;
 }
 
 .chat-attachment-remove {
@@ -4646,13 +4710,30 @@ button.chat-pr__diff {
   padding: 0;
   border-radius: 50%;
   border: none;
-  background: var(--text);
-  color: var(--bg);
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  color: var(--text-strong);
   font-size: 12px;
   line-height: 1;
   display: flex;
   align-items: center;
   justify-content: center;
+  opacity: 0;
+  transform: scale(0.9);
+  transition:
+    opacity var(--duration-fast) ease,
+    transform var(--duration-fast) ease;
+}
+
+.chat-attachment-thumb:is(:hover, :focus-within) .chat-attachment-remove {
+  opacity: 1;
+  transform: scale(1);
+}
+
+@media (hover: none) {
+  .chat-attachment-remove {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 .chat-attachment-remove svg {
@@ -4667,18 +4748,30 @@ button.chat-pr__diff {
 
 .chat-attachment-file {
   display: flex;
+  box-sizing: border-box;
   align-items: center;
-  gap: 8px;
-  width: 100%;
+  justify-content: flex-start;
+  gap: 9px;
+  width: fit-content;
+  max-width: 100%;
   height: 100%;
-  padding: 8px 34px 8px 10px;
+  padding: 7px 10px;
   overflow: hidden;
   font-size: 0.72rem;
   color: var(--text);
-  background: var(--panel);
+  border-radius: calc(var(--chat-attachment-radius) - 1px);
+  background: transparent;
+  corner-shape: superellipse(1.5);
+  transition: background var(--duration-fast) ease;
+}
+
+.chat-attachment-thumb--file:not(.chat-attachment-thumb--pasted-text):is(:hover, :focus-within)
+  .chat-attachment-file {
+  background: color-mix(in srgb, var(--panel) 86%, var(--text));
 }
 
 .chat-attachment-file--pasted-text {
+  justify-content: flex-start;
   gap: 8px;
   padding: 10px 42px 10px 10px;
   background: color-mix(in srgb, var(--panel) 62%, transparent);
@@ -4691,11 +4784,11 @@ button.chat-pr__diff {
 }
 
 .chat-attachment-file__icon svg {
-  width: 16px;
-  height: 16px;
+  width: 22px;
+  height: 22px;
   stroke: currentColor;
   fill: none;
-  stroke-width: 1.7px;
+  stroke-width: 1.9px;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
@@ -4715,8 +4808,16 @@ button.chat-pr__diff {
 .chat-attachment-file__name {
   min-width: 0;
   overflow: hidden;
+  line-height: 1.15;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.chat-attachment-file__type {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.1;
+  text-transform: uppercase;
 }
 
 .chat-attachment-file--pasted-text .chat-attachment-file__name {
@@ -4727,8 +4828,10 @@ button.chat-pr__diff {
 .chat-attachment-file__body {
   display: flex;
   min-width: 0;
+  max-width: 220px;
   flex-direction: column;
-  gap: 4px;
+  justify-content: center;
+  gap: 3px;
 }
 
 .chat-attachment-text-action {
