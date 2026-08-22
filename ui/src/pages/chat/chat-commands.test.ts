@@ -5,6 +5,7 @@ import type { ApplicationGatewaySnapshot } from "../../app/gateway.ts";
 import {
   invalidateChatMetadataStore,
   rememberChatMetadata,
+  revalidateChatMetadata,
 } from "../../lib/chat/chat-metadata-store.ts";
 import {
   SLASH_COMMANDS,
@@ -16,8 +17,17 @@ import { sessionMutationGatewayHello } from "../../test-helpers/gateway-methods.
 import {
   applyRemoteSlashCommandsResult,
   dispatchChatSlashCommand,
+  loadSlashCommandCatalogResult,
   refreshSlashCommands,
 } from "./chat-commands.ts";
+
+async function loadSlashCommandCatalog(
+  client: GatewayBrowserClient,
+  agentId: string | undefined,
+  options: { awaitMetadataRevalidation?: boolean; refreshRemote?: boolean } = {},
+): Promise<readonly SlashCommandDef[]> {
+  return (await loadSlashCommandCatalogResult(client, agentId, options)).commands;
+}
 
 function requireCommandByName(name: string): Record<string, unknown> {
   const command = SLASH_COMMANDS.find((entry) => entry.name === name);
@@ -332,6 +342,296 @@ describe("refreshSlashCommands", () => {
     expectRecordFields(requireCommandByName("requested-command"), "requested command", {
       description: "Loaded after metadata invalidation.",
     });
+  });
+
+  it("loads an owner-scoped catalog without replacing active chat commands", async () => {
+    const activeClient = { request: vi.fn() } as never;
+    rememberChatMetadata(activeClient, "main", {
+      commands: [remoteCommand("active-chat-command", "Owned by active chat.")],
+    });
+    await refreshSlashCommands({ client: activeClient, agentId: "main" });
+
+    const ownerClient = { request: vi.fn() } as never;
+    rememberChatMetadata(ownerClient, "other", {
+      commands: [remoteCommand("owner-command", "Owned by another composer.")],
+    });
+
+    const loaded = await loadSlashCommandCatalog(ownerClient, "other");
+
+    expect(loaded.some((command) => command.name === "owner-command")).toBe(true);
+    expect(SLASH_COMMANDS.some((command) => command.name === "active-chat-command")).toBe(true);
+    expect(SLASH_COMMANDS.some((command) => command.name === "owner-command")).toBe(false);
+  });
+
+  it("does not fall back to commands cached by a previous remote lifecycle", async () => {
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce({
+        commands: [remoteCommand("old-lifecycle-command", "Owned by the old lifecycle.")],
+      })
+      .mockRejectedValueOnce(new Error("new lifecycle unavailable"));
+    const client = { request } as never;
+
+    await loadSlashCommandCatalog(client, "main", { refreshRemote: true });
+    invalidateChatMetadataStore(client);
+    const refreshed = await loadSlashCommandCatalog(client, "main", { refreshRemote: true });
+
+    expect(refreshed.some((command) => command.name === "old-lifecycle-command")).toBe(false);
+  });
+
+  it("preserves same-generation cached commands when a refresh fails", async () => {
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce({
+        commands: [remoteCommand("cached-command", "Owned by the current lifecycle.")],
+      })
+      .mockRejectedValueOnce(new Error("temporary command discovery failure"));
+    const client = { request } as never;
+
+    await loadSlashCommandCatalog(client, "main", { refreshRemote: true });
+    const refreshed = await loadSlashCommandCatalog(client, "main", { refreshRemote: true });
+
+    expect(refreshed.some((command) => command.name === "cached-command")).toBe(true);
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+
+  it("bypasses a warm remote cache while metadata revalidation is pending", async () => {
+    let resolveMetadata:
+      | ((value: { commands: ReturnType<typeof remoteCommand>[] }) => void)
+      | undefined;
+    const metadataResult = new Promise<{ commands: ReturnType<typeof remoteCommand>[] }>(
+      (resolve) => {
+        resolveMetadata = resolve;
+      },
+    );
+    const request = vi.fn((method: string) => {
+      if (method === "chat.metadata") {
+        return metadataResult;
+      }
+      const commandName =
+        request.mock.calls.filter(([requested]) => requested === "commands.list").length === 1
+          ? "cached-command"
+          : "fresh-command";
+      return Promise.resolve({
+        commands: [remoteCommand(commandName, `${commandName} description.`)],
+      });
+    });
+    const client = { request } as never;
+
+    const cached = await loadSlashCommandCatalog(client, "main", { refreshRemote: true });
+    const revalidation = revalidateChatMetadata(client, "main");
+    const refreshed = await loadSlashCommandCatalog(client, "main", {
+      awaitMetadataRevalidation: true,
+    });
+
+    expect(cached.some((command) => command.name === "cached-command")).toBe(true);
+    expect(refreshed.some((command) => command.name === "fresh-command")).toBe(true);
+    expect(request.mock.calls.filter(([method]) => method === "commands.list")).toHaveLength(2);
+
+    resolveMetadata?.({ commands: [] });
+    await revalidation;
+  });
+
+  it("uses a fresh remote catalog when metadata revalidation fails", async () => {
+    let rejectMetadata: ((reason?: unknown) => void) | undefined;
+    const metadataResult = new Promise((_, reject) => {
+      rejectMetadata = reject;
+    });
+    const request = vi.fn((method: string) => {
+      if (method === "chat.metadata") {
+        return metadataResult;
+      }
+      return Promise.resolve({
+        commands: [remoteCommand("fresh-remote-command", "Fresh remote command.")],
+      });
+    });
+    const client = { request } as never;
+    rememberChatMetadata(client, "main", {
+      commands: [remoteCommand("old-metadata-command", "Old metadata command.")],
+    });
+    const revalidation = revalidateChatMetadata(client, "main");
+    const catalog = loadSlashCommandCatalog(client, "main", {
+      awaitMetadataRevalidation: true,
+      refreshRemote: true,
+    });
+
+    rejectMetadata?.(new Error("metadata unavailable"));
+    await expect(revalidation).rejects.toThrow("metadata unavailable");
+    const loaded = await catalog;
+    const loadedAgain = await loadSlashCommandCatalog(client, "main", {
+      awaitMetadataRevalidation: true,
+    });
+
+    expect(loaded.some((command) => command.name === "fresh-remote-command")).toBe(true);
+    expect(loaded.some((command) => command.name === "old-metadata-command")).toBe(false);
+    expect(loadedAgain.some((command) => command.name === "fresh-remote-command")).toBe(true);
+    expect(loadedAgain.some((command) => command.name === "old-metadata-command")).toBe(false);
+    expect(request.mock.calls.filter(([method]) => method === "commands.list")).toHaveLength(1);
+  });
+
+  it("does not block remote discovery behind metadata startup revalidation", async () => {
+    let resolveMetadata: ((value: unknown) => void) | undefined;
+    const metadataResult = new Promise((resolve) => {
+      resolveMetadata = resolve;
+    });
+    const request = vi.fn((method: string) =>
+      method === "chat.metadata"
+        ? metadataResult
+        : Promise.resolve({
+            commands: [remoteCommand("available-command", "Available during startup.")],
+          }),
+    );
+    const client = { request } as never;
+    rememberChatMetadata(client, "main", {
+      commands: [remoteCommand("stale-command", "Stale metadata command.")],
+    });
+    const revalidation = revalidateChatMetadata(client, "main", {
+      startupRetryWindowMs: 60_000,
+    });
+
+    const catalog = loadSlashCommandCatalog(client, "main", {
+      awaitMetadataRevalidation: true,
+      refreshRemote: true,
+    });
+
+    await vi.waitFor(() => {
+      expect(request.mock.calls.some(([method]) => method === "commands.list")).toBe(true);
+    });
+    const loaded = await catalog;
+    expect(loaded.some((command) => command.name === "available-command")).toBe(true);
+    expect(loaded.some((command) => command.name === "stale-command")).toBe(false);
+
+    resolveMetadata?.({
+      commands: [remoteCommand("revalidated-command", "Revalidated metadata command.")],
+    });
+    await revalidation;
+  });
+
+  it("keeps readable metadata for callers that do not await revalidation", async () => {
+    let rejectMetadata: ((reason?: unknown) => void) | undefined;
+    const metadataResult = new Promise((_, reject) => {
+      rejectMetadata = reject;
+    });
+    const request = vi.fn((method: string) => {
+      if (method === "chat.metadata") {
+        return metadataResult;
+      }
+      return Promise.reject(new Error("commands unavailable"));
+    });
+    const client = { request } as never;
+    rememberChatMetadata(client, "main", {
+      commands: [remoteCommand("readable-metadata-command", "Readable metadata command.")],
+    });
+    const revalidation = revalidateChatMetadata(client, "main");
+
+    const loaded = await loadSlashCommandCatalog(client, "main");
+
+    expect(loaded.some((command) => command.name === "readable-metadata-command")).toBe(true);
+    expect(request.mock.calls.some(([method]) => method === "commands.list")).toBe(false);
+    const rejection = expect(revalidation).rejects.toThrow("metadata unavailable");
+    rejectMetadata?.(new Error("metadata unavailable"));
+    await rejection;
+  });
+
+  it("ignores a revalidation result superseded while the catalog awaits it", async () => {
+    let resolveMetadata: ((value: unknown) => void) | undefined;
+    const metadataResult = new Promise((resolve) => {
+      resolveMetadata = resolve;
+    });
+    const request = vi.fn((method: string) =>
+      method === "chat.metadata"
+        ? metadataResult
+        : Promise.resolve({
+            commands: [remoteCommand("remote-command", "Remote command.")],
+          }),
+    );
+    const client = { request } as never;
+    rememberChatMetadata(client, "main", {
+      commands: [remoteCommand("old-metadata-command", "Old metadata command.")],
+    });
+    const revalidation = revalidateChatMetadata(client, "main");
+    const catalog = loadSlashCommandCatalog(client, "main", {
+      awaitMetadataRevalidation: true,
+    });
+
+    rememberChatMetadata(client, "main", {
+      commands: [remoteCommand("newer-metadata-command", "Newer metadata command.")],
+    });
+    resolveMetadata?.({
+      commands: [remoteCommand("superseded-command", "Superseded metadata command.")],
+    });
+    await revalidation;
+    const loaded = await catalog;
+
+    expect(loaded.some((command) => command.name === "newer-metadata-command")).toBe(true);
+    expect(loaded.some((command) => command.name === "superseded-command")).toBe(false);
+  });
+
+  it("uses newer metadata when a superseded revalidation rejects", async () => {
+    let rejectMetadata: ((reason?: unknown) => void) | undefined;
+    const metadataResult = new Promise((_, reject) => {
+      rejectMetadata = reject;
+    });
+    const request = vi.fn((method: string) => {
+      if (method === "chat.metadata") {
+        return metadataResult;
+      }
+      return Promise.reject(new Error("commands unavailable"));
+    });
+    const client = { request } as never;
+    rememberChatMetadata(client, "main", {
+      commands: [remoteCommand("old-metadata-command", "Old metadata command.")],
+    });
+    const revalidation = revalidateChatMetadata(client, "main");
+    const catalog = loadSlashCommandCatalog(client, "main", {
+      awaitMetadataRevalidation: true,
+    });
+
+    rememberChatMetadata(client, "main", {
+      commands: [remoteCommand("newer-metadata-command", "Newer metadata command.")],
+    });
+    const rejection = expect(revalidation).rejects.toThrow("metadata unavailable");
+    rejectMetadata?.(new Error("metadata unavailable"));
+    await rejection;
+    const loaded = await catalog;
+
+    expect(loaded.some((command) => command.name === "newer-metadata-command")).toBe(true);
+  });
+
+  it("prefers metadata revalidated while a remote catalog is loading", async () => {
+    let resolveRemote: ((value: unknown) => void) | undefined;
+    let resolveMetadata: ((value: unknown) => void) | undefined;
+    const remoteResult = new Promise((resolve) => {
+      resolveRemote = resolve;
+    });
+    const metadataResult = new Promise((resolve) => {
+      resolveMetadata = resolve;
+    });
+    const request = vi.fn((method: string) =>
+      method === "chat.metadata" ? metadataResult : remoteResult,
+    );
+    const client = { request } as never;
+    const catalog = loadSlashCommandCatalog(client, "main", {
+      awaitMetadataRevalidation: true,
+      refreshRemote: true,
+    });
+    const revalidation = revalidateChatMetadata(client, "main");
+
+    resolveMetadata?.({
+      commands: [remoteCommand("fresh-metadata-command", "Fresh metadata command.")],
+    });
+    await revalidation;
+    resolveRemote?.({
+      commands: [remoteCommand("stale-remote-command", "Stale remote command.")],
+    });
+    const loaded = await catalog;
+
+    expect(loaded.some((command) => command.name === "fresh-metadata-command")).toBe(true);
+    expect(loaded.some((command) => command.name === "stale-remote-command")).toBe(false);
+
+    invalidateChatMetadataStore(client);
+    await loadSlashCommandCatalog(client, "main");
+    expect(request.mock.calls.filter(([method]) => method === "commands.list")).toHaveLength(2);
   });
 });
 

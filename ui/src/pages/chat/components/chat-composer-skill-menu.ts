@@ -32,7 +32,8 @@ export type SkillMenuHost = {
   getDraft: () => string;
   commitDraft: (next: string) => void;
   getTextarea: () => HTMLTextAreaElement | null;
-  refreshCommands?: () => void | Promise<void>;
+  getCommandCatalog: () => readonly SlashCommandDef[];
+  refreshCommands?: (onCatalogChange?: () => void) => void | Promise<void>;
 };
 
 export function createSkillMenuState(): SkillMenuState {
@@ -118,23 +119,36 @@ function requestSkillCommandRefresh(
   if (!host.refreshCommands || state.skillCommandRefreshPending) {
     return;
   }
-  const refresh = host.refreshCommands();
-  if (!refresh || typeof refresh.then !== "function") {
-    return;
-  }
   const generation = state.skillCommandRefreshGeneration + 1;
   state.skillCommandRefreshGeneration = generation;
   state.skillCommandRefreshPending = true;
+  const reconcileCatalog = () => {
+    if (state.skillCommandRefreshGeneration !== generation) {
+      return;
+    }
+    const value = host.getDraft();
+    const caret = host.getTextarea()?.selectionStart ?? value.length;
+    updateSkillMenu(value, caret, state, host, requestUpdate, { skipRefresh: true });
+  };
+  const publishCatalog = () => {
+    if (state.skillCommandRefreshGeneration !== generation) {
+      return;
+    }
+    state.skillCommandRefreshPending = false;
+    reconcileCatalog();
+  };
+  const refresh = host.refreshCommands(publishCatalog);
+  if (!refresh || typeof refresh.then !== "function") {
+    publishCatalog();
+    return;
+  }
   void Promise.resolve(refresh)
     .catch(() => undefined)
     .finally(() => {
       if (state.skillCommandRefreshGeneration !== generation) {
         return;
       }
-      state.skillCommandRefreshPending = false;
-      const value = host.getDraft();
-      const caret = host.getTextarea()?.selectionStart ?? value.length;
-      updateSkillMenu(value, caret, state, host, requestUpdate, { skipRefresh: true });
+      publishCatalog();
     });
 }
 
@@ -159,7 +173,7 @@ export function updateSkillMenu(
     state.skillCommandRefreshTargetStart = target.start;
     requestSkillCommandRefresh(state, host, requestUpdate);
   }
-  const items = getSkillCommandCompletions(target.query);
+  const items = getSkillCommandCompletions(target.query, host.getCommandCatalog());
   state.skillMenuTarget = target;
   state.skillMenuItems = items;
   state.skillMenuIndex = Math.min(state.skillMenuIndex, Math.max(0, items.length - 1));

@@ -3,6 +3,7 @@ import { nothing } from "lit";
 import { loadSettings, normalizeChatSendShortcut, patchSettings } from "../../../app/settings.ts";
 import "../../../components/tooltip.ts";
 import { t } from "../../../i18n/index.ts";
+import { SLASH_COMMANDS } from "../../../lib/chat/commands.ts";
 import { areUiSessionKeysEquivalent } from "../../../lib/sessions/session-key.ts";
 import { ComposerDictationController, insertComposerDictation } from "../composer-dictation.ts";
 import { discoverRealtimeTalkInputs, observeRealtimeTalkDevices } from "../realtime-talk-input.ts";
@@ -143,6 +144,7 @@ export function renderChatComposer(props: ChatComposerProps) {
     getDraft: () => state.composerTextarea?.value ?? props.getDraft?.() ?? props.draft,
     commitDraft: (next) => commitComposerDraft(props, next),
     getTextarea: () => state.composerTextarea,
+    getCommandCatalog: () => SLASH_COMMANDS,
     refreshCommands: props.onSlashIntent,
   };
   const sendShortcut = normalizeChatSendShortcut(props.sendShortcut);

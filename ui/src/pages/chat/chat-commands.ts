@@ -3,7 +3,11 @@ import type { CommandsListResult } from "../../../../packages/gateway-protocol/s
 import type { GatewayBrowserClient } from "../../api/gateway.ts";
 import type { ModelCatalogEntry, SessionsListResult } from "../../api/types.ts";
 import type { ApplicationGatewaySnapshot } from "../../app/gateway.ts";
-import { peekChatMetadata } from "../../lib/chat/chat-metadata-store.ts";
+import {
+  readChatMetadataSnapshot,
+  type ChatMetadataResult,
+  type ChatMetadataSnapshot,
+} from "../../lib/chat/chat-metadata-store.ts";
 import type { ChatQueueItem } from "../../lib/chat/chat-types.ts";
 import {
   buildFallbackSlashCommands,
@@ -38,9 +42,17 @@ let refreshSeq = 0;
 const REMOTE_SLASH_COMMAND_CACHE_TTL_MS = 60_000;
 
 type RemoteSlashCommandCacheEntry = {
-  commands?: SlashCommandDef[];
+  commands?: readonly SlashCommandDef[];
   expiresAt: number;
-  inFlight?: Promise<SlashCommandDef[]>;
+  inFlight?: Promise<SlashCommandCatalogLoadResult>;
+  requestToken?: object;
+  storeGeneration: number;
+};
+
+type SlashCommandCatalogLoadResult = {
+  commands: readonly SlashCommandDef[];
+  source: "cache" | "fallback" | "metadata" | "remote";
+  metadataPending: boolean;
 };
 
 const remoteSlashCommandCache = new WeakMap<
@@ -204,8 +216,10 @@ function getRemoteSlashCommandCache(
 async function requestRemoteSlashCommands(
   client: GatewayBrowserClient,
   agentId: string | undefined,
-  fallback: SlashCommandDef[] | undefined,
-): Promise<SlashCommandDef[]> {
+  fallback: readonly SlashCommandDef[] | undefined,
+  storeGeneration: number,
+  shouldCache: () => boolean,
+): Promise<SlashCommandCatalogLoadResult> {
   try {
     const result = await client.request<CommandsListResult>("commands.list", {
       ...(agentId ? { agentId } : {}),
@@ -213,51 +227,169 @@ async function requestRemoteSlashCommands(
       scope: "text",
     });
     if (!Array.isArray(result?.commands)) {
-      return buildFallbackSlashCommands();
+      return {
+        commands: buildFallbackSlashCommands(),
+        source: "fallback",
+        metadataPending: false,
+      };
     }
     const commands = buildSlashCommandsFromEntries(getRemoteCommandEntries(result));
-    getRemoteSlashCommandCache(client).set(remoteSlashCommandCacheKey(agentId), {
-      commands,
-      expiresAt: Date.now() + REMOTE_SLASH_COMMAND_CACHE_TTL_MS,
-    });
-    return commands;
+    if (shouldCache()) {
+      getRemoteSlashCommandCache(client).set(remoteSlashCommandCacheKey(agentId), {
+        commands,
+        expiresAt: Date.now() + REMOTE_SLASH_COMMAND_CACHE_TTL_MS,
+        storeGeneration,
+      });
+    }
+    return { commands, source: "remote", metadataPending: false };
   } catch {
-    return fallback ?? buildFallbackSlashCommands();
+    return fallback
+      ? { commands: fallback, source: "cache", metadataPending: false }
+      : { commands: buildFallbackSlashCommands(), source: "fallback", metadataPending: false };
   }
 }
 
-function loadRemoteSlashCommands(
+function slashCommandsFromMetadata(
+  metadata: ChatMetadataResult | undefined,
+): readonly SlashCommandDef[] | undefined {
+  return Array.isArray(metadata?.commands)
+    ? buildSlashCommandsFromEntries(getRemoteCommandEntries(metadata))
+    : undefined;
+}
+
+async function loadRemoteSlashCommandCatalog(
   client: GatewayBrowserClient,
   agentId: string | undefined,
-): Promise<SlashCommandDef[]> {
-  const metadata = peekChatMetadata(client, agentId);
-  // Store-held metadata carries app-level invalidation on config changes and logical reconnects,
-  // so no TTL applies here. The cache below owns only commands.list-derived entries.
-  if (Array.isArray(metadata?.commands)) {
-    return Promise.resolve(buildSlashCommandsFromEntries(getRemoteCommandEntries(metadata)));
-  }
+  refreshRemote: boolean,
+  storeGeneration: number,
+): Promise<SlashCommandCatalogLoadResult> {
   const cache = getRemoteSlashCommandCache(client);
   const key = remoteSlashCommandCacheKey(agentId);
-  const cached = cache.get(key);
-  const now = Date.now();
-  if (cached?.commands && cached.expiresAt > now) {
-    return Promise.resolve(cached.commands);
+  const current = cache.get(key);
+  const cached = current?.storeGeneration === storeGeneration ? current : undefined;
+  if (current && !cached) {
+    cache.delete(key);
   }
-  if (cached?.inFlight) {
+  const now = Date.now();
+  if (!refreshRemote && cached?.commands && cached.expiresAt > now) {
+    return { commands: cached.commands, source: "cache", metadataPending: false };
+  }
+  if (!refreshRemote && cached?.inFlight) {
     return cached.inFlight;
   }
-  const inFlight = requestRemoteSlashCommands(client, agentId, cached?.commands).finally(() => {
+  const requestToken = {};
+  const inFlight = requestRemoteSlashCommands(
+    client,
+    agentId,
+    cached?.commands,
+    storeGeneration,
+    () =>
+      cache.get(key)?.requestToken === requestToken &&
+      readChatMetadataSnapshot(client, agentId).storeGeneration === storeGeneration,
+  ).finally(() => {
     const latest = cache.get(key);
-    if (latest?.inFlight === inFlight) {
-      delete latest.inFlight;
+    if (!latest || latest.requestToken !== requestToken) {
+      return;
     }
+    if (readChatMetadataSnapshot(client, agentId).storeGeneration !== storeGeneration) {
+      cache.delete(key);
+      return;
+    }
+    delete latest.inFlight;
+    delete latest.requestToken;
   });
   cache.set(key, {
     ...(cached?.commands ? { commands: cached.commands } : {}),
-    expiresAt: cached?.expiresAt ?? 0,
+    expiresAt: refreshRemote ? 0 : (cached?.expiresAt ?? 0),
     inFlight,
+    requestToken,
+    storeGeneration,
   });
   return inFlight;
+}
+
+async function newerMetadataCatalog(
+  client: GatewayBrowserClient,
+  agentId: string | undefined,
+  baseline: ChatMetadataSnapshot,
+): Promise<readonly SlashCommandDef[] | undefined> {
+  const latest = readChatMetadataSnapshot(client, agentId);
+  const storeWasReplaced = latest.storeGeneration > baseline.storeGeneration;
+  if (
+    (storeWasReplaced && latest.result !== undefined) ||
+    (!storeWasReplaced && latest.resultVersion > baseline.resultVersion)
+  ) {
+    return slashCommandsFromMetadata(latest.result);
+  }
+  return undefined;
+}
+
+async function loadSlashCommandCatalog(
+  client: GatewayBrowserClient,
+  agentId: string | undefined,
+  options: { awaitMetadataRevalidation?: boolean; refreshRemote?: boolean } = {},
+): Promise<readonly SlashCommandDef[]> {
+  return (await loadSlashCommandCatalogResult(client, agentId, options)).commands;
+}
+
+export async function loadSlashCommandCatalogResult(
+  client: GatewayBrowserClient,
+  agentId: string | undefined,
+  options: { awaitMetadataRevalidation?: boolean; refreshRemote?: boolean } = {},
+): Promise<SlashCommandCatalogLoadResult> {
+  const metadataSnapshot = readChatMetadataSnapshot(client, agentId);
+  const metadataResultIsStale =
+    options.awaitMetadataRevalidation === true &&
+    metadataSnapshot.requestVersion > metadataSnapshot.resultVersion;
+  const metadataRevalidationPending =
+    options.awaitMetadataRevalidation === true &&
+    metadataSnapshot.requestVersion > metadataSnapshot.settledVersion;
+  const metadataCatalog = metadataResultIsStale
+    ? undefined
+    : slashCommandsFromMetadata(metadataSnapshot.result);
+  // Store-held metadata carries app-level invalidation on config changes and logical reconnects,
+  // so no TTL applies here. The cache below owns only commands.list-derived entries.
+  if (metadataCatalog) {
+    remoteSlashCommandCache.get(client)?.delete(remoteSlashCommandCacheKey(agentId));
+    return { commands: metadataCatalog, source: "metadata", metadataPending: false };
+  }
+
+  const metadataBaseline = readChatMetadataSnapshot(client, agentId);
+  const remoteCatalog = await loadRemoteSlashCommandCatalog(
+    client,
+    agentId,
+    options.refreshRemote === true || metadataRevalidationPending,
+    metadataBaseline.storeGeneration,
+  );
+  if (options.awaitMetadataRevalidation) {
+    const metadataCatalogAfterRemote = await newerMetadataCatalog(
+      client,
+      agentId,
+      metadataBaseline,
+    );
+    if (metadataCatalogAfterRemote) {
+      remoteSlashCommandCache.get(client)?.delete(remoteSlashCommandCacheKey(agentId));
+      return {
+        commands: metadataCatalogAfterRemote,
+        source: "metadata",
+        metadataPending: false,
+      };
+    }
+  }
+  if (
+    readChatMetadataSnapshot(client, agentId).storeGeneration !== metadataBaseline.storeGeneration
+  ) {
+    return loadSlashCommandCatalogResult(client, agentId, {
+      ...options,
+      refreshRemote: false,
+    });
+  }
+  const latest = readChatMetadataSnapshot(client, agentId);
+  return {
+    ...remoteCatalog,
+    metadataPending:
+      options.awaitMetadataRevalidation === true && latest.requestVersion > latest.settledVersion,
+  };
 }
 
 export function applyRemoteSlashCommandsResult(params: {
@@ -288,7 +420,7 @@ export async function refreshSlashCommands(params: {
     replaceSlashCommands(buildFallbackSlashCommands());
     return;
   }
-  const commands = await loadRemoteSlashCommands(params.client, agentId);
+  const commands = await loadSlashCommandCatalog(params.client, agentId);
   if (seq !== refreshSeq || params.shouldApply?.() === false) {
     return;
   }

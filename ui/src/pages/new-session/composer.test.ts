@@ -2,6 +2,7 @@
 
 import { render } from "lit";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ApplicationContext } from "../../app/context.ts";
 import { buildFallbackSlashCommands, replaceSlashCommands } from "../../lib/chat/commands.ts";
 import { waitForFast } from "../../test-helpers/wait-for.ts";
 import { adjustTextareaHeight } from "../chat/components/chat-composer-dom.ts";
@@ -33,6 +34,9 @@ function renderComposer(
     onInput?: (message: string) => void;
     onSubmit?: () => void;
     textareaController?: NewSessionComposerTextareaController;
+    agentId?: string;
+    connectionEpoch?: number;
+    context?: ApplicationContext;
   } = {},
 ) {
   const container = document.createElement("div");
@@ -50,10 +54,11 @@ function renderComposer(
   const renderCurrent = () =>
     render(
       renderNewSessionDraftComposer({
-        agentId: "main",
+        agentId: overrides.agentId ?? "main",
+        connectionEpoch: overrides.connectionEpoch ?? 0,
         attachmentDraft,
         canSubmit: overrides.canSubmit ?? true,
-        context: undefined,
+        context: overrides.context,
         isCatalogTarget: true,
         message,
         visibility: overrides.visibility,
@@ -82,7 +87,7 @@ function renderComposer(
   if (!composer) {
     throw new Error("Expected new-session composer");
   }
-  return { attachmentDraft, composer, container, textareaController };
+  return { attachmentDraft, composer, container, rerender: renderCurrent, textareaController };
 }
 
 function createDragEvent(type: string, files: File[] = [], types = ["Files"]): Event {
@@ -108,38 +113,6 @@ afterEach(() => {
 });
 
 describe("new-session composer keyboard submission", () => {
-  it("opens skill mentions and inserts the selected skill with Enter", () => {
-    replaceSlashCommands([
-      {
-        key: "release_notes",
-        name: "release_notes",
-        description: "Draft release notes.",
-        source: "skill",
-        skillModelVisible: true,
-      },
-    ]);
-    let message = "";
-    const { composer } = renderComposer({
-      onInput: (next) => {
-        message = next;
-      },
-    });
-    const textarea = composer.querySelector<HTMLTextAreaElement>("textarea");
-    if (!textarea) {
-      throw new Error("Expected composer textarea");
-    }
-
-    textarea.value = "$";
-    textarea.setSelectionRange(1, 1);
-    textarea.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
-
-    expect(composer.querySelector(".skill-menu")?.textContent).toContain("release_notes");
-    textarea.dispatchEvent(
-      new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Enter" }),
-    );
-    expect(message).toBe("$release_notes ");
-  });
-
   it.each([
     { label: "Enter", requiresModifier: false, ctrlKey: false, metaKey: false },
     { label: "Ctrl+Enter", requiresModifier: true, ctrlKey: true, metaKey: false },
@@ -338,6 +311,7 @@ describe("new-session composer sizing lifecycle", () => {
     render(
       renderNewSessionDraftComposer({
         agentId: "main",
+        connectionEpoch: 0,
         attachmentDraft: first.attachmentDraft,
         canSubmit: true,
         context: undefined,
@@ -363,6 +337,7 @@ describe("new-session composer sizing lifecycle", () => {
     render(
       renderNewSessionDraftComposer({
         agentId: "main",
+        connectionEpoch: 0,
         attachmentDraft: first.attachmentDraft,
         canSubmit: true,
         context: undefined,

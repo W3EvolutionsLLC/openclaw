@@ -590,6 +590,7 @@ export class NewSessionPage extends OpenClawLightDomElement {
         ${renderNewSessionDraftComposer({
           agent: this.place.selectedAgent(),
           agentId: this.place.agentId,
+          connectionEpoch: this.gateway.connectionEpoch,
           attachmentDraft: this.submission.attachmentDraft,
           canSubmit: this.submission.canSubmit(),
           submitDisabledReason: this.submission.submitDisabledReason(),

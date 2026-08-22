@@ -1,13 +1,21 @@
 import { html, nothing, type TemplateResult } from "lit";
 import { ifDefined } from "lit/directives/if-defined.js";
 import { ref } from "lit/directives/ref.js";
+import type { GatewayBrowserClient } from "../../api/gateway.ts";
 import { icons } from "../../components/icons.ts";
 import type { ImageLightboxItem } from "../../components/image-lightbox.ts";
-import { t } from "../../i18n/index.ts";
 import "../../components/tooltip.ts";
+import { t } from "../../i18n/index.ts";
+import {
+  invalidateChatMetadataStore,
+  readChatMetadataSnapshot,
+  subscribeChatMetadata,
+  type ChatMetadataSnapshot,
+} from "../../lib/chat/chat-metadata-store.ts";
 import type { ChatAttachment } from "../../lib/chat/chat-types.ts";
+import { buildFallbackSlashCommands, type SlashCommandDef } from "../../lib/chat/commands.ts";
 import { formatUiError } from "../../lib/format-error.ts";
-import { refreshSlashCommands } from "../chat/chat-commands.ts";
+import { loadSlashCommandCatalogResult } from "../chat/chat-commands.ts";
 import {
   createChatAttachmentDropHandlers,
   handleChatAttachmentPaste,
@@ -48,7 +56,7 @@ type NewSessionComposerOptions = {
   readSignal: AbortSignal;
   requiresModifier: boolean;
   requestUpdate: () => void;
-  refreshCommands?: () => void | Promise<void>;
+  refreshCommands?: (onCatalogChange?: () => void) => void | Promise<void>;
   submitDisabledReason?: string;
   blockedSubmitNotice?: string;
   terminalAction?: {
@@ -140,6 +148,22 @@ function renderStartControl(options: NewSessionComposerOptions) {
 
 export class NewSessionComposerTextareaController {
   private textarea: HTMLTextAreaElement | null = null;
+  private commandClient: GatewayBrowserClient | null = null;
+  private commandAgentId = "";
+  private commandConnectionEpoch = 0;
+  private commandStoreGeneration = 0;
+  private commandOwnerGeneration = 0;
+  private skillMenuReconcileOwnerGeneration = -1;
+  private commandRefreshStartedGeneration = -1;
+  private commandRefreshApplyGeneration = 0;
+  private commandRefreshPendingApplyGeneration = -1;
+  private commandMetadataResultVersion = 0;
+  private commandMetadataRequestVersion = 0;
+  private commandMetadataSettledVersion = 0;
+  private commandMetadataUnsubscribe: (() => void) | null = null;
+  private commandCatalogChanged: (() => void) | undefined;
+  private skillMenuReconcile: (() => void) | null = null;
+  private commandCatalog: readonly SlashCommandDef[] = buildFallbackSlashCommands();
   readonly skillMenuState = createSkillMenuState();
 
   readonly ref = (element?: Element) => {
@@ -164,8 +188,238 @@ export class NewSessionComposerTextareaController {
 
   readonly getTextarea = () => this.textarea;
 
+  syncCommandOwner(client: GatewayBrowserClient | null, agentId: string, connectionEpoch: number) {
+    const normalizedAgentId = agentId.trim();
+    const connectionChanged =
+      this.commandClient === client &&
+      client !== null &&
+      this.commandConnectionEpoch !== connectionEpoch;
+    if (connectionChanged) {
+      this.commandMetadataUnsubscribe?.();
+      this.commandMetadataUnsubscribe = null;
+      invalidateChatMetadataStore(client);
+    }
+    const storeGeneration = client
+      ? readChatMetadataSnapshot(client, normalizedAgentId).storeGeneration
+      : 0;
+    if (
+      this.commandClient === client &&
+      this.commandAgentId === normalizedAgentId &&
+      this.commandConnectionEpoch === connectionEpoch &&
+      this.commandStoreGeneration === storeGeneration
+    ) {
+      return;
+    }
+    const shouldReconcileSkillMenu =
+      this.skillMenuState.skillMenuTarget !== null ||
+      this.skillMenuState.skillCommandRefreshTargetStart !== null ||
+      this.skillMenuState.skillMenuOpen ||
+      this.skillMenuReconcileOwnerGeneration >= 0;
+    this.commandMetadataUnsubscribe?.();
+    this.commandMetadataUnsubscribe = null;
+    this.commandClient = client;
+    this.commandAgentId = normalizedAgentId;
+    this.commandConnectionEpoch = connectionEpoch;
+    this.commandStoreGeneration = storeGeneration;
+    const snapshot = client ? readChatMetadataSnapshot(client, normalizedAgentId) : undefined;
+    this.commandMetadataResultVersion = snapshot?.resultVersion ?? 0;
+    this.commandMetadataRequestVersion = snapshot?.requestVersion ?? 0;
+    this.commandMetadataSettledVersion = snapshot?.settledVersion ?? 0;
+    this.commandOwnerGeneration += 1;
+    this.commandRefreshApplyGeneration += 1;
+    this.commandRefreshPendingApplyGeneration = -1;
+    this.skillMenuReconcileOwnerGeneration = shouldReconcileSkillMenu
+      ? this.commandOwnerGeneration
+      : -1;
+    this.commandRefreshStartedGeneration = -1;
+    this.commandCatalog = buildFallbackSlashCommands();
+    resetSkillMenuState(this.skillMenuState);
+    if (client) {
+      const generation = this.commandOwnerGeneration;
+      this.commandMetadataUnsubscribe = subscribeChatMetadata(client, normalizedAgentId, (next) =>
+        this.handleCommandMetadataChange(
+          client,
+          normalizedAgentId,
+          connectionEpoch,
+          generation,
+          next,
+        ),
+      );
+    }
+  }
+
+  private handleCommandMetadataChange(
+    client: GatewayBrowserClient,
+    agentId: string,
+    connectionEpoch: number,
+    generation: number,
+    snapshot: ChatMetadataSnapshot,
+  ) {
+    if (
+      this.commandOwnerGeneration !== generation ||
+      this.commandClient !== client ||
+      this.commandAgentId !== agentId ||
+      this.commandConnectionEpoch !== connectionEpoch
+    ) {
+      return;
+    }
+    if (snapshot.storeGeneration !== this.commandStoreGeneration) {
+      this.syncCommandOwner(client, agentId, connectionEpoch);
+      this.scheduleSkillMenuReconcile(this.commandOwnerGeneration);
+      return;
+    }
+    const resultAdvanced = snapshot.resultVersion > this.commandMetadataResultVersion;
+    const requestAdvanced = snapshot.requestVersion > this.commandMetadataRequestVersion;
+    const settledAdvanced = snapshot.settledVersion > this.commandMetadataSettledVersion;
+    this.commandMetadataRequestVersion = Math.max(
+      this.commandMetadataRequestVersion,
+      snapshot.requestVersion,
+    );
+    this.commandMetadataResultVersion = Math.max(
+      this.commandMetadataResultVersion,
+      snapshot.resultVersion,
+    );
+    this.commandMetadataSettledVersion = Math.max(
+      this.commandMetadataSettledVersion,
+      snapshot.settledVersion,
+    );
+    if (
+      requestAdvanced &&
+      snapshot.requestVersion > snapshot.settledVersion &&
+      (this.skillMenuState.skillMenuTarget !== null || this.skillMenuState.skillMenuOpen)
+    ) {
+      this.commandRefreshStartedGeneration = -1;
+      resetSkillMenuState(this.skillMenuState);
+      this.scheduleSkillMenuReconcile(generation);
+      return;
+    }
+    if (resultAdvanced && snapshot.result) {
+      const refreshApplyGeneration = this.commandRefreshApplyGeneration + 1;
+      this.commandRefreshApplyGeneration = refreshApplyGeneration;
+      this.commandRefreshPendingApplyGeneration = refreshApplyGeneration;
+      void loadSlashCommandCatalogResult(client, agentId)
+        .then((result) => {
+          if (
+            this.commandOwnerGeneration !== generation ||
+            this.commandRefreshApplyGeneration !== refreshApplyGeneration ||
+            this.commandClient !== client ||
+            this.commandAgentId !== agentId ||
+            this.commandConnectionEpoch !== connectionEpoch
+          ) {
+            return;
+          }
+          this.commandCatalog = result.commands;
+          this.commandCatalogChanged?.();
+        })
+        .finally(() => {
+          if (this.commandRefreshPendingApplyGeneration === refreshApplyGeneration) {
+            this.commandRefreshPendingApplyGeneration = -1;
+          }
+        });
+      return;
+    }
+    if (settledAdvanced) {
+      if (this.commandRefreshPendingApplyGeneration === this.commandRefreshApplyGeneration) {
+        return;
+      }
+      this.commandCatalogChanged?.();
+    }
+  }
+
+  reconcileSkillMenuAfterOwnerChange(
+    message: string,
+    host: SkillMenuHost,
+    requestUpdate: () => void,
+  ) {
+    this.skillMenuReconcile = () => {
+      const textarea = host.getTextarea();
+      const value = textarea?.value ?? message;
+      const caret = textarea?.selectionStart ?? value.length;
+      updateSkillMenu(value, caret, this.skillMenuState, host, requestUpdate);
+    };
+    const generation = this.skillMenuReconcileOwnerGeneration;
+    if (generation !== this.commandOwnerGeneration) {
+      return;
+    }
+    this.skillMenuReconcileOwnerGeneration = -1;
+    this.scheduleSkillMenuReconcile(generation);
+  }
+
+  private scheduleSkillMenuReconcile(generation: number) {
+    this.skillMenuReconcileOwnerGeneration = generation;
+    queueMicrotask(() => {
+      if (
+        this.commandOwnerGeneration !== generation ||
+        this.skillMenuReconcileOwnerGeneration !== generation
+      ) {
+        return;
+      }
+      this.skillMenuReconcileOwnerGeneration = -1;
+      this.skillMenuReconcile?.();
+    });
+  }
+
+  async refreshCommandCatalog(
+    client: GatewayBrowserClient,
+    agentId: string,
+    connectionEpoch: number,
+    onCatalogChange?: () => void,
+  ): Promise<void> {
+    this.syncCommandOwner(client, agentId, connectionEpoch);
+    this.commandCatalogChanged = onCatalogChange;
+    const normalizedAgentId = agentId.trim();
+    const generation = this.commandOwnerGeneration;
+    const refreshApplyGeneration = this.commandRefreshApplyGeneration + 1;
+    this.commandRefreshApplyGeneration = refreshApplyGeneration;
+    this.commandRefreshPendingApplyGeneration = refreshApplyGeneration;
+    const refreshRemote = this.commandRefreshStartedGeneration !== generation;
+    this.commandRefreshStartedGeneration = generation;
+    const result = await loadSlashCommandCatalogResult(client, normalizedAgentId, {
+      awaitMetadataRevalidation: true,
+      refreshRemote,
+    });
+    const stillOwnsRefresh = () =>
+      this.commandOwnerGeneration === generation &&
+      this.commandRefreshApplyGeneration === refreshApplyGeneration &&
+      this.commandClient === client &&
+      this.commandAgentId === normalizedAgentId &&
+      this.commandConnectionEpoch === connectionEpoch &&
+      this.commandStoreGeneration ===
+        readChatMetadataSnapshot(client, normalizedAgentId).storeGeneration;
+    if (stillOwnsRefresh() && result.metadataPending) {
+      const metadataPending = readChatMetadataSnapshot(client, normalizedAgentId).pending;
+      if (metadataPending) {
+        await metadataPending.catch(() => undefined);
+      }
+    }
+    if (stillOwnsRefresh()) {
+      this.commandCatalog = result.commands;
+      this.commandRefreshStartedGeneration = this.commandOwnerGeneration;
+      onCatalogChange?.();
+    }
+    if (this.commandRefreshPendingApplyGeneration === refreshApplyGeneration) {
+      this.commandRefreshPendingApplyGeneration = -1;
+    }
+  }
+
+  readonly getCommandCatalog = () => this.commandCatalog;
+
   disconnect() {
     resetSkillMenuState(this.skillMenuState);
+    this.commandOwnerGeneration += 1;
+    this.commandRefreshApplyGeneration += 1;
+    this.commandRefreshPendingApplyGeneration = -1;
+    this.skillMenuReconcileOwnerGeneration = -1;
+    this.commandRefreshStartedGeneration = -1;
+    this.commandClient = null;
+    this.commandAgentId = "";
+    this.commandConnectionEpoch = 0;
+    this.commandStoreGeneration = 0;
+    this.commandCatalog = buildFallbackSlashCommands();
+    this.commandCatalogChanged = undefined;
+    this.skillMenuReconcile = null;
+    this.commandMetadataUnsubscribe?.();
+    this.commandMetadataUnsubscribe = null;
     if (this.textarea) {
       disconnectTextareaOverflowObserver(this.textarea);
       this.textarea = null;
@@ -250,8 +504,14 @@ function renderNewSessionComposer(options: NewSessionComposerOptions) {
     getDraft: () => options.textareaController.getTextarea()?.value ?? options.message,
     commitDraft: options.onInput,
     getTextarea: options.textareaController.getTextarea,
+    getCommandCatalog: options.textareaController.getCommandCatalog,
     refreshCommands: options.refreshCommands,
   };
+  options.textareaController.reconcileSkillMenuAfterOwnerChange(
+    options.message,
+    skillMenuHost,
+    options.requestUpdate,
+  );
   const updateSkills = (target: HTMLTextAreaElement) =>
     updateSkillMenu(
       target.value,
@@ -376,6 +636,7 @@ function renderNewSessionComposer(options: NewSessionComposerOptions) {
 export function renderNewSessionDraftComposer(options: {
   agent?: import("../../api/types.ts").GatewayAgentRow;
   agentId: string;
+  connectionEpoch: number;
   attachmentDraft: NewSessionAttachmentDraft;
   canSubmit: boolean;
   context: import("../../app/context.ts").ApplicationContext | undefined;
@@ -403,6 +664,11 @@ export function renderNewSessionDraftComposer(options: {
 }) {
   const readSignal = options.attachmentDraft.readSignal;
   const commandClient = options.context?.gateway.snapshot.client;
+  options.textareaController.syncCommandOwner(
+    commandClient ?? null,
+    options.agentId,
+    options.connectionEpoch,
+  );
   return renderNewSessionComposer({
     attachmentLimits: options.context?.gateway.snapshot.hello?.policy?.attachments,
     attachments: options.attachmentDraft.attachments,
@@ -424,7 +690,13 @@ export function renderNewSessionDraftComposer(options: {
     requiresModifier: options.requiresModifier,
     requestUpdate: options.requestUpdate,
     refreshCommands: commandClient
-      ? () => refreshSlashCommands({ client: commandClient, agentId: options.agentId })
+      ? (onCatalogChange) =>
+          options.textareaController.refreshCommandCatalog(
+            commandClient,
+            options.agentId,
+            options.connectionEpoch,
+            onCatalogChange,
+          )
       : undefined,
     submitDisabledReason: options.submitDisabledReason,
     blockedSubmitNotice: options.blockedSubmitNotice,
