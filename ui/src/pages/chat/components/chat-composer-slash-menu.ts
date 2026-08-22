@@ -13,7 +13,12 @@ import {
 } from "../../../lib/chat/commands.ts";
 import { resolveThinkingCommandArgOptionsForSession } from "../../../lib/chat/thinking.ts";
 import { areUiSessionKeysEquivalent } from "../../../lib/sessions/session-key.ts";
-import { adjustTextareaHeight, paneDomId } from "./chat-composer-dom.ts";
+import {
+  adjustTextareaHeight,
+  getSlashArgOptionId,
+  getSlashCommandOptionId,
+  paneDomId,
+} from "./chat-composer-dom.ts";
 import {
   findDirectInlineSlashArgumentInvocation,
   hasActiveInlineSlashArgumentPrefix,
@@ -165,7 +170,7 @@ export function updateSlashMenu(
     const items = getSlashCommandCompletions(completion.query, {
       showAll: true,
       inlineOnly: completion.inline,
-      allowImmediateInlineCommands: Boolean(props.onSlashCommand),
+      allowImmediateInlineCommands: props.connected && Boolean(props.onSlashCommand),
     });
     state.slashMenuCompletion = completion;
     state.slashMenuItems = items;
@@ -261,7 +266,8 @@ function beginInlineSlashArguments(
     !state.slashMenuCompletion?.inline ||
     cmd.source === "skill" ||
     !cmd.args ||
-    !props.onSlashCommand
+    !props.onSlashCommand ||
+    !state.slashCommandDispatchConnected
   ) {
     return false;
   }
@@ -325,6 +331,9 @@ export function selectSlashCommand(
   requestUpdate: () => void,
 ) {
   const state = getChatComposerState(props.paneId);
+  if (cmd.source !== "skill" && !state.slashCommandDispatchConnected) {
+    return;
+  }
   const inlineReplacement = cmd.source === "skill" ? `$${cmd.name}` : `/${cmd.name}`;
   if (beginInlineSlashArguments(cmd, props, state, requestUpdate)) {
     return;
@@ -414,6 +423,9 @@ export function selectSlashArg(
 ) {
   const state = getChatComposerState(props.paneId);
   const command = state.slashMenuCommand;
+  if (command?.source !== "skill" && !state.slashCommandDispatchConnected) {
+    return;
+  }
   const cmdName = command?.name ?? "";
   if (
     run &&
@@ -458,7 +470,8 @@ function submitInlineSlashArgument(props: ChatComposerProps, requestUpdate: () =
     !completion?.inline ||
     !command ||
     !executesInlineImmediately(command) ||
-    !props.onSlashCommand
+    !props.onSlashCommand ||
+    !state.slashCommandDispatchConnected
   ) {
     return false;
   }
@@ -480,7 +493,7 @@ function beginDirectInlineSlashArgument(
   props: ChatComposerProps,
   state: ChatComposerState,
 ): boolean {
-  if (!props.onSlashCommand) {
+  if (!props.onSlashCommand || !state.slashCommandDispatchConnected) {
     return false;
   }
   const target = state.composerTextarea;
@@ -529,26 +542,6 @@ export function handleInlineSlashArgKeyDown(
   return submitInlineSlashArgument(props, requestUpdate);
 }
 
-function slashOptionIdSegment(value: string): string {
-  return (
-    value
-      .toLowerCase()
-      .replace(/[^a-z0-9_-]+/gu, "-")
-      .replace(/^-+|-+$/gu, "") || "item"
-  );
-}
-
-function getSlashCommandOptionId(paneId: string, cmd: SlashCommandDef): string {
-  return paneDomId(paneId, `slash-option-command-${slashOptionIdSegment(cmd.name)}`);
-}
-
-function getSlashArgOptionId(paneId: string, commandName: string, arg: string): string {
-  return paneDomId(
-    paneId,
-    `slash-option-arg-${slashOptionIdSegment(commandName)}-${slashOptionIdSegment(arg)}`,
-  );
-}
-
 export function isSlashMenuVisible(state: ChatComposerState): boolean {
   if (!state.slashMenuOpen) {
     return false;
@@ -572,7 +565,7 @@ export function getActiveSlashMenuOptionId(
     return commandName && arg ? getSlashArgOptionId(paneId, commandName, arg) : null;
   }
   const cmd = state.slashMenuItems[state.slashMenuIndex];
-  return cmd ? getSlashCommandOptionId(paneId, cmd) : null;
+  return cmd ? getSlashCommandOptionId(paneId, cmd.name) : null;
 }
 
 export function getActiveSlashMenuOptionLabel(state: ChatComposerState): string {
@@ -683,7 +676,7 @@ export function renderSlashMenu(
         ${entries.map(
           ({ cmd, globalIdx }) => html`
             <div
-              id=${getSlashCommandOptionId(props.paneId, cmd)}
+              id=${getSlashCommandOptionId(props.paneId, cmd.name)}
               class="slash-menu-item ${globalIdx === state.slashMenuIndex
                 ? "slash-menu-item--active"
                 : ""}"

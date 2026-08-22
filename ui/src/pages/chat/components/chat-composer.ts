@@ -54,6 +54,7 @@ export { isChatRunWorking, resetChatComposerState } from "./chat-composer-state.
 
 export function renderChatComposer(props: ChatComposerProps) {
   const state = getChatComposerState(props.paneId);
+  state.slashCommandDispatchConnected = props.connected;
   const canCompose = props.canSend;
   const isBusy = props.sending || props.stream !== null;
   const canAbort = Boolean(props.canAbort && props.onAbort);

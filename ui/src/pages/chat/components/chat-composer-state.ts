@@ -9,6 +9,7 @@ import type { ChatComposerProps, ChatComposerState } from "./chat-composer-types
 
 function createChatComposerState(): ChatComposerState {
   return {
+    slashCommandDispatchConnected: false,
     slashMenuOpen: false,
     slashMenuItems: [],
     slashMenuIndex: 0,

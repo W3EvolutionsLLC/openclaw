@@ -284,3 +284,23 @@ export function scrollActiveMenuOptionIntoView(activeId: string | null): void {
 export function paneDomId(paneId: string, suffix: string): string {
   return `chat-${encodeURIComponent(paneId)}-${suffix}`;
 }
+
+function slashOptionIdSegment(value: string): string {
+  return (
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]+/gu, "-")
+      .replace(/^-+|-+$/gu, "") || "item"
+  );
+}
+
+export function getSlashCommandOptionId(paneId: string, commandName: string): string {
+  return paneDomId(paneId, `slash-option-command-${slashOptionIdSegment(commandName)}`);
+}
+
+export function getSlashArgOptionId(paneId: string, commandName: string, arg: string): string {
+  return paneDomId(
+    paneId,
+    `slash-option-arg-${slashOptionIdSegment(commandName)}-${slashOptionIdSegment(arg)}`,
+  );
+}

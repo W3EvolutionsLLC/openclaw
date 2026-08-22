@@ -160,6 +160,7 @@ type ComposingDraft = {
 };
 
 export type ChatComposerState = SkillMenuState & {
+  slashCommandDispatchConnected: boolean;
   slashMenuOpen: boolean;
   slashMenuItems: SlashCommandDef[];
   slashMenuIndex: number;
