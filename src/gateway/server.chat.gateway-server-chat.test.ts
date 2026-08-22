@@ -30,6 +30,7 @@ import {
   installGatewayTestHooks,
   mockGetReplyFromConfigOnce,
   onceMessage,
+  prepareGatewayReplyRuntimeForTest,
   rpcReq,
   testState,
   trackConnectChallengeNonce,
@@ -327,7 +328,7 @@ describe("gateway server chat", () => {
       timeoutMs,
     });
     expect(res.ok).toBe(true);
-    expect(res.payload?.status).toBe("ok");
+    expect(res.payload?.status, JSON.stringify(res.payload)).toBe("ok");
     return res;
   };
   const waitForAgentRunDrained = async (runId: string) => {
@@ -508,6 +509,7 @@ describe("gateway server chat", () => {
     };
     try {
       await writeSessionStore({ entries: {} });
+      await prepareGatewayReplyRuntimeForTest({ force: true });
 
       const res = await rpcReq(ws, "sessions.send", {
         key: "agent:orion:main",
@@ -1366,6 +1368,62 @@ describe("gateway server chat", () => {
 
     expect(collectHistoryTextValues(historyMessages)).toEqual(["send once", replyText]);
     expect(historyMessages.some(hasGatewayHistoryMessageToolMirror)).toBe(true);
+    expect(historyMessages).not.toContainEqual(
+      expect.objectContaining({ provider: "openclaw", model: "delivery-mirror" }),
+    );
+  });
+
+  test("chat.history carries managed images from a message-tool delivery mirror", async () => {
+    const replyText = "Two visible attachments.";
+    const imageBlocks = ["first", "second"].map((name) => ({
+      type: "image",
+      artifactId: `artifact_managed_image_${name}`,
+      url: `/api/chat/media/outgoing/agent%3Amain%3Amain/${name}/full`,
+      openUrl: `/api/chat/media/outgoing/agent%3Amain%3Amain/${name}/full`,
+      alt: `${name}.png`,
+      mimeType: "image/png",
+    }));
+    const historyMessages = await loadChatHistoryWithMessages([
+      createGatewayHistoryMessageToolCall(
+        "call-message-images",
+        {
+          action: "send",
+          message: replyText,
+          mediaUrls: ["/tmp/first.png", "/tmp/second.png"],
+        },
+        1,
+      ),
+      {
+        role: "assistant",
+        provider: "openclaw",
+        model: "delivery-mirror",
+        content: [{ type: "text", text: replyText }, ...imageBlocks],
+        timestamp: 2,
+      },
+      {
+        role: "toolResult",
+        toolName: "message",
+        toolCallId: "call-message-images",
+        content: [{ type: "text", text: "Sent visible reply via internal-ui." }],
+        details: {
+          status: "ok",
+          deliveryStatus: "sent",
+          sourceReplySink: "internal-ui",
+        },
+        timestamp: 3,
+      },
+    ]);
+
+    expect(historyMessages).toContainEqual(
+      expect.objectContaining({
+        role: "assistant",
+        content: [{ type: "text", text: replyText }, ...imageBlocks],
+        openclawMessageToolMirror: expect.objectContaining({
+          toolCallId: "call-message-images",
+          sourceReplySink: "internal-ui",
+        }),
+      }),
+    );
     expect(historyMessages).not.toContainEqual(
       expect.objectContaining({ provider: "openclaw", model: "delivery-mirror" }),
     );

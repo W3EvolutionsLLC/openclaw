@@ -365,9 +365,15 @@ function buildMessageToolVisibleReplyMirror(
   pending: PendingMessageToolVisibleReply,
 ): Record<string, unknown> {
   const sourceMessageSeq = asPositiveSafeInteger(readRecord(pending.anchor["__openclaw"])?.seq);
+  const deliveryMirror = [pending.deliveryMirrorAnchor, pending.completionAnchor].find((message) =>
+    isOpenClawDeliveryMirrorAssistantMessage(message),
+  );
+  const content = Array.isArray(deliveryMirror?.content)
+    ? deliveryMirror.content
+    : [{ type: "text", text: pending.text }];
   const mirror: Record<string, unknown> = {
     role: "assistant",
-    content: [{ type: "text", text: pending.text }],
+    content,
     openclawMessageToolMirror: {
       toolName: "message",
       ...(pending.toolCallId ? { toolCallId: pending.toolCallId } : {}),
