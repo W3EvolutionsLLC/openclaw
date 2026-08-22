@@ -7,12 +7,13 @@ export const gatewayServerBackedHttpTestFiles = [
   "src/gateway/probe.auth.integration.test.ts",
 ];
 
-// Gateway server tests that replace a module the Gateway reaches only through
-// re-exports. `gateway-server` is `isolate: false`, so a neighbour that boots a
+// Gateway tests that replace a module reached only through re-exports.
+// Shared Gateway projects use `isolate: false`, so a neighbour that boots a
 // full Gateway leaves those importers bound to the real implementation and the
 // mock silently never fires. These run in `gateway-server-isolated` instead,
 // which gives each file a fresh module graph.
 export const gatewayServerIsolatedTestFiles = [
+  "src/gateway/server-methods/sessions-mutations.perf.test.ts",
   "src/gateway/server.sessions.compaction-read-errors.test.ts",
 ];
 
