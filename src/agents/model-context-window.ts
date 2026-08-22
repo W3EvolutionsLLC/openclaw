@@ -20,7 +20,9 @@ export function resolveModelContextWindowProfile(params: {
   const effective = selected ?? fallback;
   return {
     contextWindow: effective?.id,
-    contextWindows,
+    // Omit when the model declares no options so projections stay byte-stable for
+    // the (majority) models without a selectable window.
+    contextWindows: contextWindows.length > 0 ? contextWindows : undefined,
     contextWindowDefault,
     contextTokens: effective?.contextWindow ?? params.catalogEntry?.contextWindow,
   };
