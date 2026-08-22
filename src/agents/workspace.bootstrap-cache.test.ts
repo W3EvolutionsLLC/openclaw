@@ -34,7 +34,7 @@ describe("workspace bootstrap file caching", () => {
     expect(agentsFile?.missing).toBe(false);
   };
 
-  it("returns cached content when mtime unchanged", async () => {
+  it("returns stable content when the file is unchanged", async () => {
     const content1 = "# Initial content";
     await writeWorkspaceFile({
       dir: workspaceDir,
@@ -46,11 +46,10 @@ describe("workspace bootstrap file caching", () => {
     const agentsFile1 = await loadAgentsFile(workspaceDir);
     expectAgentsContent(agentsFile1, content1);
 
-    // Second load should use cached content (same mtime)
+    // Second load should preserve the same content.
     const agentsFile2 = await loadAgentsFile(workspaceDir);
     expectAgentsContent(agentsFile2, content1);
 
-    // Verify both calls returned the same content without re-reading
     expect(agentsFile1?.content).toBe(agentsFile2?.content);
   });
 
@@ -108,6 +107,37 @@ describe("workspace bootstrap file caching", () => {
 
     const agentsFile2 = await loadSessionAgentsFile(workspaceDir, "agent:main:main");
     expectAgentsContent(agentsFile2, content2);
+  });
+
+  it("refreshes restored-mtime in-place edits in direct and session loads", async () => {
+    const content1 = "# OLD guidance";
+    const content2 = "# NEW guidance";
+    const filePath = path.join(workspaceDir, DEFAULT_AGENTS_FILENAME);
+    const sessionKey = "agent:main:restored-mtime";
+    await writeWorkspaceFile({
+      dir: workspaceDir,
+      name: DEFAULT_AGENTS_FILENAME,
+      content: content1,
+    });
+    const fixedTime = new Date(Math.floor(Date.now() / 1_000) * 1_000);
+    await fs.utimes(filePath, fixedTime, fixedTime);
+    const originalStat = await fs.stat(filePath);
+    expectAgentsContent(await loadAgentsFile(workspaceDir), content1);
+    expectAgentsContent(await loadSessionAgentsFile(workspaceDir, sessionKey), content1);
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await fs.writeFile(filePath, content2, "utf-8");
+    await fs.utimes(filePath, originalStat.atime, originalStat.mtime);
+    const updatedStat = await fs.stat(filePath);
+
+    expect(updatedStat.dev).toBe(originalStat.dev);
+    expect(updatedStat.ino).toBe(originalStat.ino);
+    expect(updatedStat.size).toBe(originalStat.size);
+    expect(updatedStat.mtimeMs).toBe(originalStat.mtimeMs);
+    expect(updatedStat.ctimeMs).not.toBe(originalStat.ctimeMs);
+    expect(await fs.readFile(filePath, "utf-8")).toBe(content2);
+    expectAgentsContent(await loadAgentsFile(workspaceDir), content2);
+    expectAgentsContent(await loadSessionAgentsFile(workspaceDir, sessionKey), content2);
   });
 
   it("invalidates cache when inode changes with same mtime", async () => {

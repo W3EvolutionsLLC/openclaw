@@ -85,8 +85,6 @@ const workspaceTemplateCache = new Map<string, Promise<string>>();
 // Git availability is process-stable; cache the probe result, including failure, until restart.
 let gitAvailabilityPromise: Promise<boolean> | null = null;
 
-// File content cache keyed by stable file identity to avoid stale reads.
-const workspaceFileCache = new Map<string, { content: string; identity: string }>();
 type WorkspaceFileSourceIdentity = readonly [
   canonicalPath: string,
   stat: FileIdentityStat,
@@ -96,7 +94,7 @@ type WorkspaceFileSourceIdentity = readonly [
 const workspaceFileSourceIdentities = new WeakMap<object, WorkspaceFileSourceIdentity>();
 
 /**
- * Read workspace files via boundary-safe open and cache by inode/dev/size/mtime identity.
+ * Read workspace files via a boundary-safe pinned open.
  */
 type WorkspaceGuardedReadResult =
   | { ok: true; content: string; sourceIdentity: WorkspaceFileSourceIdentity }
@@ -137,7 +135,6 @@ export function workspaceFilesShareSourceIdentity(left: object, right: object): 
 async function readWorkspaceFileWithGuards(params: {
   filePath: string;
   workspaceDir: string;
-  useCache?: boolean;
 }): Promise<WorkspaceGuardedReadResult> {
   try {
     // A transient FS race (EAGAIN/EWOULDBLOCK/EINTR under load) on the open or
@@ -160,24 +157,13 @@ async function readWorkspaceFileWithGuards(params: {
           if (isTransientWorkspaceReadError(opened.error)) {
             throw opened.error;
           }
-          workspaceFileCache.delete(params.filePath);
           return opened;
         }
 
         const identity = workspaceFileIdentity(opened.stat, opened.path);
         const sourceIdentity = [opened.path, opened.stat, identity] as const;
-        const cached =
-          params.useCache === false ? undefined : workspaceFileCache.get(params.filePath);
-        if (cached?.identity === identity) {
-          syncFs.closeSync(opened.fd);
-          return { ok: true, content: cached.content, sourceIdentity };
-        }
-
         try {
           const content = await readWorkspaceBootstrapFile(opened.fd);
-          if (params.useCache !== false) {
-            workspaceFileCache.set(params.filePath, { content, identity });
-          }
           return { ok: true, content, sourceIdentity };
         } finally {
           syncFs.closeSync(opened.fd);
@@ -192,7 +178,6 @@ async function readWorkspaceFileWithGuards(params: {
     );
   } catch (error) {
     // Non-transient read failure, or transient retries exhausted.
-    workspaceFileCache.delete(params.filePath);
     return { ok: false, reason: error instanceof RangeError ? "validation" : "io", error };
   }
 }
@@ -787,7 +772,6 @@ export async function seedWorkspaceBootstrap(params: {
         const existing = await readWorkspaceFileWithGuards({
           filePath: bootstrapPath,
           workspaceDir: dir,
-          useCache: false,
         });
         if (!existing.ok) {
           throw new WorkspaceBootstrapSeedConflictError(
@@ -821,7 +805,6 @@ export async function seedWorkspaceBootstrap(params: {
         const stable = await readWorkspaceFileWithGuards({
           filePath: bootstrapPath,
           workspaceDir: dir,
-          useCache: false,
         });
         if (!stable.ok || !Buffer.from(stable.content, "utf8").equals(params.content)) {
           throw new WorkspaceBootstrapSeedConflictError(
