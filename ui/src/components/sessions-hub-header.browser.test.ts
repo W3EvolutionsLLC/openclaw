@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { i18n } from "../i18n/index.ts";
 import "../styles.css";
 import { renderSessionsHubHeader } from "./sessions-hub-header.ts";
+import type { SessionsHubTab } from "./sessions-hub-tabs.ts";
 
 const hasBrowserLayout = !navigator.userAgent.toLowerCase().includes("jsdom");
 
@@ -12,9 +13,9 @@ async function useViewport(width: number, height = 800) {
 }
 
 async function mount(
-  active: "sessions" | "worktrees",
+  active: SessionsHubTab,
   withActions: boolean,
-  onSelect: (tab: "sessions" | "worktrees") => void = () => undefined,
+  onSelect: (tab: SessionsHubTab) => void = () => undefined,
 ) {
   const container = document.createElement("div");
   container.style.width = "calc(100vw - 32px)";

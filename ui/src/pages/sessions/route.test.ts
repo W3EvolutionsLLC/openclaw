@@ -19,6 +19,7 @@ async function loadSessionsRoute(options: {
   search: string;
   scopeId: string | null;
   expectedQuery: SessionListOptions;
+  expectedViewMode?: "sessions" | "operations";
 }) {
   let snapshot: SessionListSnapshot = {
     result: null,
@@ -51,7 +52,12 @@ async function loadSessionsRoute(options: {
   expect(refreshList).toHaveBeenCalledWith({ ...options.expectedQuery, force: true });
   expect(listSnapshot).toHaveBeenLastCalledWith(options.expectedQuery);
   expect(list).not.toHaveBeenCalled();
-  expect(data).toMatchObject({ result, loading: false, error: null });
+  expect(data).toMatchObject({
+    result,
+    loading: false,
+    error: null,
+    viewMode: options.expectedViewMode ?? "sessions",
+  });
 }
 
 describe("sessions route", () => {
@@ -94,6 +100,21 @@ describe("sessions route", () => {
         includeDerivedTitles: false,
         includeLastMessage: false,
         archivedFilter: "all" as const,
+        agentId: "main",
+      },
+    },
+    {
+      name: "durable operations view",
+      search: "?view=operations",
+      scopeId: "main",
+      expectedViewMode: "operations" as const,
+      expectedQuery: {
+        limit: 50,
+        includeGlobal: true,
+        includeUnknown: false,
+        includeDerivedTitles: false,
+        includeLastMessage: false,
+        archivedFilter: "active" as const,
         agentId: "main",
       },
     },

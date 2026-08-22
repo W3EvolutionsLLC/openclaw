@@ -493,7 +493,9 @@ class WorktreesPage extends OpenClawLightDomElement {
         subtitle: html`${subtitleForRoute("worktrees")}
         ${renderDocsLink(WORKTREES_DOCS_URL, t("common.learnMore"))}`,
         onSelect: (tab) => {
-          if (tab !== "worktrees") {
+          if (tab === "operations") {
+            this.context?.navigate("sessions", { search: "?view=operations" });
+          } else if (tab !== "worktrees") {
             this.context?.navigate(tab);
           }
         },

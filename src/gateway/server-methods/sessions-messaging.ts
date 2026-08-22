@@ -143,6 +143,18 @@ async function handleSessionSend(params: {
   const loaded = loadSessionEntry(key, { agentId: requestedAgentId });
   const { legacyKey } = loaded;
   let { entry, canonicalKey, storePath } = loaded;
+  const expectedSessionId = normalizeOptionalString(p.expectedSessionId);
+  if (expectedSessionId && entry?.sessionId !== expectedSessionId) {
+    params.respond(
+      false,
+      undefined,
+      errorShape(
+        ErrorCodes.INVALID_REQUEST,
+        "session changed before sessions.send; refresh the audience and retry",
+      ),
+    );
+    return;
+  }
   // Reject sends/steers targeting sessions whose owning agent was deleted (#65524).
   const deletedAgentId = resolveDeletedAgentIdFromSessionKey(cfg, canonicalKey, entry, {
     acpMetadataSessionKey: legacyKey ?? canonicalKey,

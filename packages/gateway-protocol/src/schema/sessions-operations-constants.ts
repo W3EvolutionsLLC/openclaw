@@ -1,0 +1,1 @@
+export const SESSIONS_OPERATION_MAX_TARGETS = 200;

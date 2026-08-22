@@ -21,7 +21,10 @@ export type SessionsRouteData = {
   error: string | null;
   expandedSessionKey: string | null;
   statusFilter: SessionArchivedFilter;
+  viewMode?: SessionsViewMode;
 };
+
+export type SessionsViewMode = "sessions" | "operations";
 
 type SessionsPageListFilters = {
   activeMinutes?: number;
@@ -40,7 +43,9 @@ function routeOptions(location: RouteLocation) {
   const requestedStatus = search.get("status");
   const statusFilter: SessionArchivedFilter =
     requestedStatus === "archived" ? "archived" : requestedStatus === "all" ? "all" : "active";
-  return { expandedSessionKey, statusFilter };
+  const viewMode: SessionsViewMode =
+    search.get("view") === "operations" ? "operations" : "sessions";
+  return { expandedSessionKey, statusFilter, viewMode };
 }
 
 export function sessionsPageListQuery(
@@ -104,7 +109,7 @@ export const page = definePage({
   ...routePageSpec("sessions"),
   loaderDeps: (context: ApplicationContext, location: RouteLocation) => {
     const options = routeOptions(location);
-    return `${options.expandedSessionKey ?? ""}\u0000${options.statusFilter}\u0000${context.agentSelection.state.scopeId ?? "all"}`;
+    return `${options.expandedSessionKey ?? ""}\u0000${options.statusFilter}\u0000${options.viewMode}\u0000${context.agentSelection.state.scopeId ?? "all"}`;
   },
   loader: (context: ApplicationContext, { location }) => loadSessionsRoute(context, location),
   component: () =>

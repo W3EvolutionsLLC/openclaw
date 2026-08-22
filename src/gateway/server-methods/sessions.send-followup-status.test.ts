@@ -130,6 +130,39 @@ describe("sessions.send completed subagent follow-up status", () => {
     });
   }
 
+  it("rejects a send when the session key was replaced before admission", async () => {
+    const sessionKey = "agent:main:dashboard:target";
+    loadSessionEntryMock.mockReturnValue({
+      cfg: {},
+      canonicalKey: sessionKey,
+      storePath: "/tmp/sessions.json",
+      entry: { sessionId: "session-new" },
+    });
+    const respondMock = vi.fn();
+
+    await expectDefined(
+      sessionMessagingHandlers["sessions.send"],
+      'sessionMessagingHandlers["sessions.send"] test invariant',
+    )({
+      req: { id: "req-fenced-send" } as never,
+      params: {
+        key: sessionKey,
+        expectedSessionId: "session-old",
+        message: "status?",
+      },
+      respond: respondMock as unknown as RespondFn,
+      context: createRequestContext(),
+      client: null,
+      isWebchatConnect: () => false,
+    });
+
+    expect(chatSendMock).not.toHaveBeenCalled();
+    expect(respondMock).toHaveBeenCalledWith(false, undefined, {
+      code: ErrorCodes.INVALID_REQUEST,
+      message: "session changed before sessions.send; refresh the audience and retry",
+    });
+  });
+
   it("reactivates completed subagent sessions before broadcasting sessions.changed", async () => {
     const childSessionKey = "agent:main:subagent:followup";
     const completedRun = {

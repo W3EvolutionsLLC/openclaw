@@ -1,3 +1,4 @@
+import * as sessionOperations from "./sessions-operations.js";
 import * as viewerPresence from "./sessions-viewer-presence.js";
 import * as sessions from "./sessions.js";
 
@@ -43,6 +44,19 @@ export const SessionLifecycleProtocolSchemas = {
   SessionsRecoverParams: sessions.SessionsRecoverParamsSchema,
   SessionsRecoverResult: sessions.SessionsRecoverResultSchema,
   SessionsSendParams: sessions.SessionsSendParamsSchema,
+  SessionsOperationTarget: sessionOperations.SessionsOperationTargetSchema,
+  SessionsOperationTargetOutcome: sessionOperations.SessionsOperationTargetOutcomeSchema,
+  SessionsOperationCounts: sessionOperations.SessionsOperationCountsSchema,
+  SessionsOperationSummary: sessionOperations.SessionsOperationSummarySchema,
+  SessionsOperation: sessionOperations.SessionsOperationSchema,
+  SessionsOperationsCreateParams: sessionOperations.SessionsOperationsCreateParamsSchema,
+  SessionsOperationsCreateResult: sessionOperations.SessionsOperationsCreateResultSchema,
+  SessionsOperationsListParams: sessionOperations.SessionsOperationsListParamsSchema,
+  SessionsOperationsListResult: sessionOperations.SessionsOperationsListResultSchema,
+  SessionsOperationsGetParams: sessionOperations.SessionsOperationsGetParamsSchema,
+  SessionsOperationsGetResult: sessionOperations.SessionsOperationsGetResultSchema,
+  SessionsOperationsRetryParams: sessionOperations.SessionsOperationsRetryParamsSchema,
+  SessionsOperationsRetryResult: sessionOperations.SessionsOperationsRetryResultSchema,
   SessionsMessagesSubscribeParams: sessions.SessionsMessagesSubscribeParamsSchema,
   SessionsMessagesUnsubscribeParams: sessions.SessionsMessagesUnsubscribeParamsSchema,
   SessionsViewerPresenceSetParams: viewerPresence.SessionsViewerPresenceSetParamsSchema,

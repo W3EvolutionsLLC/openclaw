@@ -581,6 +581,107 @@ describe("sessions page lifecycle", () => {
     expect(page.selectedKeys).toEqual(new Set());
   });
 
+  it("freezes the exact selected audience before creating a bulk message operation", async () => {
+    const createBulkMessageOperation = vi.fn(async () => ({
+      id: "operation-one",
+      requestId: "request-one",
+      kind: "bulk-message" as const,
+      status: "completed" as const,
+      messagePreview: "Report status.",
+      message: "Report status.",
+      targetCount: 2,
+      counts: { pending: 0, accepted: 2, failed: 0 },
+      createdAt: 1,
+      targets: [
+        {
+          key: "agent:main:first",
+          expectedSessionId: "session-first",
+          status: "accepted" as const,
+        },
+        {
+          key: "agent:main:second",
+          expectedSessionId: "session-second",
+          status: "accepted" as const,
+        },
+      ],
+    }));
+    const sessions = createSessions({ createBulkMessageOperation });
+    const { gateway } = createGateway({} as GatewayBrowserClient);
+    const page = await createPage(createContext(gateway, sessions));
+    page.result = {
+      count: 2,
+      sessions: [
+        {
+          key: "agent:main:first",
+          sessionId: "session-first",
+          hasActiveRun: true,
+        },
+        { key: "agent:main:second", sessionId: "session-second" },
+      ],
+    } as SessionsListResult;
+    page.selectedKeys = new Set(["agent:main:first", "agent:main:second"]);
+
+    page.openBulkMessageReview();
+    expect(page.bulkMessageReview).toMatchObject({ recipients: 2, busy: 1, excluded: 0 });
+    page.updateBulkMessage("Report status.");
+    page.result = {
+      count: 1,
+      sessions: [{ key: "agent:main:first", sessionId: "replacement-session" }],
+    } as SessionsListResult;
+    await page.submitBulkMessage();
+
+    expect(createBulkMessageOperation).toHaveBeenCalledWith({
+      requestId: expect.any(String),
+      message: "Report status.",
+      targets: [
+        {
+          key: "agent:main:first",
+          expectedSessionId: "session-first",
+        },
+        {
+          key: "agent:main:second",
+          expectedSessionId: "session-second",
+        },
+      ],
+    });
+  });
+
+  it("enumerates the frozen roster query before selecting every matching session", async () => {
+    const rows = [
+      { key: "agent:main:first", sessionId: "session-first", kind: "direct" as const },
+      { key: "agent:main:second", sessionId: "session-second", kind: "direct" as const },
+    ];
+    const list = vi.fn(async (options) => {
+      const offset = options?.offset ?? 0;
+      return {
+        count: 1,
+        totalCount: 2,
+        hasMore: offset === 0,
+        nextOffset: offset === 0 ? 1 : null,
+        sessions: [rows[offset]],
+      } as SessionsListResult;
+    });
+    const sessions = createSessions({ list });
+    const { gateway } = createGateway({} as GatewayBrowserClient);
+    const page = await createPage(createContext(gateway, sessions));
+    const firstRow = rows[0];
+    if (!firstRow) {
+      throw new Error("expected the first paged session fixture");
+    }
+    page.result = {
+      count: 1,
+      totalCount: 2,
+      hasMore: true,
+      sessions: [firstRow],
+    } as SessionsListResult;
+    page.selectedKeys = new Set([firstRow.key]);
+
+    await page.selectAllMatching();
+
+    expect(list.mock.calls.map(([options]) => options?.offset ?? 0)).toEqual([0, 1]);
+    expect(page.selectedKeys).toEqual(new Set(rows.map((row) => row.key)));
+  });
+
   it("adopts a managed snapshot that arrives under the bulk-delete lock after its tail refresh", async () => {
     const deleted = deferred<{
       deleted: string[];

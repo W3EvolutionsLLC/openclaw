@@ -213,6 +213,10 @@ export const defaultControlUiFeatureMethods = [
   "session.visibility.set",
   "sessions.abort",
   "sessions.patchMany",
+  "sessions.operations.create",
+  "sessions.operations.get",
+  "sessions.operations.list",
+  "sessions.operations.retry",
   "sessions.branches.switch",
   "sessions.compact",
   "sessions.compaction.branch",
@@ -1873,6 +1877,8 @@ function installControlUiMockGateway(
         recordSessionsPatchMany(params, result);
         return result;
       }
+      case "sessions.operations.list":
+        return { operations: [] };
       case "sessions.groups.list":
         return groupsPayload();
       case "sessions.groups.defaults":

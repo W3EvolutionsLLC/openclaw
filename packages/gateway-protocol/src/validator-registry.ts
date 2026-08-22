@@ -236,6 +236,12 @@ export const validateSessionTypingParams = compile(S.SessionTypingParamsSchema);
 export const validateSessionsCreateParams = compile(S.SessionsCreateParamsSchema);
 export const validateSessionsRecoverParams = compile(S.SessionsRecoverParamsSchema);
 export const validateSessionsSendParams = compile(S.SessionsSendParamsSchema);
+export const validateSessionsOperationsCreateParams = compile(
+  S.SessionsOperationsCreateParamsSchema,
+);
+export const validateSessionsOperationsListParams = compile(S.SessionsOperationsListParamsSchema);
+export const validateSessionsOperationsGetParams = compile(S.SessionsOperationsGetParamsSchema);
+export const validateSessionsOperationsRetryParams = compile(S.SessionsOperationsRetryParamsSchema);
 export const validateSessionsReclaimParams = compile(S.SessionsReclaimParamsSchema);
 export const validateSessionsReclaimResult = compile(S.SessionsReclaimResultSchema);
 export const validateSessionsMoveResult = compile(S.SessionsMoveResultSchema);

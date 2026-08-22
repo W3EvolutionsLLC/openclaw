@@ -285,6 +285,33 @@ Preview any maintenance run with `openclaw sessions cleanup --dry-run`.
 | `/status` in chat          | Context usage, model, and toggles               |
 | `/context list`            | What is in the system prompt                    |
 
+### Manage sessions in the Control UI
+
+Open **Sessions** in the Control UI to search, filter, group, inspect, archive,
+or delete Gateway-owned sessions. Switch the search control to **Transcripts**
+when you need message-content search instead of roster filtering. Selecting a
+row keeps its details, overrides, compaction checkpoints, and secondary actions
+available without leaving the roster.
+
+Select multiple active sessions to send one reviewed message to the frozen
+audience. **Select all matching** enumerates the complete filtered result before
+opening the review. One operation accepts at most 200 sessions; narrow the
+filters before sending to a larger audience. Archived sessions and rows whose
+session identity is no longer current are excluded or fail visibly rather than
+receiving stale work.
+
+The **Operations** tab records the message, target identities, and result for
+30 days in the Gateway task ledger. `Accepted` means the
+Gateway admitted that target's turn; it does not claim that the agent has
+finished. Busy sessions use their existing queue policy and are never steered
+or aborted by a bulk message. Partial failures remain visible with their target
+and reason, and **Retry** submits only failed or previously undispatched
+targets.
+
+Navigation and browser reconnects do not discard operation results. A Gateway
+restart intentionally does not reuse the previous operator authority:
+unfinished targets become `Interrupted` and require an explicit retry.
+
 ## Further reading
 
 - [Session search](/concepts/session-search) - full-text recall across past transcripts

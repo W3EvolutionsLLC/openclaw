@@ -41,6 +41,7 @@ function buildProps(result: SessionsListResult): SessionsProps {
     includeUnknown: false,
     statusFilter: "active",
     basePath: "",
+    searchMode: "sessions",
     searchQuery: "",
     transcriptSearchAvailable: true,
     transcriptSearchQuery: "",
@@ -54,6 +55,10 @@ function buildProps(result: SessionsListResult): SessionsProps {
     page: 0,
     pageSize: 10,
     selectedKeys: new Set<string>(),
+    matchingCount: result.totalCount ?? result.sessions.length,
+    selectAllMatchingLoading: false,
+    bulkMessageAvailable: true,
+    bulkMessageReview: null,
     sessionMenu: null,
     expandedSessionKey: null,
     checkpointItemsByKey: {},
@@ -62,6 +67,7 @@ function buildProps(result: SessionsListResult): SessionsProps {
     checkpointErrorByKey: {},
     onFiltersChange: () => undefined,
     onClearFilters: () => undefined,
+    onSearchModeChange: () => undefined,
     onSearchChange: () => undefined,
     onTranscriptSearchChange: () => undefined,
     onTranscriptSearch: () => undefined,
@@ -80,7 +86,13 @@ function buildProps(result: SessionsListResult): SessionsProps {
     onSelectPage: () => undefined,
     onDeselectPage: () => undefined,
     onDeselectAll: () => undefined,
+    onSelectAllMatching: () => undefined,
+    onOpenBulkMessage: () => undefined,
+    onBulkMessageChange: () => undefined,
+    onSubmitBulkMessage: () => undefined,
+    onCancelBulkMessage: () => undefined,
     onDeleteSelected: () => undefined,
+    onNewSession: () => undefined,
     onOpenSessionMenu: () => undefined,
     onToggleDetails: () => undefined,
     onBranchFromCheckpoint: () => undefined,
@@ -237,6 +249,28 @@ describe("sessions view", () => {
     expect(onToggleSelect.mock.calls).toEqual([["agent:main:first"], ["agent:main:second"]]);
   });
 
+  it("offers message review for selected sessions without sending immediately", async () => {
+    const container = document.createElement("div");
+    render(
+      renderSessions({
+        ...buildProps(
+          buildMultiResult([
+            { key: "agent:main:first", kind: "direct", updatedAt: 2 },
+            { key: "agent:main:second", kind: "direct", updatedAt: 1 },
+          ]),
+        ),
+        selectedKeys: new Set(["agent:main:first", "agent:main:second"]),
+      }),
+      container,
+    );
+    await Promise.resolve();
+
+    const send = [...container.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent?.trim() === "Send message",
+    );
+    expect(send).toBeInstanceOf(HTMLButtonElement);
+  });
+
   it("uses the stored face for generic session links", async () => {
     const container = document.createElement("div");
     render(
@@ -276,12 +310,25 @@ describe("sessions view", () => {
     await Promise.resolve();
 
     const rosterFilter = container.querySelector<HTMLInputElement>(
-      '.sessions-filter-bar input[type="text"]',
-    );
-    const transcriptInput = container.querySelector<HTMLInputElement>(
-      '.sessions-transcript-search input[type="search"]',
+      '.sessions-search-control input[type="search"]',
     );
     expect(rosterFilter?.value).toBe("agent label");
+
+    render(
+      renderSessions({
+        ...buildProps(buildMultiResult([])),
+        searchMode: "transcripts",
+        searchQuery: "agent label",
+        transcriptSearchQuery: "  exact phrase  ",
+        onTranscriptSearchChange,
+        onTranscriptSearch,
+      }),
+      container,
+    );
+    await Promise.resolve();
+    const transcriptInput = container.querySelector<HTMLInputElement>(
+      '.sessions-search-control input[type="search"]',
+    );
     expect(transcriptInput?.value).toBe("  exact phrase  ");
 
     transcriptInput!.value = "different words";
@@ -290,7 +337,7 @@ describe("sessions view", () => {
     expect(onTranscriptSearch).not.toHaveBeenCalled();
 
     container
-      .querySelector(".sessions-transcript-search__form")
+      .querySelector(".sessions-search-control")
       ?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     expect(onTranscriptSearch).toHaveBeenCalledOnce();
   });
@@ -310,6 +357,7 @@ describe("sessions view", () => {
             },
           ]),
         ),
+        searchMode: "transcripts",
         transcriptSearchQuery: "launch code",
         transcriptSearch: {
           status: "results",
@@ -353,6 +401,7 @@ describe("sessions view", () => {
     render(
       renderSessions({
         ...buildProps(buildMultiResult([])),
+        searchMode: "transcripts",
         transcriptSearchAvailable: false,
         transcriptSearchQuery: "hidden",
         onTranscriptSearch,
@@ -362,12 +411,12 @@ describe("sessions view", () => {
     await Promise.resolve();
 
     expect(
-      container.querySelector<HTMLInputElement>('.sessions-transcript-search input[type="search"]')
+      container.querySelector<HTMLInputElement>('.sessions-search-control input[type="search"]')
         ?.disabled,
     ).toBe(true);
     expect(container.textContent).toContain("Transcript search requires a newer Gateway.");
     container
-      .querySelector(".sessions-transcript-search__form")
+      .querySelector(".sessions-search-control")
       ?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     expect(onTranscriptSearch).not.toHaveBeenCalled();
   });
@@ -506,7 +555,7 @@ describe("sessions view", () => {
 
     expect(
       container
-        .querySelector<HTMLOptionElement>('.session-groupby__select option[value="person"]')
+        .querySelector<HTMLOptionElement>('.sessions-groupby-select option[value="person"]')
         ?.textContent?.trim(),
     ).toBe("Person");
     expect(
@@ -528,7 +577,7 @@ describe("sessions view", () => {
     await Promise.resolve();
 
     const modes = [
-      ...container.querySelectorAll<HTMLOptionElement>(".session-groupby__select option"),
+      ...container.querySelectorAll<HTMLOptionElement>(".sessions-groupby-select option"),
     ].map((option) => option.value);
     expect(modes).not.toContain("person");
     expect(modes).toContain("category");
@@ -763,7 +812,7 @@ describe("sessions view", () => {
     expect(keys).toEqual(["pinned", "newer"]);
   });
 
-  it("uses the shared tooltip component for session filters", async () => {
+  it("keeps explanations attached to progressively disclosed filters", async () => {
     const container = document.createElement("div");
     render(
       renderSessions({
@@ -774,18 +823,18 @@ describe("sessions view", () => {
     );
     await Promise.resolve();
 
-    const filters = container.querySelector(".sessions-filter-bar");
-    const activeField = filters?.querySelector(".session-filter-input--minutes")?.closest("label");
-    const tooltips = Array.from(
-      filters?.querySelectorAll<HTMLElement>("openclaw-tooltip") ?? [],
-    ).map((tooltip) => (tooltip as HTMLElement & { content: string }).content);
-
-    expect(activeField?.querySelector(".session-filter-label")?.textContent).toBe("Updated within");
-    expect(tooltips).toEqual([
+    const fields = [
+      ...container.querySelectorAll<HTMLElement>(".sessions-filter-popover__grid .field"),
+    ];
+    expect(fields.map((field) => field.querySelector("span")?.textContent?.trim())).toEqual([
+      "Updated within",
+      "Limit",
+      "Group by",
+      "Sort",
+    ]);
+    expect(fields.slice(0, 2).map((field) => field.title)).toEqual([
       "Loads sessions updated in the last 120 minutes.",
       "Max sessions to load.",
-      "Include global sessions.",
-      "Include unknown sessions.",
     ]);
   });
 
@@ -802,15 +851,11 @@ describe("sessions view", () => {
     );
     await Promise.resolve();
 
-    const primaryRow = container.querySelector(".session-filter-primary-row");
-    expect(primaryRow?.querySelector(".session-filter-input--minutes")?.closest("label")).toBe(
-      primaryRow?.firstElementChild?.querySelector("label"),
-    );
-    expect(primaryRow?.querySelector(".session-filter-input--limit")?.closest("label")).toBe(
-      primaryRow?.lastElementChild?.querySelector("label"),
-    );
+    const filterGrid = container.querySelector(".sessions-filter-popover__grid");
+    expect(filterGrid?.querySelector(".session-filter-input--minutes")).not.toBeNull();
+    expect(filterGrid?.querySelector(".session-filter-input--limit")).not.toBeNull();
 
-    const toggleGroup = container.querySelector(".session-filter-toggle-group");
+    const toggleGroup = container.querySelector(".sessions-filter-popover__sources");
     expect(toggleGroup?.getAttribute("role")).toBe("group");
     expect(toggleGroup?.getAttribute("aria-label")).toBe("Session source filters");
     expect(toggleGroup?.querySelectorAll(".session-filter-check")).toHaveLength(2);
@@ -1709,7 +1754,7 @@ describe("sessions view", () => {
     expect(emptyState?.querySelector("button") !== null).toBe(testCase.filtered);
   });
 
-  it("summarizes loaded sessions in the overview tiles", async () => {
+  it("summarizes loaded sessions in one compact fact line", async () => {
     const container = document.createElement("div");
     render(
       renderSessions(
@@ -1737,19 +1782,9 @@ describe("sessions view", () => {
     );
     await Promise.resolve();
 
-    const tiles = Array.from(container.querySelectorAll(".sessions-overview__tile"));
-    const readTile = (tile: Element) => [
-      tile.querySelector(".sessions-overview__label")?.textContent?.trim(),
-      tile.querySelector(".sessions-overview__value")?.textContent?.trim(),
-    ];
-    expect(tiles.map(readTile)).toEqual([
-      ["Sessions", "2"],
-      ["Live", "1"],
-      ["Unread", "1"],
-      ["Tokens", "1.5k"],
-    ]);
-    expect(tiles[1]?.classList.contains("sessions-overview__tile--active")).toBe(true);
-    expect(tiles[2]?.classList.contains("sessions-overview__tile--active")).toBe(true);
+    expect(
+      container.querySelector(".sessions-facts")?.textContent?.replaceAll(/\s+/g, " ").trim(),
+    ).toBe("2 Sessions · 1 Live · 1 Unread · 1.5k Tokens");
   });
 
   it("renders a context meter with usage tone on the tokens cell", async () => {
@@ -1826,10 +1861,7 @@ describe("sessions view", () => {
     );
     await Promise.resolve();
 
-    const tokensTile = container.querySelector(".sessions-overview__tile--tokens");
-    expect(tokensTile?.querySelector(".sessions-overview__value")?.textContent?.trim()).toBe(
-      "~1.2k",
-    );
+    expect(container.querySelector(".sessions-facts")?.textContent).toContain("~1.2k Tokens");
 
     render(
       renderSessions(
@@ -1839,11 +1871,7 @@ describe("sessions view", () => {
     );
     await Promise.resolve();
 
-    expect(
-      container
-        .querySelector(".sessions-overview__tile--tokens .sessions-overview__value")
-        ?.textContent?.trim(),
-    ).toBe("n/a");
+    expect(container.querySelector(".sessions-facts")?.textContent).toContain("n/a Tokens");
   });
 
   it("omits the context meter when a session reports no context window", async () => {

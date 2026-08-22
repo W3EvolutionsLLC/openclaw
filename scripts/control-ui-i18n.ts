@@ -55,8 +55,20 @@ const ROOT = path.resolve(HERE, "..");
 const LOCALES_DIR = path.join(ROOT, "ui", "src", "i18n", "locales");
 const I18N_ASSETS_DIR = path.join(ROOT, "ui", "src", "i18n", ".i18n");
 const SOURCE_LOCALE_PATH = path.join(LOCALES_DIR, "en.ts");
-const ACTIVITY_SOURCE_LOCALE_PATH = path.join(LOCALES_DIR, "en-activity.ts");
-const SESSION_PLACEMENT_SOURCE_LOCALE_PATH = path.join(LOCALES_DIR, "en-session-placement.ts");
+const LAZY_SOURCE_LOCALES = [
+  {
+    filePath: path.join(LOCALES_DIR, "en-activity.ts"),
+    registerExport: "registerActivityEnglish",
+  },
+  {
+    filePath: path.join(LOCALES_DIR, "en-session-placement.ts"),
+    registerExport: "registerSessionPlacementEnglish",
+  },
+  {
+    filePath: path.join(LOCALES_DIR, "en-sessions-management.ts"),
+    registerExport: "registerSessionsManagementEnglish",
+  },
+] as const;
 const SOURCE_LOCALE = "en";
 const MAX_BATCH_ITEMS = 20;
 const DEFAULT_BATCH_CHAR_BUDGET = 2_000;
@@ -283,19 +295,11 @@ function tmPath(entry: LocaleEntry): string {
 }
 
 async function loadSourceLocaleMap(): Promise<TranslationMap> {
-  return await loadControlUiSourceCatalog(
-    SOURCE_LOCALE_PATH,
-    ACTIVITY_SOURCE_LOCALE_PATH,
-    SESSION_PLACEMENT_SOURCE_LOCALE_PATH,
-  );
+  return await loadControlUiSourceCatalog(SOURCE_LOCALE_PATH, LAZY_SOURCE_LOCALES);
 }
 
 async function readSourceLocaleRaw(): Promise<string> {
-  return await readControlUiSourceCatalog(
-    SOURCE_LOCALE_PATH,
-    ACTIVITY_SOURCE_LOCALE_PATH,
-    SESSION_PLACEMENT_SOURCE_LOCALE_PATH,
-  );
+  return await readControlUiSourceCatalog(SOURCE_LOCALE_PATH, LAZY_SOURCE_LOCALES);
 }
 
 type PlaceholderMismatch = {

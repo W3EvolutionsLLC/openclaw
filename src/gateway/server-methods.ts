@@ -179,6 +179,10 @@ const CORE_GATEWAY_HANDLER_MODULES = {
     import("./server-methods/sessions-mutations.js").then(
       (module) => module.sessionMutationHandlers,
     ),
+  "sessions-operations": () =>
+    import("./server-methods/sessions-operations.js").then(
+      (module) => module.sessionOperationHandlers,
+    ),
   "sessions-read": () =>
     import("./server-methods/sessions-read.js").then((module) => module.sessionReadHandlers),
   "sessions-rewind": () =>

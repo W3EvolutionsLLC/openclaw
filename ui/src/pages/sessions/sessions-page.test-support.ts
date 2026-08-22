@@ -14,7 +14,7 @@ import type {
 import type { SessionRefreshOptions } from "../../lib/sessions/session-capability.ts";
 import { sessionMutationGatewayHello } from "../../test-helpers/gateway-methods.ts";
 import type { SessionsRouteData } from "./route.ts";
-import type { TranscriptSearchState } from "./view.ts";
+import type { BulkMessageReview, TranscriptSearchState } from "./view.ts";
 import "./sessions-page.ts";
 
 export type TestSessionsPage = HTMLElement & {
@@ -28,6 +28,8 @@ export type TestSessionsPage = HTMLElement & {
   loading: boolean;
   statusFilter: "active" | "archived" | "all";
   selectedKeys: Set<string>;
+  bulkMessageReview: BulkMessageReview | null;
+  bulkMessageTargets: Array<{ key: string; sessionId: string; agentId?: string }>;
   sessionMenu: { key: string; x: number; y: number } | null;
   sessionMenuTrigger: HTMLElement | null;
   checkpointItemsByKey: Record<string, SessionCompactionCheckpoint[]>;
@@ -39,6 +41,10 @@ export type TestSessionsPage = HTMLElement & {
   transcriptSearch: TranscriptSearchState;
   updateTranscriptSearchQuery: (query: string) => void;
   runTranscriptSearch: () => Promise<void>;
+  openBulkMessageReview: () => void;
+  updateBulkMessage: (message: string) => void;
+  submitBulkMessage: () => Promise<void>;
+  selectAllMatching: () => Promise<void>;
   loadCheckpoint: (sessionKey: string) => Promise<void>;
   deleteSelected: () => Promise<void>;
   deleteSessionFromMenu: (row: GatewaySessionRow) => Promise<void>;
@@ -232,6 +238,7 @@ export async function createRenderedPage(
     error: null,
     expandedSessionKey,
     statusFilter,
+    viewMode: "sessions",
   };
   document.body.append(page);
   await page.updateComplete;

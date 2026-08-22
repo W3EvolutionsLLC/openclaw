@@ -22,33 +22,33 @@ export async function loadControlUiLocaleCatalog(
 
 export async function loadControlUiSourceCatalog(
   sourceLocalePath: string,
-  activitySourceLocalePath: string,
-  sessionPlacementSourceLocalePath: string,
+  lazySourceLocales: ReadonlyArray<{ filePath: string; registerExport: string }>,
 ): Promise<TranslationMap> {
   const source = await loadControlUiLocaleCatalog(sourceLocalePath, "en");
-  const activitySource = (
-    await importControlUiLocaleModule<{
-      registerActivityEnglish: { catalog: TranslationMap };
-    }>(activitySourceLocalePath)
-  ).registerActivityEnglish.catalog;
-  const sessionPlacementSource = (
-    await importControlUiLocaleModule<{
-      registerSessionPlacementEnglish: { catalog: TranslationMap };
-    }>(sessionPlacementSourceLocalePath)
-  ).registerSessionPlacementEnglish.catalog;
-  if (!source || !activitySource || !sessionPlacementSource) {
+  const lazySources = await Promise.all(
+    lazySourceLocales.map(async ({ filePath, registerExport }) => {
+      const module =
+        await importControlUiLocaleModule<Record<string, { catalog: TranslationMap } | undefined>>(
+          filePath,
+        );
+      return module[registerExport]?.catalog ?? null;
+    }),
+  );
+  const completeLazySources = lazySources.filter(
+    (candidate): candidate is TranslationMap => candidate !== null,
+  );
+  if (!source || completeLazySources.length !== lazySources.length) {
     throw new Error("Control UI English source catalogs are incomplete");
   }
-  return mergeControlUiTranslationMaps(source, activitySource, sessionPlacementSource);
+  return mergeControlUiTranslationMaps(source, ...completeLazySources);
 }
 
 export async function readControlUiSourceCatalog(
   sourceLocalePath: string,
-  activitySourceLocalePath: string,
-  sessionPlacementSourceLocalePath: string,
+  lazySourceLocales: ReadonlyArray<{ filePath: string }>,
 ): Promise<string> {
   const sources = await Promise.all(
-    [sourceLocalePath, activitySourceLocalePath, sessionPlacementSourceLocalePath].map((filePath) =>
+    [sourceLocalePath, ...lazySourceLocales.map((source) => source.filePath)].map((filePath) =>
       readFile(filePath, "utf8"),
     ),
   );

@@ -4,6 +4,9 @@ import type {
   SessionOwner,
   SessionsAssignOwnerParams,
   SessionsDeleteResult,
+  SessionsOperation,
+  SessionsOperationSummary,
+  SessionsOperationsCreateParams,
   SessionsRecoverResult,
 } from "../../../../packages/gateway-protocol/src/index.js";
 import type { SessionCatalogPullRequestSummary } from "../../../../packages/gateway-protocol/src/schema/sessions-catalog.js";
@@ -249,6 +252,12 @@ export type SessionCapability = {
     leafEntryId: string,
     options?: { agentId?: string | null },
   ) => Promise<SessionsBranchesSwitchResult>;
+  createBulkMessageOperation: (
+    params: SessionsOperationsCreateParams,
+  ) => Promise<SessionsOperation>;
+  listSessionOperations: (limit?: number) => Promise<SessionsOperationSummary[]>;
+  getSessionOperation: (id: string) => Promise<SessionsOperation>;
+  retrySessionOperation: (id: string, requestId: string) => Promise<SessionsOperation>;
   /** Loads one connection-owned group catalog; null means the attempt retired or failed. */
   groupsLoad: () => Promise<readonly SessionGroupSettings[] | null>;
   /** Generation of the catalog/defaults snapshot used by group-target routes. */

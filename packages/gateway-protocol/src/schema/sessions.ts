@@ -507,6 +507,8 @@ export const SessionsCreateResultSchema = Type.Object(
 export const SessionsSendParamsSchema = closedObject({
   key: NonEmptyString,
   agentId: Type.Optional(NonEmptyString),
+  /** Reject the send if this key was reset or replaced before admission. */
+  expectedSessionId: Type.Optional(NonEmptyString),
   message: Type.String(),
   thinking: Type.Optional(Type.String()),
   attachments: Type.Optional(ChatAttachmentsSchema),

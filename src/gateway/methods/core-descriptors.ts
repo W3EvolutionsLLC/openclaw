@@ -627,6 +627,11 @@ const CORE_GATEWAY_METHOD_SPECS = [
     { controlPlaneWrite: true },
   ],
   ["diagnostics.lanes", "diagnostics", "operator.read", "2026.8"],
+  // Durable bulk session operations append so every older advertised index stays stable.
+  ["sessions.operations.create", "sessions-operations", "operator.write", "2026.8"],
+  ["sessions.operations.list", "sessions-operations", "operator.read", "2026.8"],
+  ["sessions.operations.get", "sessions-operations", "operator.read", "2026.8"],
+  ["sessions.operations.retry", "sessions-operations", "operator.write", "2026.8"],
 ] as const satisfies readonly CoreGatewayMethodSpecRow[];
 
 export type CoreGatewayHandlerFamily = Exclude<(typeof CORE_GATEWAY_METHOD_SPECS)[number][1], null>;

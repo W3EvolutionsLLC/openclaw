@@ -23,6 +23,7 @@ export {
   setTaskCleanupAfterById,
   setTaskRunDeliveryStatusByRunId,
   updateTaskNotifyPolicyById,
+  updateTaskProgressDetailById,
 } from "./task-registry-record-api.js";
 export {
   deleteTaskRecordById,

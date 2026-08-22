@@ -33,12 +33,21 @@ describe("renderSessionsHubTabs", () => {
     const tabs = [...container.querySelectorAll<HTMLElement>("wa-tab")];
 
     expect(group?.getAttribute("activation")).toBe("manual");
-    expect(tabs.map((tab) => tab.id)).toEqual(["sessions-tab-sessions", "sessions-tab-worktrees"]);
+    expect(tabs.map((tab) => tab.id)).toEqual([
+      "sessions-tab-sessions",
+      "sessions-tab-operations",
+      "sessions-tab-worktrees",
+    ]);
     expect(tabs.map((tab) => tab.getAttribute("aria-controls"))).toEqual([
       "sessions-hub-panel",
       "sessions-hub-panel",
+      "sessions-hub-panel",
     ]);
-    expect(tabs.map((tab) => tab.getAttribute("aria-selected"))).toEqual(["false", "true"]);
+    expect(tabs.map((tab) => tab.getAttribute("aria-selected"))).toEqual([
+      "false",
+      "false",
+      "true",
+    ]);
   });
 
   it("delegates cross-route selection", async () => {

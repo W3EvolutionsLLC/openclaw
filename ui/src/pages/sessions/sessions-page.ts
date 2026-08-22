@@ -4,6 +4,11 @@ import { parseStrictPositiveInteger } from "@openclaw/normalization-core/number-
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { html, nothing, type PropertyValues } from "lit";
 import { property, state } from "lit/decorators.js";
+import type {
+  SessionsOperation,
+  SessionsOperationSummary,
+} from "../../../../packages/gateway-protocol/src/index.js";
+import { SESSIONS_OPERATION_MAX_TARGETS } from "../../../../packages/gateway-protocol/src/schema/sessions-operations-constants.js";
 import type { GatewayBrowserClient } from "../../api/gateway.ts";
 import type {
   GatewaySessionRow,
@@ -76,9 +81,17 @@ import {
   sessionAgentIds,
 } from "./agent-scope.ts";
 import { rememberSessionCustomGroup, sessionCategoryNames } from "./custom-groups.ts";
+import { renderSessionsOperations } from "./operations-view.ts";
 import { loadStoredGroupBy, saveStoredGroupBy } from "./page-state.ts";
-import { sessionsPageListQuery, type SessionsRouteData } from "./route.ts";
-import { renderSessions, type SessionsProps, type TranscriptSearchState } from "./view.ts";
+import { sessionsPageListQuery, type SessionsRouteData, type SessionsViewMode } from "./route.ts";
+import {
+  filterSessionRowsForQuery,
+  renderSessions,
+  type BulkMessageReview,
+  type SessionsProps,
+  type SessionsSearchMode,
+  type TranscriptSearchState,
+} from "./view.ts";
 
 const SESSIONS_DOCS_URL = "https://docs.openclaw.ai/concepts/session";
 
@@ -97,6 +110,12 @@ type SessionsPageMutationResult = "completed" | "failed" | "stale";
 type InputDialogOpener = (typeof import("../../components/input-dialog.ts"))["showInputDialog"];
 
 type SessionDeleteRow = Pick<GatewaySessionRow, "key" | "archived" | "sessionId">;
+
+type BulkMessageTargetSnapshot = {
+  key: string;
+  sessionId: string;
+  agentId?: string;
+};
 
 type SessionsPageListBinding = {
   sessions: ApplicationContext["sessions"];
@@ -118,6 +137,8 @@ class SessionsPage extends OpenClawLightDomElement {
   @state() private includeGlobal = true;
   @state() private includeUnknown = false;
   @state() private statusFilter: SessionArchivedFilter = "active";
+  @state() private viewMode: SessionsViewMode = "sessions";
+  @state() private searchMode: SessionsSearchMode = "sessions";
   @state() private searchQuery = "";
   @state() private transcriptSearchQuery = "";
   @state() private submittedTranscriptSearchQuery = "";
@@ -128,6 +149,16 @@ class SessionsPage extends OpenClawLightDomElement {
   @state() private page = 0;
   @state() private pageSize = 25;
   @state() private selectedKeys = new Set<string>();
+  @state() private selectAllMatchingLoading = false;
+  @state() private allMatchingSelected = false;
+  private selectedRowsByKey = new Map<string, GatewaySessionRow>();
+  @state() private bulkMessageReview: BulkMessageReview | null = null;
+  private bulkMessageTargets: BulkMessageTargetSnapshot[] = [];
+  @state() private operations: SessionsOperationSummary[] = [];
+  @state() private operationsLoading = false;
+  @state() private operationsError: string | null = null;
+  @state() private operationDetails: Record<string, SessionsOperation> = {};
+  @state() private operationBusyId: string | null = null;
   @state() private sessionMenu: { key: string; x: number; y: number } | null = null;
   @state() private sessionMenuWork: SessionMenuWork | null = null;
   @state() private expandedSessionKey: string | null = null;
@@ -185,6 +216,9 @@ class SessionsPage extends OpenClawLightDomElement {
       const retiredResult = this.listBinding?.sessions.listSnapshot(this.listBinding.query).result;
       this.resetProviderState();
       this.appliedListResult = retiredResult;
+      if (this.viewMode === "operations") {
+        void this.refreshOperations();
+      }
     },
     invalidateRequests: () => this.invalidatePageWork(),
   });
@@ -301,6 +335,16 @@ class SessionsPage extends OpenClawLightDomElement {
     this.loading = false;
     this.resetTranscriptSearchState("");
     this.selectedKeys = new Set();
+    this.selectedRowsByKey.clear();
+    this.selectAllMatchingLoading = false;
+    this.allMatchingSelected = false;
+    this.bulkMessageReview = null;
+    this.bulkMessageTargets = [];
+    this.operations = [];
+    this.operationsLoading = false;
+    this.operationsError = null;
+    this.operationDetails = {};
+    this.operationBusyId = null;
     this.expandedSessionKey = null;
     this.deepLinkSessionKey = null;
     this.checkpointItemsByKey = {};
@@ -402,6 +446,12 @@ class SessionsPage extends OpenClawLightDomElement {
       return;
     }
     this.statusFilter = data.statusFilter;
+    const nextViewMode = data.viewMode ?? "sessions";
+    const viewChanged = this.viewMode !== nextViewMode;
+    this.viewMode = nextViewMode;
+    if (this.viewMode === "operations" && (viewChanged || this.operations.length === 0)) {
+      void this.refreshOperations();
+    }
     if (data.expandedSessionKey) {
       this.activeMinutes = "";
       this.limit = String(DEFAULT_SESSION_LIST_QUERY.limit);
@@ -640,6 +690,9 @@ class SessionsPage extends OpenClawLightDomElement {
     this.includeUnknown = next.includeUnknown;
     this.page = 0;
     this.selectedKeys = new Set();
+    this.selectedRowsByKey.clear();
+    this.allMatchingSelected = false;
+    this.closeBulkMessageReview();
     // Explicit filter edits leave deep-link mode; load the full roster.
     this.deepLinkSessionKey = null;
     void this.refreshSessionList();
@@ -653,6 +706,9 @@ class SessionsPage extends OpenClawLightDomElement {
     this.statusFilter = statusFilter;
     this.page = 0;
     this.selectedKeys = new Set();
+    this.selectedRowsByKey.clear();
+    this.allMatchingSelected = false;
+    this.closeBulkMessageReview();
     this.deepLinkSessionKey = null;
     // Route navigation refetches (statusFilter is in loaderDeps); mask the old
     // view's rows until the new result applies via applyRouteData.
@@ -660,8 +716,268 @@ class SessionsPage extends OpenClawLightDomElement {
     this.error = null;
     context.navigate(
       "sessions",
-      statusFilter === "active" ? undefined : { search: `?status=${statusFilter}` },
+      statusFilter === "active"
+        ? undefined
+        : {
+            search: `?status=${statusFilter}${this.viewMode === "operations" ? "&view=operations" : ""}`,
+          },
     );
+  }
+
+  private async selectAllMatching() {
+    const scope = this.captureRequestScope();
+    if (!scope || this.selectAllMatchingLoading) {
+      return;
+    }
+    this.selectAllMatchingLoading = true;
+    try {
+      const { search: _deepLinkSearch, ...filters } = this.sessionListOptions(scope.context);
+      const listed = await fetchPagedSessionRows({
+        list: (offset) => scope.sessions.list({ ...filters, limit: 1000, offset }),
+        isCurrent: () => this.isRequestScopeCurrent(scope),
+        missingResultError: "session enumeration returned no result",
+        stalledPaginationError: "session enumeration did not advance",
+        incompletePaginationError: "session enumeration was incomplete",
+      });
+      if (!listed || !this.isRequestScopeCurrent(scope)) {
+        return;
+      }
+      const result: SessionsListResult = this.result
+        ? { ...this.result, count: listed.length, sessions: listed }
+        : {
+            ts: Date.now(),
+            path: "(multiple)",
+            count: listed.length,
+            defaults: { modelProvider: null, model: null, contextTokens: null },
+            sessions: listed,
+          };
+      this.ensureAgentIdentities(result);
+      const rows = filterSessionRowsForQuery(
+        listed,
+        this.searchQuery,
+        sessionAgentIdentityById(
+          result,
+          (agentId) => scope.context.agentIdentity.get(agentId) ?? undefined,
+        ),
+      );
+      this.selectedRowsByKey = new Map(rows.map((row) => [row.key, row]));
+      this.selectedKeys = new Set(rows.map((row) => row.key));
+      this.allMatchingSelected = true;
+      this.closeBulkMessageReview();
+    } catch (error) {
+      if (this.isRequestScopeCurrent(scope)) {
+        this.error = formatUiError(error);
+      }
+    } finally {
+      if (this.isRequestScopeCurrent(scope)) {
+        this.selectAllMatchingLoading = false;
+      }
+    }
+  }
+
+  private openBulkMessageReview() {
+    const currentRows = new Map((this.result?.sessions ?? []).map((row) => [row.key, row]));
+    const selected = [...this.selectedKeys].flatMap((key) => {
+      const row = this.selectedRowsByKey.get(key) ?? currentRows.get(key);
+      return row ? [row] : [];
+    });
+    const eligible = selected.filter(
+      (row): row is GatewaySessionRow & { sessionId: string } =>
+        row.archived !== true && Boolean(row.sessionId?.trim()),
+    );
+    const overLimit = eligible.length > SESSIONS_OPERATION_MAX_TARGETS;
+    this.bulkMessageTargets = overLimit
+      ? []
+      : eligible.map((row) => {
+          const agentId = this.sessionAgentId(row.key);
+          return {
+            key: row.key,
+            sessionId: row.sessionId,
+            ...(agentId ? { agentId } : {}),
+          };
+        });
+    this.bulkMessageReview = {
+      recipients: overLimit ? 0 : eligible.length,
+      busy: eligible.filter((row) => row.hasActiveRun === true).length,
+      excluded: Math.max(0, this.selectedKeys.size - eligible.length),
+      message: this.bulkMessageReview?.message ?? "",
+      submitting: false,
+      ...(overLimit
+        ? {
+            error: t("sessionsView.bulkMessageLimit", {
+              count: String(SESSIONS_OPERATION_MAX_TARGETS),
+            }),
+          }
+        : {}),
+    };
+  }
+
+  private updateBulkMessage(message: string) {
+    if (this.bulkMessageReview) {
+      this.bulkMessageReview = { ...this.bulkMessageReview, message, error: undefined };
+    }
+  }
+
+  private closeBulkMessageReview() {
+    this.bulkMessageReview = null;
+    this.bulkMessageTargets = [];
+  }
+
+  private async submitBulkMessage() {
+    const review = this.bulkMessageReview;
+    const message = review?.message.trim();
+    if (!review || !message || review.submitting || this.bulkMessageTargets.length === 0) {
+      return;
+    }
+    this.bulkMessageReview = { ...review, submitting: true, error: undefined };
+    // The durable Gateway operation is wired here by the Sessions capability;
+    // page state owns only the frozen audience and transient composer draft.
+    await this.startBulkMessageOperation(message);
+  }
+
+  private async startBulkMessageOperation(message: string) {
+    const scope = this.captureRequestScope();
+    if (!scope || !this.bulkMessageReview) {
+      return;
+    }
+    const params = {
+      requestId: crypto.randomUUID(),
+      message,
+      targets: this.bulkMessageTargets.map(({ key, agentId, sessionId }) => ({
+        key,
+        expectedSessionId: sessionId,
+        ...(agentId ? { agentId } : {}),
+      })),
+    };
+    if (
+      !this.requireMutationAccess(scope, {
+        method: "sessions.operations.create",
+        params,
+        requiredScope: "operator.write",
+      })
+    ) {
+      this.bulkMessageReview = {
+        ...this.bulkMessageReview,
+        submitting: false,
+        error: this.error ?? t("sessionsView.actionUnavailable"),
+      };
+      return;
+    }
+    try {
+      const operation = await scope.sessions.createBulkMessageOperation(params);
+      if (!this.isRequestScopeCurrent(scope)) {
+        return;
+      }
+      this.operations = [operation, ...this.operations.filter((item) => item.id !== operation.id)];
+      this.operationDetails = { ...this.operationDetails, [operation.id]: operation };
+      this.selectedKeys = new Set();
+      this.selectedRowsByKey.clear();
+      this.allMatchingSelected = false;
+      this.closeBulkMessageReview();
+      scope.context.navigate("sessions", { search: "?view=operations" });
+    } catch (error) {
+      if (this.isRequestScopeCurrent(scope) && this.bulkMessageReview) {
+        this.bulkMessageReview = {
+          ...this.bulkMessageReview,
+          submitting: false,
+          error: formatUiError(error),
+        };
+      }
+    }
+  }
+
+  private async refreshOperations(scope = this.captureRequestScope()) {
+    if (!scope || this.operationsLoading) {
+      return;
+    }
+    if (isGatewayMethodAdvertised(scope.gateway.snapshot, "sessions.operations.list") !== true) {
+      this.operationsError = t("sessionsView.operationsUnavailable");
+      return;
+    }
+    this.operationsLoading = true;
+    this.operationsError = null;
+    try {
+      const operations = await scope.sessions.listSessionOperations();
+      if (this.isRequestScopeCurrent(scope)) {
+        this.operations = operations;
+      }
+    } catch (error) {
+      if (this.isRequestScopeCurrent(scope)) {
+        this.operationsError = formatUiError(error);
+      }
+    } finally {
+      if (this.isRequestScopeCurrent(scope)) {
+        this.operationsLoading = false;
+      }
+    }
+  }
+
+  private async toggleOperationDetails(id: string) {
+    if (this.operationDetails[id]) {
+      const details = { ...this.operationDetails };
+      delete details[id];
+      this.operationDetails = details;
+      return;
+    }
+    const scope = this.captureRequestScope();
+    if (!scope) {
+      return;
+    }
+    this.operationBusyId = id;
+    try {
+      const operation = await scope.sessions.getSessionOperation(id);
+      if (this.isRequestScopeCurrent(scope)) {
+        this.operationDetails = { ...this.operationDetails, [id]: operation };
+      }
+    } catch (error) {
+      if (this.isRequestScopeCurrent(scope)) {
+        this.operationsError = formatUiError(error);
+      }
+    } finally {
+      if (this.isRequestScopeCurrent(scope) && this.operationBusyId === id) {
+        this.operationBusyId = null;
+      }
+    }
+  }
+
+  private async retryOperation(id: string) {
+    const scope = this.captureRequestScope();
+    if (!scope || this.operationBusyId) {
+      return;
+    }
+    const requestId = crypto.randomUUID();
+    if (
+      !this.requireMutationAccess(scope, {
+        method: "sessions.operations.retry",
+        params: { id, requestId },
+        requiredScope: "operator.write",
+      })
+    ) {
+      return;
+    }
+    this.operationBusyId = id;
+    try {
+      const operation = await scope.sessions.retrySessionOperation(id, requestId);
+      if (this.isRequestScopeCurrent(scope)) {
+        this.operationDetails = { ...this.operationDetails, [operation.id]: operation };
+        const resolvedOriginal = await scope.sessions.getSessionOperation(id);
+        if (this.isRequestScopeCurrent(scope)) {
+          this.operations = [
+            operation,
+            ...this.operations.map((item) => (item.id === id ? resolvedOriginal : item)),
+          ];
+          this.operationDetails = { ...this.operationDetails, [id]: resolvedOriginal };
+        }
+      }
+    } catch (error) {
+      if (this.isRequestScopeCurrent(scope)) {
+        this.operationsError = formatUiError(error);
+      }
+    } finally {
+      if (this.isRequestScopeCurrent(scope) && this.operationBusyId === id) {
+        this.operationBusyId = null;
+      }
+    }
   }
 
   private async deleteSelected() {
@@ -1517,172 +1833,243 @@ class SessionsPage extends OpenClawLightDomElement {
     }
     return html`
       ${renderSessionsHubHeader({
-        active: "sessions",
+        active: this.viewMode,
         title: titleForRoute("sessions"),
-        subtitle: html`${subtitleForRoute("sessions")}
+        subtitle: html`${this.viewMode === "operations"
+          ? t("sessionsView.operationsSubtitle")
+          : subtitleForRoute("sessions")}
         ${renderDocsLink(SESSIONS_DOCS_URL, t("common.learnMore"))}`,
         actions: renderAgentScopeControl({
           agents: context.agents.state.agentsList?.agents ?? [],
           selection: context.agentSelection,
         }),
         onSelect: (tab) => {
-          if (tab !== "sessions") {
+          if (tab === "operations") {
+            context.navigate("sessions", { search: "?view=operations" });
+          } else if (tab === "sessions") {
+            context.navigate("sessions");
+          } else {
             context.navigate(tab);
           }
         },
       })}
       ${renderSettingsWorkspace(
-        renderSessions({
-          loading: this.loading,
-          result: this.result,
-          error: this.error,
-          activeMinutes: this.activeMinutes,
-          limit: this.limit,
-          includeGlobal: this.includeGlobal,
-          includeUnknown: this.includeUnknown,
-          statusFilter: this.statusFilter,
-          basePath: context.basePath,
-          agentId: resolveSessionNavigationAgentId(context),
-          mainKey: resolveUiConfiguredMainKey({
-            agentsList: context.agents.state.agentsList,
-            hello: context.gateway.snapshot.hello,
-          }),
-          searchQuery: this.searchQuery,
-          transcriptSearchAvailable:
-            isGatewayMethodAdvertised(context.gateway.snapshot, "sessions.search") === true,
-          transcriptSearchQuery: this.transcriptSearchQuery,
-          transcriptSearch:
-            this.transcriptSearchTask.status === TaskStatus.PENDING
-              ? { status: "loading" }
-              : this.transcriptSearch,
-          agentIdentityById: sessionAgentIdentityById(
-            this.result,
-            (agentId) => context.agentIdentity.get(agentId) ?? undefined,
-          ),
-          sortColumn: this.sortColumn,
-          sortDir: this.sortDir,
-          // Same reconnect resilience as the sidebar: the stored Person
-          // preference survives a temporarily hidden identity capability.
-          groupBy: personGroupingAvailable || this.groupBy !== "person" ? this.groupBy : "none",
-          personGroupingAvailable,
-          knownCategories: this.knownCategories(),
-          page: this.page,
-          pageSize: this.pageSize,
-          selectedKeys: this.selectedKeys,
-          sessionMenu: this.sessionMenu,
-          expandedSessionKey: this.expandedSessionKey,
-          checkpointItemsByKey: this.checkpointItemsByKey,
-          checkpointLoadingKey: this.checkpointLoadingKey,
-          checkpointBusyKey: this.checkpointBusyKey,
-          checkpointErrorByKey: this.checkpointErrorByKey,
-          patchWriteDisabledReason: this.mutationDisabledReason({
-            method: "sessions.patch",
-            params: { key: "", label: null },
-          }),
-          patchAdminDisabledReason: this.mutationDisabledReason({
-            method: "sessions.patch",
-            params: { key: "", thinkingLevel: null },
-          }),
-          groupWriteDisabledReason: this.mutationDisabledReason({
-            method: "sessions.groups.put",
-            requiredScope: "operator.write",
-          }),
-          deleteArchivedDisabledReason: this.mutationDisabledReason({
-            method: "sessions.delete",
-            params: { key: "", archivedOnly: true, deleteTranscript: true },
-          }),
-          checkpointBranchDisabledReason: this.mutationDisabledReason({
-            method: "sessions.compaction.branch",
-            requiredScope: "operator.write",
-          }),
-          checkpointRestoreDisabledReason: this.mutationDisabledReason({
-            method: "sessions.compaction.restore",
-            requiredScope: "operator.admin",
-          }),
-          deleteSelectedDisabledReason: this.selectedDeleteDisabledReason(),
-          onFiltersChange: (next) => this.updateFilters(next),
-          onClearFilters: () => {
-            this.activeMinutes = "";
-            this.limit = String(DEFAULT_SESSION_LIST_QUERY.limit);
-            this.includeGlobal = true;
-            this.includeUnknown = false;
-            this.searchQuery = "";
-            this.page = 0;
-            this.selectedKeys = new Set();
-            this.deepLinkSessionKey = null;
-            void this.refreshSessionList();
-          },
-          onSearchChange: (query) => {
-            this.searchQuery = query;
-            this.page = 0;
-            this.selectedKeys = new Set();
-          },
-          onTranscriptSearchChange: (query) => this.updateTranscriptSearchQuery(query),
-          onTranscriptSearch: () => void this.runTranscriptSearch(),
-          onClearTranscriptSearch: () => this.clearTranscriptSearch(),
-          onSortChange: (column, direction) => {
-            this.sortColumn = column;
-            this.sortDir = direction;
-            this.page = 0;
-          },
-          onGroupByChange: (mode) => this.setGroupBy(mode),
-          onAssignCategory: (key, category) => this.assignCategory(key, category),
-          onRequestNewCategory: (sessionKey) => void this.requestNewCategory(sessionKey),
-          onPageChange: (page) => {
-            this.page = page;
-          },
-          onPageSizeChange: (pageSize) => {
-            this.pageSize = pageSize;
-            this.page = 0;
-          },
-          onRefresh: () => void this.refreshSessionList(),
-          onStatusFilterChange: (statusFilter) => this.updateStatusFilter(statusFilter),
-          onDeleteAllArchived: () => void this.deleteAllArchived(),
-          onPatch: (key, patch) => void this.patchSession(key, patch),
-          onToggleSelect: (key) => {
-            const next = new Set(this.selectedKeys);
-            if (next.has(key)) {
-              next.delete(key);
-            } else {
-              next.add(key);
-            }
-            this.selectedKeys = next;
-          },
-          onSelectPage: (keys) => {
-            this.selectedKeys = new Set([...this.selectedKeys, ...keys]);
-          },
-          onDeselectPage: (keys) => {
-            const next = new Set(this.selectedKeys);
-            for (const key of keys) {
-              next.delete(key);
-            }
-            this.selectedKeys = next;
-          },
-          onDeselectAll: () => {
-            this.selectedKeys = new Set();
-          },
-          onDeleteSelected: () => void this.deleteSelected(),
-          onNavigateToChat: (sessionKey) => {
-            const face = resolveSessionPreferredFaceForKey(context, sessionKey);
-            context.navigate(face, {
-              ...sessionNavigationTarget({
-                context,
-                face,
-                sessionKey,
-                agentId: this.sessionPathAgentId(sessionKey, context),
-                preferenceDerivedFace: true,
-              }).options,
-              hash: "",
-            });
-          },
-          onOpenSessionMenu: (row, position, trigger) =>
-            this.openSessionMenu(row, position, trigger),
-          onToggleDetails: (sessionKey) => void this.toggleSessionDetails(sessionKey),
-          onBranchFromCheckpoint: (sessionKey, checkpointId) =>
-            void this.branchCheckpoint(sessionKey, checkpointId),
-          onRestoreCheckpoint: (sessionKey, checkpointId) =>
-            void this.restoreCheckpoint(sessionKey, checkpointId),
-        }),
+        this.viewMode === "operations"
+          ? renderSessionsOperations({
+              operations: this.operations,
+              details: this.operationDetails,
+              loading: this.operationsLoading,
+              error: this.operationsError,
+              busyId: this.operationBusyId,
+              retryDisabledReason: this.mutationDisabledReason({
+                method: "sessions.operations.retry",
+                params: { id: "", requestId: "" },
+                requiredScope: "operator.write",
+              }),
+              onRefresh: () => void this.refreshOperations(),
+              onToggleDetails: (id) => void this.toggleOperationDetails(id),
+              onRetry: (id) => void this.retryOperation(id),
+            })
+          : renderSessions({
+              loading: this.loading,
+              result: this.result,
+              error: this.error,
+              activeMinutes: this.activeMinutes,
+              limit: this.limit,
+              includeGlobal: this.includeGlobal,
+              includeUnknown: this.includeUnknown,
+              statusFilter: this.statusFilter,
+              basePath: context.basePath,
+              agentId: resolveSessionNavigationAgentId(context),
+              mainKey: resolveUiConfiguredMainKey({
+                agentsList: context.agents.state.agentsList,
+                hello: context.gateway.snapshot.hello,
+              }),
+              searchMode: this.searchMode,
+              searchQuery: this.searchQuery,
+              transcriptSearchAvailable:
+                isGatewayMethodAdvertised(context.gateway.snapshot, "sessions.search") === true,
+              transcriptSearchQuery: this.transcriptSearchQuery,
+              transcriptSearch:
+                this.transcriptSearchTask.status === TaskStatus.PENDING
+                  ? { status: "loading" }
+                  : this.transcriptSearch,
+              agentIdentityById: sessionAgentIdentityById(
+                this.result,
+                (agentId) => context.agentIdentity.get(agentId) ?? undefined,
+              ),
+              sortColumn: this.sortColumn,
+              sortDir: this.sortDir,
+              // Same reconnect resilience as the sidebar: the stored Person
+              // preference survives a temporarily hidden identity capability.
+              groupBy: personGroupingAvailable || this.groupBy !== "person" ? this.groupBy : "none",
+              personGroupingAvailable,
+              knownCategories: this.knownCategories(),
+              page: this.page,
+              pageSize: this.pageSize,
+              selectedKeys: this.selectedKeys,
+              matchingCount: this.allMatchingSelected
+                ? this.selectedKeys.size
+                : (this.result?.totalCount ?? this.result?.sessions.length ?? 0),
+              selectAllMatchingLoading: this.selectAllMatchingLoading,
+              bulkMessageAvailable:
+                isGatewayMethodAdvertised(
+                  context.gateway.snapshot,
+                  "sessions.operations.create",
+                ) === true,
+              bulkMessageReview: this.bulkMessageReview,
+              sessionMenu: this.sessionMenu,
+              expandedSessionKey: this.expandedSessionKey,
+              checkpointItemsByKey: this.checkpointItemsByKey,
+              checkpointLoadingKey: this.checkpointLoadingKey,
+              checkpointBusyKey: this.checkpointBusyKey,
+              checkpointErrorByKey: this.checkpointErrorByKey,
+              patchWriteDisabledReason: this.mutationDisabledReason({
+                method: "sessions.patch",
+                params: { key: "", label: null },
+              }),
+              patchAdminDisabledReason: this.mutationDisabledReason({
+                method: "sessions.patch",
+                params: { key: "", thinkingLevel: null },
+              }),
+              groupWriteDisabledReason: this.mutationDisabledReason({
+                method: "sessions.groups.put",
+                requiredScope: "operator.write",
+              }),
+              deleteArchivedDisabledReason: this.mutationDisabledReason({
+                method: "sessions.delete",
+                params: { key: "", archivedOnly: true, deleteTranscript: true },
+              }),
+              checkpointBranchDisabledReason: this.mutationDisabledReason({
+                method: "sessions.compaction.branch",
+                requiredScope: "operator.write",
+              }),
+              checkpointRestoreDisabledReason: this.mutationDisabledReason({
+                method: "sessions.compaction.restore",
+                requiredScope: "operator.admin",
+              }),
+              deleteSelectedDisabledReason: this.selectedDeleteDisabledReason(),
+              onFiltersChange: (next) => this.updateFilters(next),
+              onClearFilters: () => {
+                this.activeMinutes = "";
+                this.limit = String(DEFAULT_SESSION_LIST_QUERY.limit);
+                this.includeGlobal = true;
+                this.includeUnknown = false;
+                this.searchQuery = "";
+                this.page = 0;
+                this.selectedKeys = new Set();
+                this.selectedRowsByKey.clear();
+                this.allMatchingSelected = false;
+                this.closeBulkMessageReview();
+                this.deepLinkSessionKey = null;
+                void this.refreshSessionList();
+              },
+              onSearchModeChange: (mode) => {
+                this.searchMode = mode;
+                this.page = 0;
+                this.selectedKeys = new Set();
+                this.selectedRowsByKey.clear();
+                this.allMatchingSelected = false;
+                this.closeBulkMessageReview();
+                this.closeBulkMessageReview();
+              },
+              onSearchChange: (query) => {
+                this.searchQuery = query;
+                this.page = 0;
+                this.selectedKeys = new Set();
+              },
+              onTranscriptSearchChange: (query) => this.updateTranscriptSearchQuery(query),
+              onTranscriptSearch: () => void this.runTranscriptSearch(),
+              onClearTranscriptSearch: () => this.clearTranscriptSearch(),
+              onSortChange: (column, direction) => {
+                this.sortColumn = column;
+                this.sortDir = direction;
+                this.page = 0;
+              },
+              onGroupByChange: (mode) => this.setGroupBy(mode),
+              onAssignCategory: (key, category) => this.assignCategory(key, category),
+              onRequestNewCategory: (sessionKey) => void this.requestNewCategory(sessionKey),
+              onPageChange: (page) => {
+                this.page = page;
+              },
+              onPageSizeChange: (pageSize) => {
+                this.pageSize = pageSize;
+                this.page = 0;
+              },
+              onRefresh: () => void this.refreshSessionList(),
+              onStatusFilterChange: (statusFilter) => this.updateStatusFilter(statusFilter),
+              onDeleteAllArchived: () => void this.deleteAllArchived(),
+              onPatch: (key, patch) => void this.patchSession(key, patch),
+              onToggleSelect: (key) => {
+                this.closeBulkMessageReview();
+                this.allMatchingSelected = false;
+                const next = new Set(this.selectedKeys);
+                if (next.has(key)) {
+                  next.delete(key);
+                  this.selectedRowsByKey.delete(key);
+                } else {
+                  next.add(key);
+                  const row = this.result?.sessions.find((session) => session.key === key);
+                  if (row) {
+                    this.selectedRowsByKey.set(key, row);
+                  }
+                }
+                this.selectedKeys = next;
+              },
+              onSelectPage: (keys) => {
+                this.closeBulkMessageReview();
+                this.allMatchingSelected = false;
+                this.selectedKeys = new Set([...this.selectedKeys, ...keys]);
+                for (const row of this.result?.sessions ?? []) {
+                  if (keys.includes(row.key)) {
+                    this.selectedRowsByKey.set(row.key, row);
+                  }
+                }
+              },
+              onDeselectPage: (keys) => {
+                this.closeBulkMessageReview();
+                this.allMatchingSelected = false;
+                const next = new Set(this.selectedKeys);
+                for (const key of keys) {
+                  next.delete(key);
+                  this.selectedRowsByKey.delete(key);
+                }
+                this.selectedKeys = next;
+              },
+              onDeselectAll: () => {
+                this.selectedKeys = new Set();
+                this.selectedRowsByKey.clear();
+                this.allMatchingSelected = false;
+                this.closeBulkMessageReview();
+              },
+              onSelectAllMatching: () => void this.selectAllMatching(),
+              onOpenBulkMessage: () => this.openBulkMessageReview(),
+              onBulkMessageChange: (message) => this.updateBulkMessage(message),
+              onSubmitBulkMessage: () => void this.submitBulkMessage(),
+              onCancelBulkMessage: () => this.closeBulkMessageReview(),
+              onDeleteSelected: () => void this.deleteSelected(),
+              onNewSession: () => context.navigate("new-session"),
+              onNavigateToChat: (sessionKey) => {
+                const face = resolveSessionPreferredFaceForKey(context, sessionKey);
+                context.navigate(face, {
+                  ...sessionNavigationTarget({
+                    context,
+                    face,
+                    sessionKey,
+                    agentId: this.sessionPathAgentId(sessionKey, context),
+                    preferenceDerivedFace: true,
+                  }).options,
+                  hash: "",
+                });
+              },
+              onOpenSessionMenu: (row, position, trigger) =>
+                this.openSessionMenu(row, position, trigger),
+              onToggleDetails: (sessionKey) => void this.toggleSessionDetails(sessionKey),
+              onBranchFromCheckpoint: (sessionKey, checkpointId) =>
+                void this.branchCheckpoint(sessionKey, checkpointId),
+              onRestoreCheckpoint: (sessionKey, checkpointId) =>
+                void this.restoreCheckpoint(sessionKey, checkpointId),
+            }),
         { id: "sessions-hub-panel" },
       )}
       ${this.renderSessionMenu()}

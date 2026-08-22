@@ -29,6 +29,22 @@ export {
 export * from "./schema/session-classification.js";
 export * from "./schema/sessions-suggestions.js";
 export * from "./schema/sessions-delete.js";
+export type {
+  SessionsOperation,
+  SessionsOperationCounts,
+  SessionsOperationStatus,
+  SessionsOperationSummary,
+  SessionsOperationTarget,
+  SessionsOperationTargetOutcome,
+  SessionsOperationsCreateParams,
+  SessionsOperationsCreateResult,
+  SessionsOperationsGetParams,
+  SessionsOperationsGetResult,
+  SessionsOperationsListParams,
+  SessionsOperationsListResult,
+  SessionsOperationsRetryParams,
+  SessionsOperationsRetryResult,
+} from "./schema/sessions-operations.js";
 export * from "./schema/projects.js";
 export * from "./migration-api.js";
 export type * from "./public-session-catalog.js";

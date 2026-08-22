@@ -1,4 +1,11 @@
-import type { SessionsDeleteResult } from "../../../../packages/gateway-protocol/src/index.js";
+import type {
+  SessionsDeleteResult,
+  SessionsOperationsCreateParams,
+  SessionsOperationsCreateResult,
+  SessionsOperationsGetResult,
+  SessionsOperationsListResult,
+  SessionsOperationsRetryResult,
+} from "../../../../packages/gateway-protocol/src/index.js";
 import { SESSION_ARCHIVE_REQUEST_OPTIONS } from "../../../../src/shared/session-archive-timeout.ts";
 import type {
   SessionBranch,
@@ -316,5 +323,37 @@ export function requestSessionBranchSwitch(
   return client.request<SessionsBranchesSwitchResult>("sessions.branches.switch", {
     ...buildTranscriptMutationParams(key, options.agentId),
     leafEntryId,
+  });
+}
+
+export function requestSessionsOperationCreate(
+  client: SessionRequestClient,
+  params: SessionsOperationsCreateParams,
+): Promise<SessionsOperationsCreateResult> {
+  return client.request<SessionsOperationsCreateResult>("sessions.operations.create", params);
+}
+
+export function requestSessionsOperationsList(
+  client: SessionRequestClient,
+  limit = 50,
+): Promise<SessionsOperationsListResult> {
+  return client.request<SessionsOperationsListResult>("sessions.operations.list", { limit });
+}
+
+export function requestSessionsOperationGet(
+  client: SessionRequestClient,
+  id: string,
+): Promise<SessionsOperationsGetResult> {
+  return client.request<SessionsOperationsGetResult>("sessions.operations.get", { id });
+}
+
+export function requestSessionsOperationRetry(
+  client: SessionRequestClient,
+  id: string,
+  requestId: string,
+): Promise<SessionsOperationsRetryResult> {
+  return client.request<SessionsOperationsRetryResult>("sessions.operations.retry", {
+    id,
+    requestId,
   });
 }

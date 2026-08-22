@@ -64,6 +64,23 @@ export function setTaskCleanupAfterById(params: {
   });
 }
 
+/** Persists owner-specific structured progress before publishing its next snapshot. */
+export function updateTaskProgressDetailById(params: {
+  taskId: string;
+  detail: JsonValue;
+  progressSummary?: string | null;
+  lastEventAt?: number;
+}): TaskRecord | null {
+  ensureTaskRegistryReady();
+  return updateTask(params.taskId, {
+    detail: structuredClone(params.detail),
+    ...(params.progressSummary !== undefined
+      ? { progressSummary: normalizeTaskSummary(params.progressSummary) }
+      : {}),
+    lastEventAt: params.lastEventAt ?? Date.now(),
+  });
+}
+
 export function markTaskTerminalById(params: {
   taskId: string;
   status: Extract<TaskStatus, "succeeded" | "failed" | "timed_out" | "cancelled">;

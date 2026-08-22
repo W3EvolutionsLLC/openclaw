@@ -1,7 +1,10 @@
 import { t } from "../i18n/index.ts";
+import { registerSessionsManagementEnglish } from "../i18n/locales/en-sessions-management.ts";
 import { renderHubTabs, type HubTabOption } from "./hub-tabs.ts";
 
-export type SessionsHubTab = "sessions" | "worktrees";
+registerSessionsManagementEnglish();
+
+export type SessionsHubTab = "sessions" | "operations" | "worktrees";
 
 type SessionsHubTabsProps = {
   active: SessionsHubTab;
@@ -11,6 +14,7 @@ type SessionsHubTabsProps = {
 function hubTabs(): ReadonlyArray<HubTabOption<SessionsHubTab>> {
   return [
     { value: "sessions", label: t("tabs.sessions") },
+    { value: "operations", label: t("sessionsView.operations") },
     { value: "worktrees", label: t("tabs.worktrees") },
   ];
 }

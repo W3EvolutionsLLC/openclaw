@@ -46,5 +46,6 @@ export {
   setTaskCleanupAfterById,
   setTaskRunDeliveryStatusByRunId,
   updateTaskNotifyPolicyById,
+  updateTaskProgressDetailById,
 } from "./task-registry.js";
 export type { TaskRecord } from "./task-registry.types.js";

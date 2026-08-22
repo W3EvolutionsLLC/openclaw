@@ -4,6 +4,11 @@ import {
   releaseGatewaySessionMessageSubscription,
   resetGatewaySessionMessageSubscriptionCoordinator,
 } from "@openclaw/gateway-client/browser";
+import type {
+  SessionsOperation,
+  SessionsOperationSummary,
+  SessionsOperationsCreateParams,
+} from "../../../../packages/gateway-protocol/src/index.js";
 import type { GatewayBrowserClient } from "../../api/gateway.ts";
 import type {
   SessionBranch,
@@ -40,6 +45,10 @@ import {
   requestSessionFileSet,
   requestSessionFork,
   requestSessionRewind,
+  requestSessionsOperationCreate,
+  requestSessionsOperationGet,
+  requestSessionsOperationsList,
+  requestSessionsOperationRetry,
 } from "./session-requests.ts";
 
 type SessionScopedOperationsHost = {
@@ -272,6 +281,56 @@ export function createSessionScopedOperations(host: SessionScopedOperationsHost)
     return result;
   };
 
+  const createBulkMessageOperation = async (
+    params: SessionsOperationsCreateParams,
+  ): Promise<SessionsOperation> => {
+    const scope = host.connection.capture();
+    if (!scope) {
+      throw new Error("Bulk session messaging requires an active Gateway connection");
+    }
+    const result = await requestSessionsOperationCreate(scope.client, params);
+    if (!host.connection.isCurrent(scope)) {
+      throw new Error("Bulk session messaging completed on a replaced Gateway connection");
+    }
+    return result.operation;
+  };
+
+  const listSessionOperations = async (limit?: number): Promise<SessionsOperationSummary[]> => {
+    const scope = host.connection.capture();
+    if (!scope) {
+      return [];
+    }
+    const result = await requestSessionsOperationsList(scope.client, limit);
+    return host.connection.isCurrent(scope) ? result.operations : [];
+  };
+
+  const getSessionOperation = async (id: string): Promise<SessionsOperation> => {
+    const scope = host.connection.capture();
+    if (!scope) {
+      throw new Error("Session operation details require an active Gateway connection");
+    }
+    const result = await requestSessionsOperationGet(scope.client, id);
+    if (!host.connection.isCurrent(scope)) {
+      throw new Error("Session operation details completed on a replaced Gateway connection");
+    }
+    return result.operation;
+  };
+
+  const retrySessionOperation = async (
+    id: string,
+    requestId: string,
+  ): Promise<SessionsOperation> => {
+    const scope = host.connection.capture();
+    if (!scope) {
+      throw new Error("Session operation retry requires an active Gateway connection");
+    }
+    const result = await requestSessionsOperationRetry(scope.client, id, requestId);
+    if (!host.connection.isCurrent(scope)) {
+      throw new Error("Session operation retry completed on a replaced Gateway connection");
+    }
+    return result.operation;
+  };
+
   return {
     branchCheckpoint,
     compact,
@@ -285,6 +344,10 @@ export function createSessionScopedOperations(host: SessionScopedOperationsHost)
     setFile,
     subscribeMessages,
     switchBranch,
+    createBulkMessageOperation,
+    listSessionOperations,
+    getSessionOperation,
+    retrySessionOperation,
     unsubscribeMessages,
     retireConnection(previousClient: GatewayBrowserClient | null) {
       if (previousClient) {
