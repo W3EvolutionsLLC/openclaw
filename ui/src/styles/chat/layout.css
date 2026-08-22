@@ -2442,7 +2442,18 @@ button.chat-pr__diff {
   --chat-composer-chip-gap: 6px;
   --chat-composer-chip-padding-inline: 8px;
   --chat-composer-chip-text: 13px;
-  --chat-composer-chip-icon: 14px;
+  --chat-composer-chip-icon: 16px;
+  /* Menu-row family: every option row inside a composer popover (model, effort,
+     permission, plus menu, attach, microphone) shares one box, icon size, and
+     selected wash so the pickers read as one system rather than per-feature
+     designs. Selected rows also carry a trailing accent check where the row is
+     a single-select choice; binary rows carry a switch instead. */
+  --chat-composer-menu-row-height: 40px;
+  --chat-composer-menu-row-padding: 6px 9px;
+  --chat-composer-menu-row-gap: 8px;
+  --chat-composer-menu-row-radius: calc(10px * var(--openclaw-corner-radius-scale));
+  --chat-composer-menu-icon: 16px;
+  --chat-composer-menu-selected: color-mix(in srgb, var(--text) 8%, transparent);
   /* Breathing room between the draft and the surface it sits in. Small on
      purpose — it exists so the text never touches the frame, not to pad the
      composer out — and owned here so the editor's inset is one decision for
@@ -3069,14 +3080,31 @@ button.chat-pr__diff {
 }
 
 .agent-chat__attach-menu-option {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: var(--chat-composer-menu-row-gap);
+  width: 100%;
+  min-height: var(--chat-composer-menu-row-height);
+  padding: var(--chat-composer-menu-row-padding);
+  border-radius: var(--chat-composer-menu-row-radius);
   color: var(--text);
   font-size: 12px;
 }
 
+.agent-chat__attach-menu-option [slot="icon"] {
+  color: var(--muted);
+}
+
+.agent-chat__attach-menu-option::part(base) {
+  box-sizing: border-box;
+  width: 100%;
+}
+
 .agent-chat__attach-menu-option svg {
-  width: 16px;
-  height: 16px;
-  flex: 0 0 16px;
+  width: var(--chat-composer-menu-icon);
+  height: var(--chat-composer-menu-icon);
+  flex: 0 0 var(--chat-composer-menu-icon);
   fill: none;
   stroke: currentColor;
   stroke-width: 1.5px;
@@ -3100,6 +3128,15 @@ button.chat-pr__diff {
   scrollbar-gutter: stable;
 }
 
+.agent-chat__capability-menu[data-view="root"]::part(menu) {
+  /* Wide enough that "Web search" plus its trailing switch stays one line. */
+  width: 208px;
+  min-width: 208px;
+  max-width: min(208px, calc(100vw - 24px));
+  overflow-y: visible;
+  scrollbar-gutter: auto;
+}
+
 .agent-chat__capability-menu-item[value="back"] {
   position: sticky;
   top: calc(-1 * var(--menu-padding));
@@ -3110,6 +3147,15 @@ button.chat-pr__diff {
 .agent-chat__capability-menu-item {
   --wa-color-neutral-fill-normal: var(--bg-hover);
   --wa-color-text-normal: var(--text);
+
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: var(--chat-composer-menu-row-gap);
+  width: 100%;
+  min-height: var(--chat-composer-menu-row-height);
+  padding: var(--chat-composer-menu-row-padding);
+  border-radius: var(--chat-composer-menu-row-radius);
 }
 
 .agent-chat__capability-menu-item,
@@ -3120,14 +3166,18 @@ button.chat-pr__diff {
 
 .agent-chat__capability-menu-item::part(base),
 .agent-chat__attach-menu-option::part(base) {
-  min-height: 34px;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: var(--chat-composer-menu-row-height);
+  padding: var(--chat-composer-menu-row-padding);
+  border-radius: var(--chat-composer-menu-row-radius);
 }
 
 .agent-chat__capability-menu-item svg,
 .agent-chat__capability-menu-state svg {
-  width: 16px;
-  height: 16px;
-  flex: 0 0 16px;
+  width: var(--chat-composer-menu-icon);
+  height: var(--chat-composer-menu-icon);
+  flex: 0 0 var(--chat-composer-menu-icon);
 }
 
 .agent-chat__capability-menu-divider {
@@ -3168,6 +3218,22 @@ button.chat-pr__diff {
   color: var(--muted);
 }
 
+/* Row voice shared with the permission picker: 13/600 strong titles, muted 11px
+   notes, and a 16px icon part so the icon→label distance is the row gap alone
+   (wa-dropdown-item's default icon part is 24px wide, which read as a wider,
+   misaligned gap next to the custom-markup pickers). */
+.agent-chat__attach-menu-option::part(icon),
+.agent-chat__capability-menu-item::part(icon) {
+  width: var(--chat-composer-menu-icon);
+}
+
+.agent-chat__attach-menu-option::part(label),
+.agent-chat__capability-menu-item::part(label) {
+  color: var(--text-strong);
+  font-size: 13px;
+  font-weight: 600;
+}
+
 .agent-chat__capability-menu-label {
   display: flex;
   flex: 1 1 auto;
@@ -3179,6 +3245,12 @@ button.chat-pr__diff {
 .agent-chat__capability-menu-note,
 .agent-chat__capability-menu-state {
   color: var(--muted);
+}
+
+.agent-chat__capability-menu-note {
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.25;
 }
 
 .agent-chat__capability-menu-state {
@@ -3856,8 +3928,8 @@ button.chat-pr__diff {
 }
 
 .chat-talk-input-picker__trigger:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: 2px;
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 .chat-talk-input-picker__trigger svg {
@@ -3915,9 +3987,39 @@ button.chat-pr__diff {
   font-size: 13px;
 }
 
+.chat-talk-input-picker__item::part(base) {
+  min-height: var(--chat-composer-menu-row-height);
+  padding: var(--chat-composer-menu-row-padding);
+  border-radius: var(--chat-composer-menu-row-radius);
+}
+
+.chat-talk-input-picker__item[aria-checked="true"]::part(base) {
+  background: var(--chat-composer-menu-selected);
+}
+
+.chat-talk-input-picker__option-icon {
+  display: inline-flex;
+  width: var(--chat-composer-menu-icon);
+  height: var(--chat-composer-menu-icon);
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+}
+
+.chat-talk-input-picker__option-icon svg {
+  width: var(--chat-composer-menu-icon);
+  height: var(--chat-composer-menu-icon);
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7px;
+}
+
 .chat-talk-input-picker__label {
   min-width: 0;
   overflow: hidden;
+  color: var(--text-strong);
+  font-size: 13px;
+  font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -3926,8 +4028,8 @@ button.chat-pr__diff {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
+  width: var(--chat-composer-menu-icon);
+  height: var(--chat-composer-menu-icon);
   color: var(--accent);
 }
 
@@ -5026,8 +5128,8 @@ button.chat-pr__diff {
 }
 
 .chat-controls__inline-select-check svg {
-  width: 100%;
-  height: 100%;
+  width: 14px;
+  height: 14px;
   stroke: currentColor;
   fill: none;
 }
@@ -5043,12 +5145,12 @@ button.chat-pr__diff {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: var(--chat-composer-menu-row-gap);
   width: 100%;
-  min-height: 34px;
-  padding: 7px 9px;
+  min-height: var(--chat-composer-menu-row-height);
+  padding: var(--chat-composer-menu-row-padding);
   border: 1px solid transparent;
-  border-radius: var(--radius-sm);
+  border-radius: var(--chat-composer-menu-row-radius);
   background: transparent;
   color: var(--text);
   font: inherit;
@@ -5065,7 +5167,7 @@ button.chat-pr__diff {
 
 .chat-controls__inline-select-option--selected {
   color: var(--text-strong);
-  background: color-mix(in srgb, var(--text) 6%, transparent);
+  background: var(--chat-composer-menu-selected);
 }
 
 /* Model and effort are independent surfaces so either choice stays one focused
@@ -5095,6 +5197,18 @@ button.chat-pr__diff {
   overflow: hidden;
 }
 
+.chat-controls__permission-option {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: var(--chat-composer-menu-row-gap);
+  width: 100%;
+  min-height: var(--chat-composer-menu-row-height);
+  padding: var(--chat-composer-menu-row-padding);
+  border-radius: var(--chat-composer-menu-row-radius);
+  font-size: 12px;
+}
+
 .chat-controls__permission-icon,
 .chat-controls__permission-lock {
   display: inline-flex;
@@ -5121,19 +5235,38 @@ button.chat-pr__diff {
 }
 
 .chat-controls__permission-option::part(base) {
-  align-items: flex-start;
-  min-height: 54px;
-  border-radius: var(--radius-sm);
+  align-items: center;
+  min-height: var(--chat-composer-menu-row-height);
+  padding: var(--chat-composer-menu-row-padding);
+  border-radius: var(--chat-composer-menu-row-radius);
 }
 
 .chat-controls__permission-option--selected::part(base) {
-  background: color-mix(in srgb, var(--text) 6%, transparent);
+  background: var(--chat-composer-menu-selected);
 }
 
 .chat-controls__permission-option-copy {
   display: grid;
   min-width: 0;
-  gap: 2px;
+  gap: 3px;
+}
+
+.chat-controls__permission-option-icon {
+  display: inline-flex;
+  width: var(--chat-composer-menu-icon);
+  height: var(--chat-composer-menu-icon);
+  color: var(--muted);
+}
+
+.chat-controls__permission-option-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.chat-controls__permission-option:state(disabled) .chat-controls__permission-option-icon,
+.chat-controls__permission-option[data-chat-permission-option="full"]
+  .chat-controls__permission-option-icon {
+  color: var(--accent);
 }
 
 .chat-controls__permission-option-title {
@@ -5244,11 +5377,14 @@ button.chat-pr__diff {
   text-transform: uppercase;
 }
 
+/* Left padding is 10px, not the rows' 9px: option buttons add a 1px transparent
+   border, so 10 + 16 + row gap puts this label on the same stem as the model
+   names (9 + 1 + 16 + gap). */
 .chat-controls__provider-heading {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 9px 3px;
+  gap: var(--chat-composer-menu-row-gap);
+  padding: 8px 10px 3px;
   color: var(--muted);
   font-size: 11px;
   font-weight: 700;
@@ -5306,12 +5442,15 @@ button.chat-pr__diff {
   gap: 2px;
 }
 
+/* Inline variant of the popover title: it sits inside the locked-model row,
+   which owns the spacing, so the label carries type only. */
 .chat-controls__inline-select-section-label {
-  padding: 3px 6px 2px;
+  padding: 0;
   color: var(--muted);
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.08em;
+  line-height: 1.2;
   text-transform: uppercase;
 }
 
@@ -5331,9 +5470,6 @@ button.chat-pr__diff {
 .chat-controls__model-option {
   order: var(--chat-model-rank, 0);
   justify-content: flex-start;
-  gap: 8px;
-  min-height: 40px;
-  padding: 5px 8px;
 }
 
 /* display: flex above beats the UA [hidden] style; without this, filtered-out
@@ -5418,7 +5554,7 @@ button.chat-pr__diff {
   align-items: center;
   gap: 6px;
   color: var(--text);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
 }
 
@@ -5875,10 +6011,14 @@ button.chat-pr__diff {
   opacity: 0.55;
 }
 
+/* Selected-state check shares the mic picker's box: a 16px slot centering a
+   14px accent glyph, so checks land on the same rail as 16px row icons. */
 .chat-controls__inline-select-check {
   display: inline-flex;
-  width: 14px;
-  height: 14px;
+  align-items: center;
+  justify-content: center;
+  width: var(--chat-composer-menu-icon);
+  height: var(--chat-composer-menu-icon);
   color: var(--accent);
   flex: 0 0 auto;
 }
