@@ -410,7 +410,15 @@ describe("prepareCliRunContext", () => {
       provider: "claude-cli",
       model: "claude-fable-5",
       config: {},
-      ...(testCase.selection ? { sessionEntry: { contextWindow: testCase.selection } } : {}),
+      ...(testCase.selection
+        ? {
+            sessionEntry: {
+              sessionId: "cli-session",
+              updatedAt: 0,
+              contextWindow: testCase.selection,
+            },
+          }
+        : {}),
     });
 
     expect(context.contextWindowInfo?.tokens).toBe(testCase.expected);
