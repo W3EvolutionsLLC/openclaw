@@ -56,7 +56,7 @@ describe("sessions page archived deletion", () => {
     );
     vi.mocked(showConfirmDialog).mockResolvedValue(true);
 
-    page.querySelector<HTMLButtonElement>(".settings-section__actions .danger")?.click();
+    page.querySelector<HTMLButtonElement>(".sessions-filter-popover__actions .danger")?.click();
     await vi.waitFor(() => expect(sessions.deleteMany).toHaveBeenCalledOnce());
 
     expect(sessions.list).toHaveBeenCalledWith(
@@ -122,7 +122,7 @@ describe("sessions page archived deletion", () => {
     );
     vi.mocked(showConfirmDialog).mockResolvedValue(true);
 
-    page.querySelector<HTMLButtonElement>(".settings-section__actions .danger")?.click();
+    page.querySelector<HTMLButtonElement>(".sessions-filter-popover__actions .danger")?.click();
     await vi.waitFor(() => expect(sessions.list).toHaveBeenCalledOnce());
 
     expect(showConfirmDialog).not.toHaveBeenCalled();
@@ -165,7 +165,7 @@ describe("sessions page archived deletion", () => {
     );
     vi.mocked(showConfirmDialog).mockResolvedValue(true);
 
-    page.querySelector<HTMLButtonElement>(".settings-section__actions .danger")?.click();
+    page.querySelector<HTMLButtonElement>(".sessions-filter-popover__actions .danger")?.click();
     await vi.waitFor(() => expect(sessions.deleteMany).toHaveBeenCalledOnce());
 
     expect(list).toHaveBeenCalledTimes(2);
@@ -231,7 +231,7 @@ describe("sessions page archived deletion", () => {
     );
     vi.mocked(showConfirmDialog).mockResolvedValue(true);
 
-    page.querySelector<HTMLButtonElement>(".settings-section__actions .danger")?.click();
+    page.querySelector<HTMLButtonElement>(".sessions-filter-popover__actions .danger")?.click();
     await vi.waitFor(() => expect(sessions.deleteMany).toHaveBeenCalledOnce());
 
     expect(list).toHaveBeenCalledTimes(3);

@@ -15,16 +15,18 @@ import {
   validateSessionsOperationsRetryParams,
 } from "../../../packages/gateway-protocol/src/index.js";
 import {
-  createTaskRecord,
-  finalizeTaskRecordByRunId,
   findTaskByRunId,
   getTaskById,
   listTaskRecords,
-  markTaskTerminalById,
   setTaskCleanupAfterById,
   updateTaskProgressDetailById,
   type TaskRecord,
 } from "../../tasks/runtime-internal.js";
+import {
+  createRunningTaskRunCore,
+  finalizeTaskRunById,
+  finalizeTaskRunByRunIdCore,
+} from "../../tasks/task-executor.js";
 import type { JsonValue } from "../../tasks/task-registry.types.js";
 import { sessionMessagingHandlers } from "./sessions-messaging.js";
 import type { GatewayRequestHandlerOptions, GatewayRequestHandlers, RespondFn } from "./types.js";
@@ -190,7 +192,7 @@ function reconcileRetryOutcome(
   });
   const counts = operationCounts(original.detail.targets);
   const unresolved = counts.failed > 0 || counts.pending > 0;
-  markTaskTerminalById({
+  finalizeTaskRunById({
     taskId: original.task.taskId,
     status: unresolved ? "failed" : "succeeded",
     endedAt: Date.now(),
@@ -296,7 +298,7 @@ async function executeBulkMessage(params: {
 
   const startedAt = Date.now();
   const detail = initialDetail(params);
-  const task = createTaskRecord({
+  const task = createRunningTaskRunCore({
     runtime: "cli",
     taskKind: BULK_MESSAGE_TASK_KIND,
     sourceId: params.requestId,
@@ -306,7 +308,6 @@ async function executeBulkMessage(params: {
     scopeKind: "system",
     label: "Bulk session message",
     task: params.message,
-    status: "running",
     deliveryStatus: "not_applicable",
     notifyPolicy: "silent",
     startedAt,
@@ -349,11 +350,10 @@ async function executeBulkMessage(params: {
   const endedAt = Date.now();
   const counts = operationCounts(detail.targets);
   const failed = counts.failed > 0;
-  finalizeTaskRecordByRunId({
+  finalizeTaskRunByRunIdCore({
     runId: params.requestId,
     runtime: "cli",
     status: failed ? "failed" : "succeeded",
-    startedAt,
     endedAt,
     progressSummary: `${counts.accepted}/${detail.targets.length} accepted`,
     terminalSummary: failed

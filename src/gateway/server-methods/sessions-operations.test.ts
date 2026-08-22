@@ -19,7 +19,7 @@ const taskStore = vi.hoisted(() => {
         runId: params.runId,
         label: params.label,
         task: params.task,
-        status: params.status,
+        status: params.status ?? "running",
         deliveryStatus: "not_applicable",
         notifyPolicy: "silent",
         createdAt: 1,
@@ -37,7 +37,6 @@ const taskStore = vi.hoisted(() => {
 const send = vi.hoisted(() => vi.fn());
 
 vi.mock("../../tasks/runtime-internal.js", () => ({
-  createTaskRecord: taskStore.create,
   findTaskByRunId: (runId: string) =>
     [...taskStore.tasks.values()].find((task) => task.runId === runId),
   getTaskById: (taskId: string) => taskStore.tasks.get(taskId),
@@ -54,7 +53,19 @@ vi.mock("../../tasks/runtime-internal.js", () => ({
     Object.assign(task, params, { lastEventAt: Date.now() });
     return structuredClone(task);
   },
-  finalizeTaskRecordByRunId: (params: {
+  setTaskCleanupAfterById: (params: { taskId: string; cleanupAfter: number }) => {
+    const task = taskStore.tasks.get(params.taskId);
+    if (!task) {
+      return null;
+    }
+    task.cleanupAfter = params.cleanupAfter;
+    return structuredClone(task);
+  },
+}));
+
+vi.mock("../../tasks/task-executor.js", () => ({
+  createRunningTaskRunCore: taskStore.create,
+  finalizeTaskRunByRunIdCore: (params: {
     runId: string;
     status: TaskRecord["status"];
     detail: TaskRecord["detail"];
@@ -69,15 +80,7 @@ vi.mock("../../tasks/runtime-internal.js", () => ({
     Object.assign(task, params, { lastEventAt: params.endedAt });
     return [structuredClone(task)];
   },
-  setTaskCleanupAfterById: (params: { taskId: string; cleanupAfter: number }) => {
-    const task = taskStore.tasks.get(params.taskId);
-    if (!task) {
-      return null;
-    }
-    task.cleanupAfter = params.cleanupAfter;
-    return structuredClone(task);
-  },
-  markTaskTerminalById: (params: {
+  finalizeTaskRunById: (params: {
     taskId: string;
     status: TaskRecord["status"];
     detail: TaskRecord["detail"];
