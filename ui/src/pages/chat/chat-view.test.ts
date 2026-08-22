@@ -5450,7 +5450,7 @@ describe("chat model controls", () => {
     expect(onModelSelect).toHaveBeenCalledWith(modelOption?.dataset.chatModelOption, "main");
   });
 
-  it("renders and applies selectable context windows only when the model has choices", () => {
+  it("renders and applies selectable context windows inside the model picker", () => {
     const { state } = createChatHeaderState({
       model: "claude-fable-5",
       modelProvider: "claude-cli",
@@ -5491,21 +5491,36 @@ describe("chat model controls", () => {
     };
     const onContextWindowSelect = vi.fn(async () => true);
     const container = renderModelControls(state, { onContextWindowSelect });
-    const select = container.querySelector<HTMLSelectElement>("[data-chat-context-window-select]");
-    expect(select).toBeInstanceOf(HTMLSelectElement);
-    expect(select?.value).toBe("1m");
-    if (select) {
-      select.value = "200k";
-      select.dispatchEvent(new Event("change"));
+    const picker = container.querySelector<HTMLDetailsElement>(".chat-controls__model-picker");
+    expect(picker).toBeInstanceOf(HTMLDetailsElement);
+    if (!picker) {
+      throw new Error("Expected model picker");
     }
-    expect(onContextWindowSelect).toHaveBeenCalledWith("200k", "main");
+    picker.open = true;
+    picker.dispatchEvent(new Event("toggle"));
 
-    state.sessionsResult.sessions[0] = {
-      ...session,
-      contextWindows: [{ id: "1m", label: "1M", contextWindow: 1_000_000 }],
-    };
-    renderModelControls(state, {}, container);
-    expect(container.querySelector("[data-chat-context-window-select]")).toBeNull();
+    const toggle = container.querySelector<HTMLButtonElement>("[data-chat-context-window-toggle]");
+    expect(toggle).toBeInstanceOf(HTMLButtonElement);
+    expect(toggle?.getAttribute("aria-checked")).toBe("true");
+    expect(toggle?.dataset.chatContextWindowToggle).toBe("200k");
+    expect(container.querySelector("[data-chat-model-context-badge]")).toBeNull();
+    toggle?.click();
+    expect(onContextWindowSelect).toHaveBeenCalledWith("200k", "main");
+    expect(picker.open).toBe(true);
+
+    const activeRow = expectDefined(state.sessionsResult.sessions[0], "active session");
+    state.sessionsResult.sessions[0] = { ...activeRow, contextWindow: "200k" };
+    renderModelControls(state, { onContextWindowSelect }, container);
+    expect(container.querySelector("[data-chat-model-context-badge]")?.textContent?.trim()).toBe(
+      "200K",
+    );
+    expect(
+      container.querySelector("[data-chat-context-window-toggle]")?.getAttribute("aria-checked"),
+    ).toBe("false");
+
+    const { state: unsupportedState } = createOpenAiHeaderState();
+    renderModelControls(unsupportedState, {}, container);
+    expect(container.querySelector("[data-chat-context-window-toggle]")).toBeNull();
   });
 
   it("requests live wildcard discovery when the model picker opens", () => {

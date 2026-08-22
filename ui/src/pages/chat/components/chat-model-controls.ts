@@ -374,6 +374,8 @@ export function renderChatModelControls(props: ChatModelControlsProps) {
     props.sessionsResult?.defaults.contextWindow ??
     props.sessionsResult?.defaults.contextWindowDefault ??
     "";
+  const defaultContextWindow =
+    activeSession?.contextWindowDefault ?? props.sessionsResult?.defaults.contextWindowDefault;
   const effortDisabled =
     commonDisabled ||
     effortMutationDisabled ||
@@ -381,6 +383,18 @@ export function renderChatModelControls(props: ChatModelControlsProps) {
   return html`
     <div class="chat-controls__session chat-controls__model chat-controls__model-settings">
       ${renderChatModelPicker({
+        contextWindow:
+          contextWindows.length > 1
+            ? {
+                options: contextWindows,
+                selected: selectedContextWindow,
+                ...(defaultContextWindow ? { defaultId: defaultContextWindow } : {}),
+                disabled: commonDisabled || effortMutationDisabled,
+                onSelect: async (next, targetSessionKey) => {
+                  await props.onContextWindowSelect?.(next, targetSessionKey);
+                },
+              }
+            : undefined,
         defaultModelLabel: formatPickerModelLabel(pickerDefaultLabel),
         disabled: modelDisabled,
         disabledReason: props.modelMutationDisabledReason,
@@ -400,34 +414,6 @@ export function renderChatModelControls(props: ChatModelControlsProps) {
         onTargetSelect: props.onModelPickerTargetSelect,
         onRequestUpdate: props.onRequestUpdate,
       })}
-      ${contextWindows.length > 1
-        ? html`
-            <label
-              class="chat-controls__context-window"
-              title=${t("chat.composer.contextUsage.contextWindow")}
-            >
-              <select
-                data-chat-context-window-select
-                aria-label=${t("chat.composer.contextUsage.contextWindow")}
-                .value=${selectedContextWindow}
-                ?disabled=${commonDisabled || effortMutationDisabled}
-                @change=${(event: Event) => {
-                  if (event.currentTarget instanceof HTMLSelectElement) {
-                    void props.onContextWindowSelect?.(event.currentTarget.value, props.sessionKey);
-                  }
-                }}
-              >
-                ${contextWindows.map(
-                  (option) => html`
-                    <option value=${option.id} .selected=${option.id === selectedContextWindow}>
-                      ${option.label}
-                    </option>
-                  `,
-                )}
-              </select>
-            </label>
-          `
-        : null}
       ${renderChatEffortPicker({
         disabled: effortDisabled,
         disabledReason: props.effortMutationDisabledReason,

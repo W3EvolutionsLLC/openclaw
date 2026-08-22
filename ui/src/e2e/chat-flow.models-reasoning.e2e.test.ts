@@ -53,20 +53,31 @@ suite.define(() => {
 
     try {
       await page.goto(`${suite.server.baseUrl}chat`);
-      const select = page.locator("[data-chat-context-window-select]").first();
-      await select.waitFor({ state: "visible", timeout: 10_000 });
-      await expect.poll(() => select.inputValue()).toBe("1m");
-      await gateway.setMethodResponse(
-        "sessions.list",
-        chatSessionListResponse([{ ...session, contextWindow: "200k" }]),
-      );
-      await select.selectOption("200k");
-      const patch = await gateway.waitForRequest("sessions.patch");
+      const pane = page.locator('openclaw-chat-pane[aria-hidden="false"]');
+      const picker = pane.locator(".chat-controls__model-picker");
+      await picker.locator('[data-chat-model-select="true"]').click();
+      const toggle = picker.locator("[data-chat-context-window-toggle]");
+      await expect.poll(() => toggle.getAttribute("aria-checked")).toBe("true");
+      await gateway.deferNext("sessions.patch");
+      const patchCount = (await gateway.getRequests("sessions.patch")).length;
+      await toggle.click();
+      const patch = await gateway.waitForRequest("sessions.patch", { after: patchCount });
       expect(requireRecord(patch.params)).toMatchObject({
         key: sessionKey,
         contextWindow: "200k",
       });
-      await expect.poll(() => select.inputValue()).toBe("200k");
+      await gateway.setMethodResponse(
+        "sessions.list",
+        chatSessionListResponse([{ ...session, contextWindow: "200k" }]),
+      );
+      await gateway.resolveDeferred("sessions.patch");
+      await expect.poll(() => toggle.getAttribute("aria-checked")).toBe("false");
+      await expect
+        .poll(async () =>
+          (await picker.locator("[data-chat-model-context-badge]").textContent())?.trim(),
+        )
+        .toBe("200K");
+      await expect.poll(() => picker.getAttribute("open")).not.toBeNull();
     } finally {
       await suite.closeBrowserContext(context);
     }

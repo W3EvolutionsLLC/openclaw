@@ -18,6 +18,7 @@ import type { FastModeSource } from "../../../src/shared/fast-mode.js";
 import type {
   GatewayAgentRuntime,
   GatewayAgentRow as SharedGatewayAgentRow,
+  GatewayContextWindowOption,
   SessionsListResultBase,
   SessionsPatchResultBase,
 } from "../../../src/shared/session-types.js";
@@ -285,13 +286,8 @@ export type GatewayThinkingLevelOption = {
   label: string;
 };
 
-type GatewayContextWindowOption = {
-  id: string;
-  label: string;
-  contextWindow: number;
-};
-
 export type GatewayAgentRow = SharedGatewayAgentRow;
+export type { GatewayContextWindowOption };
 
 export type AgentsListResult = ProtocolAgentsListResult;
 
