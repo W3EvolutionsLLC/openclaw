@@ -6,6 +6,7 @@ import { expectDefined } from "@openclaw/normalization-core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ErrorCodes } from "../../../packages/gateway-protocol/src/index.js";
 import { SessionTranscriptProjectionUnavailableError } from "../../config/sessions/session-accessor.js";
+import { SessionMutationAuthorizationChangedError } from "../session-sharing.js";
 import { expectSubagentFollowupReactivation } from "./subagent-followup.test-helpers.js";
 import type { GatewayRequestContext, RespondFn } from "./types.js";
 
@@ -163,6 +164,50 @@ describe("sessions.send completed subagent follow-up status", () => {
     });
   });
 
+  it("rejects revoked participation inside final chat admission", async () => {
+    const sessionKey = "agent:main:dashboard:revoked";
+    loadSessionEntryMock.mockReturnValue({
+      cfg: {},
+      canonicalKey: sessionKey,
+      storePath: "/tmp/sessions.json",
+      entry: { sessionId: "session-revoked" },
+    });
+    const assertTargetCurrent = vi.fn(() => {
+      throw new SessionMutationAuthorizationChangedError({
+        code: ErrorCodes.INVALID_REQUEST,
+        message: "session is read-only for this connection",
+        details: { code: "SESSION_PARTICIPATION_REQUIRED" },
+      });
+    });
+    const respondMock = vi.fn();
+
+    await expectDefined(
+      sessionMessagingHandlers["sessions.send"],
+      'sessionMessagingHandlers["sessions.send"] test invariant',
+    )({
+      req: { id: "req-revoked-send" } as never,
+      params: {
+        key: sessionKey,
+        expectedSessionId: "session-revoked",
+        message: "status?",
+      },
+      respond: respondMock as unknown as RespondFn,
+      context: createRequestContext(),
+      client: null,
+      isWebchatConnect: () => false,
+      sessionMutationAuthorization: { assertCurrent: vi.fn(), assertTargetCurrent },
+    });
+
+    expect(assertTargetCurrent).toHaveBeenCalledWith({ sessionKey, agentId: "main" });
+    expect(chatSendWithAdmissionOwnedMock).toHaveBeenCalledOnce();
+    expect(chatSendMock).not.toHaveBeenCalled();
+    expect(respondMock).toHaveBeenCalledWith(false, undefined, {
+      code: ErrorCodes.INVALID_REQUEST,
+      message: "session is read-only for this connection",
+      details: { code: "SESSION_PARTICIPATION_REQUIRED" },
+    });
+  });
+
   it("reactivates completed subagent sessions before broadcasting sessions.changed", async () => {
     const childSessionKey = "agent:main:subagent:followup";
     const completedRun = {
@@ -201,6 +246,7 @@ describe("sessions.send completed subagent follow-up status", () => {
     });
 
     const broadcastToConnIds = vi.fn();
+    const assertTargetCurrent = vi.fn();
     const respondMock = vi.fn();
     const respond = respondMock as unknown as RespondFn;
     const context = createRequestContext({
@@ -223,6 +269,7 @@ describe("sessions.send completed subagent follow-up status", () => {
       context,
       client: null,
       isWebchatConnect: () => false,
+      sessionMutationAuthorization: { assertCurrent: vi.fn(), assertTargetCurrent },
     });
 
     const call = respondMock.mock.calls.at(0) as
@@ -239,6 +286,10 @@ describe("sessions.send completed subagent follow-up status", () => {
         params: expect.objectContaining({ sessionId: "sess-followup" }),
       }),
     );
+    expect(assertTargetCurrent).toHaveBeenCalledWith({
+      sessionKey: childSessionKey,
+      agentId: "main",
+    });
     expectSubagentFollowupReactivation({
       replaceSubagentRunAfterSteerMock,
       broadcastToConnIds,

@@ -11,6 +11,7 @@ import { resolveSessionWorkStartError, type SessionEntry } from "../../config/se
 import { isSessionTranscriptProjectionUnavailableError } from "../../config/sessions/session-accessor.js";
 import { parseAgentSessionKey } from "../../routing/session-key.js";
 import { resolveRequestedSessionAgentId as resolveRequestedGlobalAgentId } from "../session-request-agent.js";
+import { SessionMutationAuthorizationChangedError } from "../session-sharing.js";
 import { reactivateCompletedSubagentSession } from "../session-subagent-reactivation.js";
 import { readSessionMessageCountAsync } from "../session-transcript-readers.js";
 import {
@@ -117,6 +118,7 @@ async function handleSessionSend(params: {
   context: GatewayRequestContext;
   client: GatewayClient | null;
   isWebchatConnect: GatewayRequestHandlerOptions["isWebchatConnect"];
+  sessionMutationAuthorization?: GatewayRequestHandlerOptions["sessionMutationAuthorization"];
   queueMode?: "interrupt";
 }) {
   if (
@@ -274,8 +276,29 @@ async function handleSessionSend(params: {
   }
 
   const onAdmissionOwned =
-    params.queueMode === "interrupt"
+    params.queueMode === "interrupt" || params.sessionMutationAuthorization
       ? async (): Promise<boolean> => {
+          try {
+            params.sessionMutationAuthorization?.assertTargetCurrent({
+              sessionKey: key,
+              ...(requestedAgentId ? { agentId: requestedAgentId } : {}),
+            });
+          } catch (error) {
+            respond(
+              false,
+              undefined,
+              error instanceof SessionMutationAuthorizationChangedError
+                ? error.error
+                : errorShape(
+                    ErrorCodes.UNAVAILABLE,
+                    "session authorization changed before admission",
+                  ),
+            );
+            return false;
+          }
+          if (params.queueMode !== "interrupt") {
+            return true;
+          }
           try {
             // Canonical interrupt admission has drained the captured owner.
             messageSeq = await readNextMessageSeq();
@@ -348,7 +371,15 @@ async function handleSessionSend(params: {
 }
 
 export const sessionMessagingHandlers: GatewayRequestHandlers = {
-  "sessions.send": async ({ req, params, respond, context, client, isWebchatConnect }) => {
+  "sessions.send": async ({
+    req,
+    params,
+    respond,
+    context,
+    client,
+    isWebchatConnect,
+    sessionMutationAuthorization,
+  }) => {
     await handleSessionSend({
       method: "sessions.send",
       req,
@@ -357,9 +388,18 @@ export const sessionMessagingHandlers: GatewayRequestHandlers = {
       context,
       client,
       isWebchatConnect,
+      sessionMutationAuthorization,
     });
   },
-  "sessions.steer": async ({ req, params, respond, context, client, isWebchatConnect }) => {
+  "sessions.steer": async ({
+    req,
+    params,
+    respond,
+    context,
+    client,
+    isWebchatConnect,
+    sessionMutationAuthorization,
+  }) => {
     await handleSessionSend({
       method: "sessions.steer",
       req,
@@ -368,6 +408,7 @@ export const sessionMessagingHandlers: GatewayRequestHandlers = {
       context,
       client,
       isWebchatConnect,
+      sessionMutationAuthorization,
       queueMode: "interrupt",
     });
   },
