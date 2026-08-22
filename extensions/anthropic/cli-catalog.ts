@@ -12,6 +12,22 @@ const CLAUDE_CLI_CONTEXT_WINDOWS: Record<string, number> = {
   "claude-sonnet-5": 1_000_000,
   "claude-fable-5": 1_000_000,
 };
+const CLAUDE_CLI_SELECTABLE_CONTEXT_WINDOW_MODELS = new Set(
+  Object.keys(CLAUDE_CLI_CONTEXT_WINDOWS),
+);
+const CLAUDE_CLI_CONTEXT_WINDOW_OPTIONS = [
+  { id: "200k", label: "200K", contextWindow: 200_000 },
+  { id: "1m", label: "1M", contextWindow: 1_000_000 },
+] satisfies NonNullable<ModelCatalogEntry["contextWindows"]>;
+
+export function resolveClaudeCliContextWindowModelId(
+  modelId: string,
+  contextWindow: string | undefined,
+): string {
+  const effective =
+    contextWindow ?? (CLAUDE_CLI_SELECTABLE_CONTEXT_WINDOW_MODELS.has(modelId) ? "1m" : undefined);
+  return effective === "1m" ? `${modelId}[1m]` : modelId;
+}
 const CLAUDE_CLI_DEFAULT_MAX_OUTPUT_TOKENS = 64_000;
 const CLAUDE_CLI_MAX_OUTPUT_TOKENS: Record<string, number> = {
   "claude-opus-5": 128_000,
@@ -71,7 +87,7 @@ function extractClaudeCliModelIds(): string[] {
 /** Build catalog entries for the default Claude CLI allowlist. */
 export function buildClaudeCliCatalogEntries(): ModelCatalogEntry[] {
   return extractClaudeCliModelIds().map((id) => {
-    return {
+    const entry: ModelCatalogEntry & { maxTokens: number } = {
       id,
       name: CLAUDE_CLI_MODEL_LABELS[id] ?? `${id} (Claude CLI)`,
       provider: CLAUDE_CLI_BACKEND_ID,
@@ -81,5 +97,10 @@ export function buildClaudeCliCatalogEntries(): ModelCatalogEntry[] {
       contextWindow: CLAUDE_CLI_CONTEXT_WINDOWS[id] ?? CLAUDE_CLI_DEFAULT_CONTEXT_WINDOW,
       maxTokens: CLAUDE_CLI_MAX_OUTPUT_TOKENS[id] ?? CLAUDE_CLI_DEFAULT_MAX_OUTPUT_TOKENS,
     };
+    if (CLAUDE_CLI_SELECTABLE_CONTEXT_WINDOW_MODELS.has(id)) {
+      entry.contextWindows = CLAUDE_CLI_CONTEXT_WINDOW_OPTIONS;
+      entry.contextWindowDefault = "1m";
+    }
+    return entry;
   });
 }

@@ -147,6 +147,48 @@ describe("prepared model catalog builder", () => {
     );
   });
 
+  it("carries manifest context-window choices into the prepared catalog", async () => {
+    const plugin = {
+      id: "anthropic",
+      origin: "bundled",
+      providers: ["anthropic"],
+      modelCatalog: {
+        providers: {
+          anthropic: {
+            models: [
+              {
+                id: "claude-fable-5",
+                contextWindow: 1_000_000,
+                contextWindows: [
+                  { id: "200k", label: "200K", contextWindow: 200_000 },
+                  { id: "1m", label: "1M", contextWindow: 1_000_000 },
+                ],
+                contextWindowDefault: "1m",
+              },
+            ],
+          },
+        },
+        discovery: { anthropic: "refreshable" },
+      },
+    };
+    const snapshot = {
+      plugins: [plugin],
+      manifestRegistry: { plugins: [plugin] },
+    } as unknown as PluginMetadataSnapshot;
+
+    expect(
+      loadManifestModelCatalog({ config: {}, metadataSnapshot: snapshot }).find(
+        (entry) => entry.id === "claude-fable-5",
+      ),
+    ).toMatchObject({
+      contextWindows: [
+        { id: "200k", label: "200K", contextWindow: 200_000 },
+        { id: "1m", label: "1M", contextWindow: 1_000_000 },
+      ],
+      contextWindowDefault: "1m",
+    });
+  });
+
   it("keeps an account's runtime-discovered model list authoritative", async () => {
     const snapshot = await build({
       entries: [{ id: "gpt-5.5", name: "GPT-5.5", provider: "openai" }],

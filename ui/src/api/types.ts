@@ -271,6 +271,9 @@ export type GatewaySessionsDefaults = {
   modelProvider: string | null;
   model: string | null;
   contextTokens: number | null;
+  contextWindow?: string;
+  contextWindows?: GatewayContextWindowOption[];
+  contextWindowDefault?: string;
   agentRuntime?: GatewayAgentRuntime;
   thinkingLevels?: GatewayThinkingLevelOption[];
   thinkingOptions?: string[];
@@ -280,6 +283,12 @@ export type GatewaySessionsDefaults = {
 export type GatewayThinkingLevelOption = {
   id: string;
   label: string;
+};
+
+type GatewayContextWindowOption = {
+  id: string;
+  label: string;
+  contextWindow: number;
 };
 
 export type GatewayAgentRow = SharedGatewayAgentRow;
@@ -455,6 +464,9 @@ export type GatewaySessionRow = SessionRow & {
   systemSent?: boolean;
   abortedLastRun?: boolean;
   thinkingLevel?: string;
+  contextWindow?: string;
+  contextWindows?: GatewayContextWindowOption[];
+  contextWindowDefault?: string;
   thinkingLevels?: GatewayThinkingLevelOption[];
   thinkingOptions?: string[];
   thinkingDefault?: string;
@@ -531,6 +543,7 @@ export type SessionsPatchResult = SessionsPatchResultBase<{
   sessionId: string;
   updatedAt?: number;
   archivedAt?: number;
+  contextWindow?: string;
   thinkingLevel?: string;
   fastMode?: FastMode;
   verboseLevel?: string;
@@ -541,6 +554,8 @@ export type SessionsPatchResult = SessionsPatchResultBase<{
     modelProvider?: string;
     model?: string;
     agentRuntime?: GatewayAgentRuntime;
+    contextWindow?: string;
+    contextWindows?: GatewayContextWindowOption[];
     thinkingLevel?: string;
     thinkingLevels?: GatewayThinkingLevelOption[];
   };
@@ -708,6 +723,8 @@ export type ModelCatalogEntry = {
   tags?: string[];
   available?: boolean;
   contextWindow?: number;
+  contextWindows?: GatewayContextWindowOption[];
+  contextWindowDefault?: string;
   reasoning?: boolean;
   thinkingLevels?: GatewayThinkingLevelOption[];
   thinkingDefault?: string;

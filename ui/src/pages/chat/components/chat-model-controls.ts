@@ -49,6 +49,7 @@ type ChatModelControlsProps = {
   thinkingDefaults?: SessionsListResult["defaults"];
   thinkingSession?: ChatThinkingTarget;
   onFastModeSelect?: (value: ChatFastModeSelectValue, sessionKey: string) => unknown;
+  onContextWindowSelect?: (value: string, sessionKey: string) => unknown;
   onModelSetup?: () => void;
   onModelPickerOpen?: () => unknown;
   onModelSelect?: (value: string, sessionKey: string) => unknown;
@@ -366,6 +367,13 @@ export function renderChatModelControls(props: ChatModelControlsProps) {
     !managedCatalog.hasSnapshot ||
     (thinking.options.length === 0 && thinking.selection.source === "default");
   const showFastMode = props.showFastMode !== false;
+  const contextWindows =
+    activeSession?.contextWindows ?? props.sessionsResult?.defaults.contextWindows ?? [];
+  const selectedContextWindow =
+    activeSession?.contextWindow ??
+    props.sessionsResult?.defaults.contextWindow ??
+    props.sessionsResult?.defaults.contextWindowDefault ??
+    "";
   const effortDisabled =
     commonDisabled ||
     effortMutationDisabled ||
@@ -392,6 +400,34 @@ export function renderChatModelControls(props: ChatModelControlsProps) {
         onTargetSelect: props.onModelPickerTargetSelect,
         onRequestUpdate: props.onRequestUpdate,
       })}
+      ${contextWindows.length > 1
+        ? html`
+            <label
+              class="chat-controls__context-window"
+              title=${t("chat.composer.contextUsage.contextWindow")}
+            >
+              <select
+                data-chat-context-window-select
+                aria-label=${t("chat.composer.contextUsage.contextWindow")}
+                .value=${selectedContextWindow}
+                ?disabled=${commonDisabled || effortMutationDisabled}
+                @change=${(event: Event) => {
+                  if (event.currentTarget instanceof HTMLSelectElement) {
+                    void props.onContextWindowSelect?.(event.currentTarget.value, props.sessionKey);
+                  }
+                }}
+              >
+                ${contextWindows.map(
+                  (option) => html`
+                    <option value=${option.id} .selected=${option.id === selectedContextWindow}>
+                      ${option.label}
+                    </option>
+                  `,
+                )}
+              </select>
+            </label>
+          `
+        : null}
       ${renderChatEffortPicker({
         disabled: effortDisabled,
         disabledReason: props.effortMutationDisabledReason,

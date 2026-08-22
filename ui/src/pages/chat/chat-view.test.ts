@@ -5450,6 +5450,64 @@ describe("chat model controls", () => {
     expect(onModelSelect).toHaveBeenCalledWith(modelOption?.dataset.chatModelOption, "main");
   });
 
+  it("renders and applies selectable context windows only when the model has choices", () => {
+    const { state } = createChatHeaderState({
+      model: "claude-fable-5",
+      modelProvider: "claude-cli",
+      models: [
+        {
+          id: "claude-fable-5",
+          name: "Claude Fable 5",
+          provider: "claude-cli",
+          contextWindow: 1_000_000,
+          contextWindows: [
+            { id: "200k", label: "200K", contextWindow: 200_000 },
+            { id: "1m", label: "1M", contextWindow: 1_000_000 },
+          ],
+          contextWindowDefault: "1m",
+        },
+      ],
+    });
+    const session = state.sessionsResult?.sessions[0];
+    if (!state.sessionsResult || !session) {
+      throw new Error("Expected session fixture");
+    }
+    state.sessionsResult = {
+      ...state.sessionsResult,
+      defaults: {
+        ...state.sessionsResult.defaults,
+        contextWindow: "1m",
+        contextWindowDefault: "1m",
+        contextWindows: state.chatModelCatalog[0]?.contextWindows,
+      },
+      sessions: [
+        {
+          ...session,
+          contextWindow: "1m",
+          contextWindowDefault: "1m",
+          contextWindows: state.chatModelCatalog[0]?.contextWindows,
+        },
+      ],
+    };
+    const onContextWindowSelect = vi.fn(async () => true);
+    const container = renderModelControls(state, { onContextWindowSelect });
+    const select = container.querySelector<HTMLSelectElement>("[data-chat-context-window-select]");
+    expect(select).toBeInstanceOf(HTMLSelectElement);
+    expect(select?.value).toBe("1m");
+    if (select) {
+      select.value = "200k";
+      select.dispatchEvent(new Event("change"));
+    }
+    expect(onContextWindowSelect).toHaveBeenCalledWith("200k", "main");
+
+    state.sessionsResult.sessions[0] = {
+      ...session,
+      contextWindows: [{ id: "1m", label: "1M", contextWindow: 1_000_000 }],
+    };
+    renderModelControls(state, {}, container);
+    expect(container.querySelector("[data-chat-context-window-select]")).toBeNull();
+  });
+
   it("requests live wildcard discovery when the model picker opens", () => {
     const { state } = createOpenAiHeaderState();
     const onModelPickerOpen = vi.fn();

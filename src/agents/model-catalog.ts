@@ -179,6 +179,8 @@ function catalogRouteChanges(base: ModelCatalogEntry, overlay: ModelCatalogEntry
 function clearRouteBoundCatalogMetadata(entry: ModelCatalogEntry): ModelCatalogEntry {
   const {
     contextWindow: _contextWindow,
+    contextWindows: _contextWindows,
+    contextWindowDefault: _contextWindowDefault,
     contextTokens: _contextTokens,
     reasoning: _reasoning,
     input: _input,
@@ -211,6 +213,10 @@ function overlayCatalogMetadata(
     ...(overlay.api !== undefined ? { api: overlay.api } : {}),
     ...(overlay.baseUrl !== undefined ? { baseUrl: overlay.baseUrl } : {}),
     ...(overlay.contextWindow !== undefined ? { contextWindow: overlay.contextWindow } : {}),
+    ...(overlay.contextWindows !== undefined ? { contextWindows: overlay.contextWindows } : {}),
+    ...(overlay.contextWindowDefault !== undefined
+      ? { contextWindowDefault: overlay.contextWindowDefault }
+      : {}),
     ...(overlay.contextTokens !== undefined ? { contextTokens: overlay.contextTokens } : {}),
     ...(overlay.reasoning !== undefined ? { reasoning: overlay.reasoning } : {}),
     ...(overlay.input !== undefined ? { input: overlay.input } : {}),
@@ -411,6 +417,12 @@ export function loadManifestModelCatalog(params: {
     const contextWindow = row.contextWindow ?? row.contextTokens;
     if (contextWindow) {
       entry.contextWindow = contextWindow;
+    }
+    if (row.contextWindows?.length) {
+      entry.contextWindows = row.contextWindows.map((option) => ({ ...option }));
+    }
+    if (row.contextWindowDefault) {
+      entry.contextWindowDefault = row.contextWindowDefault;
     }
     if (row.contextTokens) {
       entry.contextTokens = row.contextTokens;

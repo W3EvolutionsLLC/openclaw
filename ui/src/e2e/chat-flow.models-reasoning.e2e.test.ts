@@ -11,6 +11,67 @@ import {
 const suite = createChatFlowE2eSuite();
 
 suite.define(() => {
+  it("patches a selectable Claude CLI context window", async () => {
+    const context = await suite.newBrowserContext({
+      locale: "en-US",
+      serviceWorkers: "block",
+      viewport: { height: 900, width: 1280 },
+    });
+    const page = await context.newPage();
+    const sessionKey = "agent:main:session-a";
+    const contextWindows = [
+      { id: "200k", label: "200K", contextWindow: 200_000 },
+      { id: "1m", label: "1M", contextWindow: 1_000_000 },
+    ];
+    const session = {
+      key: sessionKey,
+      kind: "direct",
+      label: "Session A",
+      model: "claude-fable-5",
+      modelProvider: "claude-cli",
+      contextWindow: "1m",
+      contextWindowDefault: "1m",
+      contextWindows,
+      updatedAt: 2,
+    };
+    const gateway = await installMockGateway(page, {
+      methodResponses: {
+        "sessions.list": chatSessionListResponse([session]),
+      },
+      models: [
+        {
+          id: "claude-fable-5",
+          name: "Claude Fable 5",
+          provider: "claude-cli",
+          contextWindow: 1_000_000,
+          contextWindowDefault: "1m",
+          contextWindows,
+        },
+      ],
+      sessionKey,
+    });
+
+    try {
+      await page.goto(`${suite.server.baseUrl}chat`);
+      const select = page.locator("[data-chat-context-window-select]").first();
+      await select.waitFor({ state: "visible", timeout: 10_000 });
+      await expect.poll(() => select.inputValue()).toBe("1m");
+      await gateway.setMethodResponse(
+        "sessions.list",
+        chatSessionListResponse([{ ...session, contextWindow: "200k" }]),
+      );
+      await select.selectOption("200k");
+      const patch = await gateway.waitForRequest("sessions.patch");
+      expect(requireRecord(patch.params)).toMatchObject({
+        key: sessionKey,
+        contextWindow: "200k",
+      });
+      await expect.poll(() => select.inputValue()).toBe("200k");
+    } finally {
+      await suite.closeBrowserContext(context);
+    }
+  });
+
   it("patches the session permission mode and reflects sessions.changed", async () => {
     const context = await suite.newBrowserContext({
       locale: "en-US",
