@@ -60,8 +60,10 @@ import { withEnvAsync } from "../../test-utils/env.js";
 import { normalizeSessionDeliveryState } from "../../utils/delivery-context.shared.js";
 import { consumeCronCreatorAuthorityGrant } from "../cron-creator-authority-grant.js";
 import { createChatRunState } from "../server-chat-state.js";
+import { SessionMutationAuthorizationChangedError } from "../session-sharing.js";
 import { STALE_WORKER_BUILD_REASON } from "../worker-environments/admission.js";
 import { handleChatSend, handleChatSendWithRuntimeTools } from "./chat-send-handler.js";
+import { sessionMessagingHandlers } from "./sessions-messaging.js";
 import type { GatewayRequestContext, RespondFn } from "./types.js";
 
 type ProjectedDispatchParams = Parameters<
@@ -1507,6 +1509,45 @@ describe("chat directive tag stripping for non-streaming final payloads", () => 
       false,
       undefined,
       expect.objectContaining({ message: expect.stringContaining("changed while starting work") }),
+    ]);
+    expect(context.addChatRun).not.toHaveBeenCalled();
+    expect(mockState.lastDispatchCtx).toBeUndefined();
+  });
+
+  it("rejects revoked sessions.send participation inside the real chat admission owner", async () => {
+    await createGatewayUserTurnSqliteFixture("openclaw-sessions-send-revoked-admission-");
+    const { context, respond } = createChatRequestFixture();
+    const assertTargetCurrent = vi.fn(() => {
+      throw new SessionMutationAuthorizationChangedError({
+        code: ErrorCodes.INVALID_REQUEST,
+        message: "session is read-only for this connection",
+        details: { code: "SESSION_PARTICIPATION_REQUIRED" },
+      });
+    });
+
+    await expectDefined(
+      sessionMessagingHandlers["sessions.send"],
+      "sessions.send admission test invariant",
+    )({
+      req: { id: "sessions-send-revoked" } as never,
+      params: {
+        key: "main",
+        expectedSessionId: mockState.sessionId,
+        message: "must not dispatch",
+        idempotencyKey: "sessions-send-revoked",
+      },
+      respond,
+      context,
+      client: null,
+      isWebchatConnect: () => false,
+      sessionMutationAuthorization: { assertCurrent: vi.fn(), assertTargetCurrent },
+    });
+
+    expect(assertTargetCurrent).toHaveBeenCalledOnce();
+    expect(lastRespondCall(respond)).toEqual([
+      false,
+      undefined,
+      expect.objectContaining({ details: { code: "SESSION_PARTICIPATION_REQUIRED" } }),
     ]);
     expect(context.addChatRun).not.toHaveBeenCalled();
     expect(mockState.lastDispatchCtx).toBeUndefined();

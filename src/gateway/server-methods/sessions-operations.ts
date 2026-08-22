@@ -33,6 +33,7 @@ import {
   sessionBulkMessageTask,
   sessionBulkMessageTasks,
   type StoredBulkMessageDetail,
+  type StoredBulkMessageTarget,
 } from "../session-bulk-message-operation-access.js";
 import { SessionMutationAuthorizationChangedError } from "../session-sharing.js";
 import { sessionMessagingHandlers } from "./sessions-messaging.js";
@@ -47,16 +48,28 @@ type SendOutcome = {
   error?: ErrorShape;
 };
 
+type BulkMessageTargetInput = SessionsOperationTarget & { idempotencyKey?: string };
+
 function storedDetailValue(detail: StoredBulkMessageDetail): JsonValue {
   // SAFETY: StoredBulkMessageDetail is composed only of the task ledger's JSON value domain.
   return structuredClone(detail) as JsonValue;
 }
 
-function operationCounts(targets: SessionsOperationTargetOutcome[]) {
+function operationCounts(targets: StoredBulkMessageTarget[]) {
   return {
-    pending: targets.filter((target) => target.status === "pending").length,
+    pending: targets.filter(
+      (target) => target.status === "pending" || target.status === "dispatching",
+    ).length,
     accepted: targets.filter((target) => target.status === "accepted").length,
     failed: targets.filter((target) => target.status === "failed").length,
+  };
+}
+
+function projectTarget(target: StoredBulkMessageTarget): SessionsOperationTargetOutcome {
+  const { idempotencyKey: _idempotencyKey, ...outcome } = target;
+  return {
+    ...outcome,
+    status: outcome.status === "dispatching" ? "pending" : outcome.status,
   };
 }
 
@@ -99,14 +112,14 @@ function projectOperation(task: TaskRecord, detail: StoredBulkMessageDetail): Se
   return {
     ...projectOperationSummary(task, detail),
     message: detail.message,
-    targets: detail.targets,
+    targets: detail.targets.map(projectTarget),
   };
 }
 
 function reconcileRetryOutcome(
   original: { task: TaskRecord; detail: StoredBulkMessageDetail },
-  retry: SessionsOperation,
-) {
+  retry: StoredBulkMessageDetail,
+): boolean {
   const retriedByIdentity = new Map(
     retry.targets.map((target) => [
       `${target.agentId ?? ""}\u0000${target.key}\u0000${target.expectedSessionId}`,
@@ -119,25 +132,28 @@ function reconcileRetryOutcome(
     );
     return retried ?? target;
   });
+  delete original.detail.retryRequestId;
   const counts = operationCounts(original.detail.targets);
   const unresolved = counts.failed > 0 || counts.pending > 0;
-  finalizeTaskRunById({
-    taskId: original.task.taskId,
-    status: unresolved ? "failed" : "succeeded",
-    endedAt: Date.now(),
-    terminalSummary: unresolved
-      ? `${counts.accepted} accepted, ${counts.failed} failed, ${counts.pending} pending`
-      : `${counts.accepted} accepted after retry`,
-    terminalOutcome: unresolved ? "blocked" : "succeeded",
-    error: undefined,
-    detail: storedDetailValue(original.detail),
-  });
+  return Boolean(
+    finalizeTaskRunById({
+      taskId: original.task.taskId,
+      status: unresolved ? "failed" : "succeeded",
+      endedAt: Date.now(),
+      terminalSummary: unresolved
+        ? `${counts.accepted} accepted, ${counts.failed} failed, ${counts.pending} pending`
+        : `${counts.accepted} accepted after retry`,
+      terminalOutcome: unresolved ? "blocked" : "succeeded",
+      error: undefined,
+      detail: storedDetailValue(original.detail),
+    }),
+  );
 }
 
 async function invokeSingleSend(
   options: GatewayRequestHandlerOptions,
   params: {
-    target: SessionsOperationTargetOutcome;
+    target: StoredBulkMessageTarget;
     message: string;
     idempotencyKey: string;
   },
@@ -189,7 +205,7 @@ async function invokeSingleSend(
 function initialDetail(params: {
   requestId: string;
   message: string;
-  targets: SessionsOperationTarget[];
+  targets: BulkMessageTargetInput[];
   retryOf?: string;
 }): StoredBulkMessageDetail {
   return {
@@ -204,7 +220,7 @@ function initialDetail(params: {
 
 function sameOperationInput(
   detail: StoredBulkMessageDetail,
-  params: { message: string; targets: SessionsOperationTarget[] },
+  params: { message: string; targets: BulkMessageTargetInput[] },
 ) {
   return (
     detail.message === params.message &&
@@ -214,7 +230,14 @@ function sameOperationInput(
         ...(agentId ? { agentId } : {}),
         expectedSessionId,
       })),
-    ) === JSON.stringify(params.targets)
+    ) ===
+      JSON.stringify(
+        params.targets.map(({ key, agentId, expectedSessionId }) => ({
+          key,
+          ...(agentId ? { agentId } : {}),
+          expectedSessionId,
+        })),
+      )
   );
 }
 
@@ -233,9 +256,12 @@ async function executeBulkMessage(params: {
   options: GatewayRequestHandlerOptions;
   requestId: string;
   message: string;
-  targets: SessionsOperationTarget[];
+  targets: BulkMessageTargetInput[];
   retryOf?: string;
-}): Promise<{ ok: true; operation: SessionsOperation } | { ok: false; error: ErrorShape }> {
+}): Promise<
+  | { ok: true; operation: SessionsOperation; detail: StoredBulkMessageDetail }
+  | { ok: false; error: ErrorShape }
+> {
   if (hasDuplicateTargets(params.targets)) {
     return {
       ok: false,
@@ -258,7 +284,7 @@ async function executeBulkMessage(params: {
         ),
       };
     }
-    return { ok: true, operation: projectOperation(existing, detail) };
+    return { ok: true, operation: projectOperation(existing, detail), detail };
   }
 
   const startedAt = Date.now();
@@ -288,13 +314,33 @@ async function executeBulkMessage(params: {
     };
   }
 
-  // Persist after each admission: a Gateway restart can then distinguish
-  // accepted targets from undispatched targets without replaying successful work.
+  const persistProgress = () => {
+    const counts = operationCounts(detail.targets);
+    return updateTaskProgressDetailById({
+      taskId: task.taskId,
+      detail: storedDetailValue(detail),
+      progressSummary: `${counts.accepted}/${detail.targets.length} accepted`,
+    });
+  };
+
+  // Persist the dispatch key before I/O. If the accepted-outcome write fails,
+  // retry reuses that key and the canonical send owner cannot admit a duplicate.
   for (const [index, target] of detail.targets.entries()) {
+    const idempotencyKey = target.idempotencyKey ?? `${params.requestId}:${index}`;
+    detail.targets[index] = { ...target, status: "dispatching", idempotencyKey };
+    if (!persistProgress()) {
+      return {
+        ok: false,
+        error: errorShape(
+          ErrorCodes.UNAVAILABLE,
+          "could not persist sessions operation before dispatch",
+        ),
+      };
+    }
     const outcome = await invokeSingleSend(params.options, {
       target,
       message: detail.message,
-      idempotencyKey: `${params.requestId}:${index}`,
+      idempotencyKey,
     });
     const runId = isRecord(outcome.payload)
       ? normalizeOptionalString(outcome.payload.runId)
@@ -306,18 +352,21 @@ async function executeBulkMessage(params: {
           status: "failed",
           error: outcome.error ?? errorShape(ErrorCodes.UNAVAILABLE, "sessions.send failed"),
         };
-    const counts = operationCounts(detail.targets);
-    updateTaskProgressDetailById({
-      taskId: task.taskId,
-      detail: storedDetailValue(detail),
-      progressSummary: `${counts.accepted}/${detail.targets.length} accepted`,
-    });
+    if (!persistProgress()) {
+      return {
+        ok: false,
+        error: errorShape(
+          ErrorCodes.UNAVAILABLE,
+          "could not persist sessions operation after dispatch",
+        ),
+      };
+    }
   }
 
   const endedAt = Date.now();
   const counts = operationCounts(detail.targets);
   const failed = counts.failed > 0;
-  finalizeTaskRunById({
+  const finalized = finalizeTaskRunById({
     taskId: task.taskId,
     status: failed ? "failed" : "succeeded",
     endedAt,
@@ -327,13 +376,29 @@ async function executeBulkMessage(params: {
     terminalOutcome: failed ? "blocked" : "succeeded",
     detail: storedDetailValue(detail),
   });
-  setTaskCleanupAfterById({
+  if (!finalized) {
+    return {
+      ok: false,
+      error: errorShape(ErrorCodes.UNAVAILABLE, "could not finalize sessions operation"),
+    };
+  }
+  const retained = setTaskCleanupAfterById({
     taskId: task.taskId,
     cleanupAfter: endedAt + SESSION_BULK_MESSAGE_RETENTION_MS,
   });
+  if (!retained) {
+    return {
+      ok: false,
+      error: errorShape(ErrorCodes.UNAVAILABLE, "could not retain sessions operation"),
+    };
+  }
   const completed = sessionBulkMessageTask({ taskId: task.taskId, ownerKey });
   return completed
-    ? { ok: true, operation: projectOperation(completed.task, completed.detail) }
+    ? {
+        ok: true,
+        operation: projectOperation(completed.task, completed.detail),
+        detail: completed.detail,
+      }
     : {
         ok: false,
         error: errorShape(ErrorCodes.UNAVAILABLE, "sessions operation could not be reloaded"),
@@ -437,12 +502,28 @@ export const sessionOperationHandlers: GatewayRequestHandlers = {
       respondOperationMissing(options.respond, options.params.id);
       return;
     }
+    if (found.detail.retryRequestId && found.detail.retryRequestId !== options.params.requestId) {
+      options.respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.INVALID_REQUEST, "sessions operation retry is already in progress"),
+      );
+      return;
+    }
     const targets = found.detail.targets
-      .filter((target) => target.status === "failed" || target.status === "pending")
-      .map(({ key, agentId, expectedSessionId }) => {
-        const target: SessionsOperationTarget = { key, expectedSessionId };
+      .filter(
+        (target) =>
+          target.status === "failed" ||
+          target.status === "pending" ||
+          target.status === "dispatching",
+      )
+      .map(({ key, agentId, expectedSessionId, status, idempotencyKey }) => {
+        const target: BulkMessageTargetInput = { key, expectedSessionId };
         if (agentId) {
           target.agentId = agentId;
+        }
+        if (status !== "failed" && idempotencyKey) {
+          target.idempotencyKey = idempotencyKey;
         }
         return target;
       });
@@ -454,6 +535,21 @@ export const sessionOperationHandlers: GatewayRequestHandlers = {
       );
       return;
     }
+    found.detail.retryRequestId = options.params.requestId;
+    if (
+      !updateTaskProgressDetailById({
+        taskId: found.task.taskId,
+        detail: storedDetailValue(found.detail),
+        progressSummary: found.task.progressSummary,
+      })
+    ) {
+      options.respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.UNAVAILABLE, "could not reserve sessions operation retry"),
+      );
+      return;
+    }
     const result = await executeBulkMessage({
       options,
       requestId: options.params.requestId,
@@ -462,7 +558,21 @@ export const sessionOperationHandlers: GatewayRequestHandlers = {
       retryOf: found.task.taskId,
     });
     if (result.ok) {
-      reconcileRetryOutcome(found, result.operation);
+      if (!reconcileRetryOutcome(found, result.detail)) {
+        options.respond(
+          false,
+          undefined,
+          errorShape(ErrorCodes.UNAVAILABLE, "could not persist sessions operation retry result"),
+        );
+        return;
+      }
+    } else {
+      delete found.detail.retryRequestId;
+      updateTaskProgressDetailById({
+        taskId: found.task.taskId,
+        detail: storedDetailValue(found.detail),
+        progressSummary: found.task.progressSummary,
+      });
     }
     if (result.ok) {
       options.respond(true, { operation: result.operation });

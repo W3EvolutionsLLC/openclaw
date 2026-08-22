@@ -18,8 +18,14 @@ export type StoredBulkMessageDetail = {
   kind: "bulk-message";
   requestId: string;
   message: string;
-  targets: SessionsOperationTargetOutcome[];
+  targets: StoredBulkMessageTarget[];
   retryOf?: string;
+  retryRequestId?: string;
+};
+
+export type StoredBulkMessageTarget = Omit<SessionsOperationTargetOutcome, "status"> & {
+  status: SessionsOperationTargetOutcome["status"] | "dispatching";
+  idempotencyKey?: string;
 };
 
 export function sessionBulkMessageOwnerKey(client: GatewayClient | null): string {
@@ -41,7 +47,7 @@ export function parseSessionBulkMessageDetail(task: TaskRecord): StoredBulkMessa
   ) {
     return null;
   }
-  const targets: SessionsOperationTargetOutcome[] = [];
+  const targets: StoredBulkMessageTarget[] = [];
   for (const candidate of detail.targets) {
     if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
       return null;
@@ -52,12 +58,16 @@ export function parseSessionBulkMessageDetail(task: TaskRecord): StoredBulkMessa
     if (
       !key ||
       !expectedSessionId ||
-      (status !== "pending" && status !== "accepted" && status !== "failed")
+      (status !== "pending" &&
+        status !== "dispatching" &&
+        status !== "accepted" &&
+        status !== "failed")
     ) {
       return null;
     }
     const agentId = normalizeOptionalString(candidate.agentId);
     const runId = normalizeOptionalString(candidate.runId);
+    const idempotencyKey = normalizeOptionalString(candidate.idempotencyKey);
     const storedError = candidate.error;
     const error = Value.Check(ErrorShapeSchema, storedError)
       ? structuredClone(storedError)
@@ -68,10 +78,12 @@ export function parseSessionBulkMessageDetail(task: TaskRecord): StoredBulkMessa
       status,
       ...(agentId ? { agentId } : {}),
       ...(runId ? { runId } : {}),
+      ...(idempotencyKey ? { idempotencyKey } : {}),
       ...(error ? { error } : {}),
     });
   }
   const retryOf = normalizeOptionalString(detail.retryOf);
+  const retryRequestId = normalizeOptionalString(detail.retryRequestId);
   return {
     version: BULK_MESSAGE_DETAIL_VERSION,
     kind: "bulk-message",
@@ -79,6 +91,7 @@ export function parseSessionBulkMessageDetail(task: TaskRecord): StoredBulkMessa
     message: detail.message,
     targets,
     ...(retryOf ? { retryOf } : {}),
+    ...(retryRequestId ? { retryRequestId } : {}),
   };
 }
 

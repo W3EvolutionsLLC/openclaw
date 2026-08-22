@@ -62,6 +62,7 @@ const enSessionsManagement = {
     transcriptSearchTruncated: "Showing the first 25 matches.",
     selected: "{count} selected",
     selectAllMatching: "Select all {count} matching",
+    selectAllMatchingUnknown: "Select all matching",
     selectingAllMatching: "Selecting matching sessions…",
     bulkMessageLimit: "Bulk messages support up to {count} sessions. Refine the selection.",
     sendMessage: "Send message",

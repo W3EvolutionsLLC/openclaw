@@ -239,6 +239,8 @@ no route-specific URL parameters.
 | Devices             | `/settings/devices`         | `/nodes`                  | Shared settings parameters below                               |
 | Plugin tab host     | `/plugin`                   | -                         | `?plugin=<pluginId>&id=<tabId>`                                |
 
+Sessions accepts `?view=operations` to open durable bulk-operation history.
+
 Settings routes that use schema-backed deep links accept `?section=<section>`,
 `?advanced=1`, and `#<setting-id>`. These values select content within the page;
 they do not change the route identity.

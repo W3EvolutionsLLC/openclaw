@@ -675,11 +675,12 @@ describe("sessions page lifecycle", () => {
       sessions: [firstRow],
     } as SessionsListResult;
     page.selectedKeys = new Set([firstRow.key]);
+    page.searchQuery = "second";
 
     await page.selectAllMatching();
 
     expect(list.mock.calls.map(([options]) => options?.offset ?? 0)).toEqual([0, 1]);
-    expect(page.selectedKeys).toEqual(new Set(rows.map((row) => row.key)));
+    expect(page.selectedKeys).toEqual(new Set(["agent:main:second"]));
   });
 
   it("adopts a managed snapshot that arrives under the bulk-delete lock after its tail refresh", async () => {

@@ -9,8 +9,27 @@ import type { GatewayClient, GatewayRequestHandlerOptions } from "./types.js";
 
 const taskStore = vi.hoisted(() => {
   const tasks = new Map<string, TaskRecord>();
+  let progressCall = 0;
   return {
     tasks,
+    failProgressAt: null as number | null,
+    resetProgress: () => {
+      progressCall = 0;
+    },
+    updateProgress: vi.fn(
+      (params: { taskId: string; detail: TaskRecord["detail"]; progressSummary?: string }) => {
+        progressCall += 1;
+        if (progressCall === taskStore.failProgressAt) {
+          return null;
+        }
+        const task = tasks.get(params.taskId);
+        if (!task) {
+          return null;
+        }
+        Object.assign(task, params, { lastEventAt: Date.now() });
+        return structuredClone(task);
+      },
+    ),
     create: vi.fn((params: Record<string, unknown>) => {
       const taskId = `task-${tasks.size + 1}`;
       const task = {
@@ -47,18 +66,7 @@ vi.mock("../../tasks/runtime-internal.js", () => ({
     [...taskStore.tasks.values()].find((task) => task.runId === runId),
   getTaskById: (taskId: string) => taskStore.tasks.get(taskId),
   listTaskRecords: () => [...taskStore.tasks.values()],
-  updateTaskProgressDetailById: (params: {
-    taskId: string;
-    detail: TaskRecord["detail"];
-    progressSummary?: string;
-  }) => {
-    const task = taskStore.tasks.get(params.taskId);
-    if (!task) {
-      return null;
-    }
-    Object.assign(task, params, { lastEventAt: Date.now() });
-    return structuredClone(task);
-  },
+  updateTaskProgressDetailById: taskStore.updateProgress,
   setTaskCleanupAfterById: (params: { taskId: string; cleanupAfter: number }) => {
     const task = taskStore.tasks.get(params.taskId);
     if (!task) {
@@ -144,6 +152,9 @@ function options(
 beforeEach(() => {
   taskStore.tasks.clear();
   taskStore.create.mockClear();
+  taskStore.failProgressAt = null;
+  taskStore.resetProgress();
+  taskStore.updateProgress.mockClear();
   send.mockReset();
   send.mockImplementation(async ({ params, respond }: GatewayRequestHandlerOptions) => {
     if (params.key === "agent:main:failed") {
@@ -314,6 +325,76 @@ describe("sessions operations", () => {
       }),
     );
     expect(taskStore.tasks.get(operationId)?.status).toBe("succeeded");
+  });
+
+  it("reserves retry targets before concurrent callers can dispatch them", async () => {
+    const created = options("sessions.operations.create", {
+      requestId: "bulk-concurrent",
+      message: "Report status.",
+      targets: [{ key: "agent:main:failed", expectedSessionId: "session-failed" }],
+    });
+    await sessionOperationHandlers["sessions.operations.create"]?.(created.options);
+    const operationId = taskStore.tasks.values().next().value?.taskId;
+    if (!operationId) {
+      throw new Error("Expected created bulk operation");
+    }
+    let releaseSend = () => {};
+    const sendGate = new Promise<void>((resolve) => {
+      releaseSend = resolve;
+    });
+    send.mockClear();
+    send.mockImplementation(async ({ params, respond }: GatewayRequestHandlerOptions) => {
+      await sendGate;
+      respond(true, { runId: `retry:${String(params.key)}` });
+    });
+
+    const first = options("sessions.operations.retry", {
+      id: operationId,
+      requestId: "bulk-concurrent-first",
+    });
+    const firstRetry = sessionOperationHandlers["sessions.operations.retry"]?.(first.options);
+    await vi.waitFor(() => expect(send).toHaveBeenCalledOnce());
+    const second = options("sessions.operations.retry", {
+      id: operationId,
+      requestId: "bulk-concurrent-second",
+    });
+    await sessionOperationHandlers["sessions.operations.retry"]?.(second.options);
+
+    expect(second.respond).toHaveBeenCalledWith(
+      false,
+      undefined,
+      expect.objectContaining({ message: "sessions operation retry is already in progress" }),
+    );
+    expect(send).toHaveBeenCalledOnce();
+    releaseSend();
+    await firstRetry;
+  });
+
+  it("stops dispatch and preserves its idempotency key when progress persistence fails", async () => {
+    taskStore.failProgressAt = 2;
+    const created = options("sessions.operations.create", {
+      requestId: "bulk-persist",
+      message: "Report status.",
+      targets: [
+        { key: "agent:main:first", expectedSessionId: "session-first" },
+        { key: "agent:main:second", expectedSessionId: "session-second" },
+      ],
+    });
+
+    await sessionOperationHandlers["sessions.operations.create"]?.(created.options);
+
+    expect(send).toHaveBeenCalledOnce();
+    expect(created.respond).toHaveBeenCalledWith(
+      false,
+      undefined,
+      expect.objectContaining({
+        message: "could not persist sessions operation after dispatch",
+      }),
+    );
+    const task = taskStore.tasks.values().next().value;
+    expect(task?.detail).toMatchObject({
+      targets: [{ status: "dispatching", idempotencyKey: "bulk-persist:0" }, { status: "pending" }],
+    });
   });
 
   it("projects unfinished restored work as interrupted instead of auto-resuming it", async () => {

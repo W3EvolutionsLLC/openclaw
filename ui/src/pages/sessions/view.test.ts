@@ -260,6 +260,7 @@ describe("sessions view", () => {
           ]),
         ),
         selectedKeys: new Set(["agent:main:first", "agent:main:second"]),
+        matchingCount: null,
       }),
       container,
     );
@@ -269,6 +270,7 @@ describe("sessions view", () => {
       (button) => button.textContent?.trim() === "Send message",
     );
     expect(send).toBeInstanceOf(HTMLButtonElement);
+    expect(container.textContent).toContain("Select all matching");
   });
 
   it("uses the stored face for generic session links", async () => {
@@ -313,6 +315,7 @@ describe("sessions view", () => {
       '.sessions-search-control input[type="search"]',
     );
     expect(rosterFilter?.value).toBe("agent label");
+    expect(rosterFilter?.getAttribute("aria-label")).toBe("Filter by key, agent, label, kind…");
 
     render(
       renderSessions({
@@ -330,6 +333,7 @@ describe("sessions view", () => {
       '.sessions-search-control input[type="search"]',
     );
     expect(transcriptInput?.value).toBe("  exact phrase  ");
+    expect(transcriptInput?.getAttribute("aria-label")).toBe("Search exact words or phrases…");
 
     transcriptInput!.value = "different words";
     transcriptInput!.dispatchEvent(new Event("input", { bubbles: true }));

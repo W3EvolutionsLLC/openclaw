@@ -37,6 +37,7 @@ export type TestSessionsPage = HTMLElement & {
   checkpointLoadingKey: string | null;
   checkpointBusyKey: string | null;
   sessionMutationPending: boolean;
+  searchQuery: string;
   transcriptSearchQuery: string;
   transcriptSearch: TranscriptSearchState;
   updateTranscriptSearchQuery: (query: string) => void;

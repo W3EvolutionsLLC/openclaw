@@ -116,7 +116,7 @@ export type SessionsProps = {
   page: number;
   pageSize: number;
   selectedKeys: Set<string>;
-  matchingCount: number;
+  matchingCount: number | null;
   selectAllMatchingLoading: boolean;
   bulkMessageAvailable: boolean;
   bulkMessageReview: BulkMessageReview | null;
@@ -1197,7 +1197,7 @@ function renderSessionsTable(props: SessionsProps, ctx: SessionsTableContext) {
             <strong
               >${t("sessionsView.selected", { count: String(props.selectedKeys.size) })}</strong
             >
-            ${props.selectedKeys.size < props.matchingCount
+            ${props.matchingCount === null || props.selectedKeys.size < props.matchingCount
               ? html`<button
                   class="btn btn--sm btn--ghost"
                   ?disabled=${props.selectAllMatchingLoading}
@@ -1205,9 +1205,11 @@ function renderSessionsTable(props: SessionsProps, ctx: SessionsTableContext) {
                 >
                   ${props.selectAllMatchingLoading
                     ? t("sessionsView.selectingAllMatching")
-                    : t("sessionsView.selectAllMatching", {
-                        count: String(props.matchingCount),
-                      })}
+                    : props.matchingCount === null
+                      ? t("sessionsView.selectAllMatchingUnknown")
+                      : t("sessionsView.selectAllMatching", {
+                          count: String(props.matchingCount),
+                        })}
                 </button>`
               : nothing}
             ${props.bulkMessageAvailable
@@ -1257,6 +1259,9 @@ function renderSessionsTable(props: SessionsProps, ctx: SessionsTableContext) {
                 ${icons.search}
                 <input
                   type="search"
+                  aria-label=${transcriptMode
+                    ? t("sessionsView.transcriptSearchPlaceholder")
+                    : t("sessionsView.searchPlaceholder")}
                   maxlength=${transcriptMode ? "4096" : nothing}
                   placeholder=${transcriptMode
                     ? t("sessionsView.transcriptSearchPlaceholder")

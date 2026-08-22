@@ -1910,7 +1910,9 @@ class SessionsPage extends OpenClawLightDomElement {
               selectedKeys: this.selectedKeys,
               matchingCount: this.allMatchingSelected
                 ? this.selectedKeys.size
-                : (this.result?.totalCount ?? this.result?.sessions.length ?? 0),
+                : this.searchQuery.trim()
+                  ? null
+                  : (this.result?.totalCount ?? this.result?.sessions.length ?? 0),
               selectAllMatchingLoading: this.selectAllMatchingLoading,
               bulkMessageAvailable:
                 isGatewayMethodAdvertised(
@@ -1971,12 +1973,14 @@ class SessionsPage extends OpenClawLightDomElement {
                 this.selectedRowsByKey.clear();
                 this.allMatchingSelected = false;
                 this.closeBulkMessageReview();
-                this.closeBulkMessageReview();
               },
               onSearchChange: (query) => {
                 this.searchQuery = query;
                 this.page = 0;
                 this.selectedKeys = new Set();
+                this.selectedRowsByKey.clear();
+                this.allMatchingSelected = false;
+                this.closeBulkMessageReview();
               },
               onTranscriptSearchChange: (query) => this.updateTranscriptSearchQuery(query),
               onTranscriptSearch: () => void this.runTranscriptSearch(),
