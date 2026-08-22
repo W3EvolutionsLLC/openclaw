@@ -14,7 +14,10 @@ import {
 import { resolveThinkingCommandArgOptionsForSession } from "../../../lib/chat/thinking.ts";
 import { areUiSessionKeysEquivalent } from "../../../lib/sessions/session-key.ts";
 import { adjustTextareaHeight, paneDomId } from "./chat-composer-dom.ts";
-import { findDirectInlineSlashArgumentInvocation } from "./chat-composer-inline-slash.ts";
+import {
+  findDirectInlineSlashArgumentInvocation,
+  hasActiveInlineSlashArgumentPrefix,
+} from "./chat-composer-inline-slash.ts";
 import { commitComposerDraft, getChatComposerState } from "./chat-composer-state.ts";
 import type { ChatComposerProps, ChatComposerState } from "./chat-composer-types.ts";
 
@@ -113,9 +116,8 @@ export function updateSlashMenu(
     state.slashMenuCommand
   ) {
     const caret = state.composerTextarea?.selectionStart ?? value.length;
-    const prefix = `/${state.slashMenuCommand.name} `;
-    const start = state.slashMenuCompletion.start;
-    if (caret >= start + prefix.length && value.slice(start, start + prefix.length) === prefix) {
+    const completion = state.slashMenuCompletion;
+    if (hasActiveInlineSlashArgumentPrefix(value, caret, completion, state.slashMenuCommand.name)) {
       state.slashMenuCompletion.end = caret;
       requestUpdate();
       return;
@@ -235,6 +237,7 @@ function beginInlineFreeformSlashArguments(
     start: completion.start,
     end: caret,
     inline: true,
+    argumentStart: caret,
   };
   queueMicrotask(() => {
     const textarea = state.composerTextarea;
@@ -461,8 +464,8 @@ function submitInlineSlashArgument(props: ChatComposerProps, requestUpdate: () =
   }
   const target = state.composerTextarea;
   const current = target?.value ?? props.getDraft?.() ?? props.draft;
-  const prefixEnd = completion.start + `/${command.name} `.length;
-  const args = current.slice(prefixEnd, completion.end).trim();
+  const argumentStart = completion.argumentStart ?? completion.start + `/${command.name} `.length;
+  const args = current.slice(argumentStart, completion.end).trim();
   if (!removeInlineSlashSelection(props, state)) {
     return false;
   }

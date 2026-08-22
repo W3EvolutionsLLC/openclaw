@@ -590,6 +590,7 @@ export type InlineSlashCompletion = {
   start: number;
   end: number;
   inline: boolean;
+  argumentStart?: number;
 };
 
 /** Finds the slash token being edited at the caret, including inside normal prose. */
