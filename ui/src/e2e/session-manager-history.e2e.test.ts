@@ -85,7 +85,7 @@ suite.define(() => {
         await mainRow.waitFor({ state: "visible", timeout: 10_000 });
         await researchRow.waitFor({ state: "visible", timeout: 10_000 });
 
-        const rosterFilter = page.locator('.sessions-toolbar__search input[type="text"]');
+        const rosterFilter = page.locator('.sessions-toolbar__search input[type="search"]');
         await rosterFilter.fill("Research");
         await expect.poll(() => mainRow.count()).toBe(0);
         await researchRow.waitFor({ state: "visible" });
@@ -93,10 +93,11 @@ suite.define(() => {
         await rosterFilter.fill("");
         await mainRow.waitFor({ state: "visible" });
 
-        const transcriptSearch = page.getByRole("search", { name: "Search transcripts" });
-        const transcriptInput = transcriptSearch.getByRole("searchbox", {
-          name: "Search session transcripts",
-        });
+        const transcriptSearch = page.locator("form.sessions-search-control");
+        await transcriptSearch
+          .getByRole("combobox", { name: "Search mode" })
+          .selectOption("transcripts");
+        const transcriptInput = transcriptSearch.getByRole("searchbox");
         await transcriptInput.fill("deployment history");
         await transcriptInput.press("Enter");
         const result = page.locator(".sessions-transcript-search__result");

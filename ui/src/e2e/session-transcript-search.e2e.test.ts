@@ -37,6 +37,14 @@ async function captureUiProof(fileName: string) {
   await page.screenshot({ fullPage: true, path: path.join(artifactDir, fileName) });
 }
 
+async function openTranscriptSearch(browserPage: Page) {
+  const search = browserPage.locator("form.sessions-search-control");
+  await search.getByRole("combobox", { name: "Search mode" }).selectOption("transcripts");
+  const input = search.getByRole("searchbox");
+  await input.waitFor({ state: "visible", timeout: 10_000 });
+  return { input, search };
+}
+
 async function resolveDeferredAndDrain(
   browserPage: Page,
   method: string,
@@ -145,9 +153,7 @@ describeControlUiE2e("Control UI session transcript search", () => {
     });
 
     await page.goto(`${server?.baseUrl ?? ""}sessions`);
-    const search = page.getByRole("search", { name: "Search transcripts" });
-    const input = search.getByRole("searchbox", { name: "Search session transcripts" });
-    await input.waitFor({ state: "visible", timeout: 10_000 });
+    const { input, search } = await openTranscriptSearch(page);
     await captureUiProof("01-initial.png");
 
     await input.fill("  nebula launch  ");
@@ -169,7 +175,7 @@ describeControlUiE2e("Control UI session transcript search", () => {
     await expect.poll(() => result.textContent()).toContain("nebula launch checklist");
     await captureUiProof("03-results.png");
 
-    await search.getByRole("button", { name: "Clear" }).click();
+    await input.fill("");
     await expect.poll(() => input.inputValue()).toBe("");
     await expect.poll(() => result.count()).toBe(0);
     expect(await gateway.getRequests("sessions.search")).toHaveLength(1);
@@ -232,8 +238,7 @@ describeControlUiE2e("Control UI session transcript search", () => {
     });
 
     await page.goto(`${server?.baseUrl ?? ""}sessions`);
-    const input = page.getByRole("searchbox", { name: "Search session transcripts" });
-    await input.waitFor({ state: "visible", timeout: 10_000 });
+    const { input } = await openTranscriptSearch(page);
     await gateway.setMethodResponse("sessions.list", {
       cases: [
         { match: { offset: 2 }, response: result([moved], 2, false) },
@@ -313,9 +318,7 @@ describeControlUiE2e("Control UI session transcript search", () => {
     });
 
     await page.goto(`${server?.baseUrl ?? ""}sessions`);
-    const search = page.getByRole("search", { name: "Search transcripts" });
-    const input = search.getByRole("searchbox", { name: "Search session transcripts" });
-    await input.waitFor({ state: "visible", timeout: 10_000 });
+    const { input } = await openTranscriptSearch(page);
     await input.fill("needle");
     await input.press("Enter");
 
@@ -367,10 +370,8 @@ describeControlUiE2e("Control UI session transcript search", () => {
     });
 
     await page.goto(`${server?.baseUrl ?? ""}sessions`);
-    const search = page.getByRole("search", { name: "Search transcripts" });
-    const input = search.getByRole("searchbox", { name: "Search session transcripts" });
+    const { input, search } = await openTranscriptSearch(page);
     const submit = search.getByRole("button", { name: "Search" });
-    await input.waitFor({ state: "visible", timeout: 10_000 });
     await input.fill("   ");
     await expect.poll(() => submit.isDisabled()).toBe(true);
     await input.press("Enter");
@@ -448,9 +449,7 @@ describeControlUiE2e("Control UI session transcript search", () => {
     });
 
     await page.goto(`${server?.baseUrl ?? ""}sessions`);
-    const search = page.getByRole("search", { name: "Search transcripts" });
-    const input = search.getByRole("searchbox", { name: "Search session transcripts" });
-    await input.waitFor({ state: "visible", timeout: 10_000 });
+    const { input } = await openTranscriptSearch(page);
     await expect.poll(() => input.isDisabled()).toBe(true);
     await page
       .getByText("Transcript search requires a newer Gateway.", { exact: true })
