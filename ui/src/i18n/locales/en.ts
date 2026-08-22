@@ -169,6 +169,8 @@ export const en: TranslationMap = {
   sessionProgressCard: {
     ariaLabel: "Session progress",
     title: "Progress",
+    composerTitle: "Plan",
+    shortCount: "{completed} of {total}",
     noteLabel: "Progress note",
     countLabel: "{completed} of {total} completed",
     stepLabel: "{step}, {status}",
