@@ -410,15 +410,15 @@ describe("prepareCliRunContext", () => {
       provider: "claude-cli",
       model: "claude-fable-5",
       config: {},
-      ...(testCase.selection
-        ? {
-            sessionEntry: {
-              sessionId: "cli-session",
-              updatedAt: 0,
-              contextWindow: testCase.selection,
-            },
-          }
-        : {}),
+      // The run owner carries the selection as a prepared fact; a session entry
+      // alone must not drive it (reply-path regression: selection dropped when
+      // prepare read sessionEntry directly).
+      ...(testCase.selection ? { contextWindow: testCase.selection } : {}),
+      sessionEntry: {
+        sessionId: "cli-session",
+        updatedAt: 0,
+        ...(testCase.selection ? {} : { contextWindow: "200k" }),
+      },
     });
 
     expect(context.contextWindowInfo?.tokens).toBe(testCase.expected);

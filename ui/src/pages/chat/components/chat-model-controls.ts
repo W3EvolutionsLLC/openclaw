@@ -367,15 +367,14 @@ export function renderChatModelControls(props: ChatModelControlsProps) {
     !managedCatalog.hasSnapshot ||
     (thinking.options.length === 0 && thinking.selection.source === "default");
   const showFastMode = props.showFastMode !== false;
-  const contextWindows =
-    activeSession?.contextWindows ?? props.sessionsResult?.defaults.contextWindows ?? [];
+  // One owner supplies the whole tuple: mixing an override session's fields with
+  // the defaults row can render the default model's options for a session whose
+  // model declares none, then patch an invalid option id.
+  const contextWindowOwner = activeSession ?? props.sessionsResult?.defaults;
+  const contextWindows = contextWindowOwner?.contextWindows ?? [];
   const selectedContextWindow =
-    activeSession?.contextWindow ??
-    props.sessionsResult?.defaults.contextWindow ??
-    props.sessionsResult?.defaults.contextWindowDefault ??
-    "";
-  const defaultContextWindow =
-    activeSession?.contextWindowDefault ?? props.sessionsResult?.defaults.contextWindowDefault;
+    contextWindowOwner?.contextWindow ?? contextWindowOwner?.contextWindowDefault ?? "";
+  const defaultContextWindow = contextWindowOwner?.contextWindowDefault;
   const effortDisabled =
     commonDisabled ||
     effortMutationDisabled ||

@@ -796,7 +796,7 @@ export async function prepareCliRunContext(
   const normalizedModel =
     backendResolved.resolveModelId?.({
       modelId: normalizedCatalogModel,
-      contextWindow: params.sessionEntry?.contextWindow,
+      contextWindow: params.contextWindow,
     }) ?? normalizedCatalogModel;
   const modelDisplay = `${params.provider}/${modelId}`;
   let openClawHistoryMessages: unknown[] | undefined;
@@ -913,7 +913,7 @@ export async function prepareCliRunContext(
   if (selectableContextEntry) {
     const contextWindowProfile = resolveModelContextWindowProfile({
       catalogEntry: selectableContextEntry,
-      selected: params.sessionEntry?.contextWindow,
+      selected: params.contextWindow,
     });
     // Only an effective option caps the window; the bare catalog scalar stays
     // subordinate to the fixed provider contract above.
@@ -1335,9 +1335,7 @@ export async function prepareCliRunContext(
       agentDir,
       provider: params.provider,
       modelId,
-      ...(params.sessionEntry?.contextWindow
-        ? { contextWindow: params.sessionEntry.contextWindow }
-        : {}),
+      ...(params.contextWindow ? { contextWindow: params.contextWindow } : {}),
       contextTokenBudget: contextWindowInfo.tokens,
       thinkingLevel: params.thinkLevel === "ultra" ? "max" : params.thinkLevel,
       authProfileId: effectiveAuthProfileId,
